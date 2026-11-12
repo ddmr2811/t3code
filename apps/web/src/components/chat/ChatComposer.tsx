@@ -207,6 +207,7 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ForkComposerUsage } from "./ForkComposerUsage";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -3561,6 +3562,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}
+                <ForkComposerUsage
+                  environmentId={environmentId}
+                  providerInstanceId={selectedInstanceId}
+                  providers={providerStatuses}
+                />
                 <div
                   data-chat-composer-actions="right"
                   data-chat-composer-transition-actions="true"
