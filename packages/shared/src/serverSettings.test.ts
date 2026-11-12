@@ -224,6 +224,13 @@ describe("serverSettings helpers", () => {
     expect(resolveProjectScripts(secondUpdate, firstProject)).toEqual([firstAction]);
   });
 
+  it("keeps a saved forkTargetBranch when a patch does not carry the key", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { forkTargetBranch: "dev" });
+    expect(saved.forkTargetBranch).toBe("dev");
+    const other = applyServerSettingsPatch(saved, { defaultAutoPull: true });
+    expect(other.forkTargetBranch).toBe("dev");
+  });
+
   it("preserves other projects' boolean overrides across separate updates and resets", () => {
     const firstProjectId = ProjectId.make("first-project");
     const secondProjectId = ProjectId.make("second-project");
