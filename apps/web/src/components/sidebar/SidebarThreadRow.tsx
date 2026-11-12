@@ -1145,8 +1145,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
-      <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+      <span className="inline-flex shrink-0 items-center gap-1 text-sidebar-muted-foreground/70">
         <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
+        {/* Fork: name the machine, the icon alone does not say which one. */}
+        {props.environmentLabel ? (
+          <span className="max-w-24 truncate text-2xs">{props.environmentLabel}</span>
+        ) : null}
       </span>
     ) : null;
   const diff = latestRunDiff(thread);

@@ -272,6 +272,8 @@ import {
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
+import { splitInboxByAttention, splitPinnedByAttention } from "./sidebar/forkInbox";
+import { buildForkChildrenByRowKey, ForkThreadChildren } from "./sidebar/ForkThreadChildren";
 
 function sameSidebarProviderEntries(
   left: ReadonlyMap<string, SidebarProviderEntry>,
@@ -330,6 +332,8 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const COMPLETED_SHELF_EXPANDED_KEY = "t3code:sidebar:completed-expanded";
+const PINNED_REST_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-rest-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -462,6 +466,16 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [completedShelfExpanded, setCompletedShelfExpanded] = useLocalStorage(
+    COMPLETED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const [pinnedRestShelfExpanded, setPinnedRestShelfExpanded] = useLocalStorage(
+    PINNED_REST_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -521,6 +535,27 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
+  // Fork: the inbox lists threads that wait on the user first; finished work gets its own shelf.
+  // Folders already group active threads, so boring mode keeps one list.
+  const inboxSplit =
+    folderGroups === null
+      ? splitInboxByAttention(activeThreads)
+      : { needsInput: activeThreads, completed: EMPTY_THREADS };
+  const needsInputThreads = inboxSplit.needsInput;
+  const completedThreads = inboxSplit.completed;
+  const visibleCompletedThreads = completedShelfExpanded
+    ? completedThreads
+    : routeThreadOnly(completedThreads, routeRowThreadKey);
+  // Fork: a pin keeps a thread at the top only while it waits on the user.
+  const pinnedSplit =
+    folderGroups === null
+      ? splitPinnedByAttention(pinnedThreads, isThreadWorking)
+      : { needsInput: pinnedThreads, rest: EMPTY_THREADS };
+  const pinnedNeedsInputThreads = pinnedSplit.needsInput;
+  const pinnedRestThreads = pinnedSplit.rest;
+  const visiblePinnedRestThreads = pinnedRestShelfExpanded
+    ? pinnedRestThreads
+    : routeThreadOnly(pinnedRestThreads, routeRowThreadKey);
   const projectFolders =
     folderGroups === null
       ? null
@@ -542,9 +577,9 @@ function useSidebarThreads(input: {
           };
         });
   const orderedThreads = [
-    ...pinnedThreads,
+    ...pinnedNeedsInputThreads,
     ...(projectFolders === null
-      ? activeThreads
+      ? [...needsInputThreads, ...visiblePinnedRestThreads, ...visibleCompletedThreads]
       : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
@@ -586,6 +621,16 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    needsInputThreads,
+    completedThreads,
+    visibleCompletedThreads,
+    completedShelfExpanded,
+    toggleCompletedShelf: () => setCompletedShelfExpanded((value) => !value),
+    pinnedNeedsInputThreads,
+    pinnedRestThreads,
+    visiblePinnedRestThreads,
+    pinnedRestShelfExpanded,
+    togglePinnedRestShelf: () => setPinnedRestShelfExpanded((value) => !value),
     projectFolders,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
@@ -1101,6 +1146,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const threads = useQuietThreadShells();
+  // Fork: subagents listed under the row that stands for them.
+  const forkChildrenByRowKey = buildForkChildrenByRowKey(threads);
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1321,6 +1368,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    needsInputThreads,
+    completedThreads,
+    visibleCompletedThreads,
+    completedShelfExpanded,
+    toggleCompletedShelf,
+    pinnedNeedsInputThreads,
+    pinnedRestThreads,
+    visiblePinnedRestThreads,
+    pinnedRestShelfExpanded,
+    togglePinnedRestShelf,
     projectFolders,
     toggleProjectFolder,
     renderedSettledThreads,
@@ -1950,12 +2007,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(pinnedNeedsInputThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
-    items.push(...activeRows);
+    items.push(...rowsOf(needsInputThreads, "active"));
+    if (pinnedRestThreads.length > 0) {
+      items.push({ kind: "marker", marker: "pinned-rest-header" });
+      items.push(...rowsOf(visiblePinnedRestThreads, "pinned"));
+    }
+    if (completedThreads.length > 0) {
+      items.push({ kind: "marker", marker: "completed-header" });
+      items.push(...rowsOf(visibleCompletedThreads, "active"));
+    }
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
@@ -2005,9 +2069,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState === null && sidebarListItems.length + visibleDraftSessionCount > 0;
   // Cache on both fields so layout-key changes trigger the effect even when animate is unchanged.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
-  const shelfExpansionKey = [workingShelfExpanded, snoozedShelfExpanded, settledShelfExpanded].join(
-    ":",
-  );
+  const shelfExpansionKey = [
+    pinnedRestShelfExpanded,
+    completedShelfExpanded,
+    workingShelfExpanded,
+    snoozedShelfExpanded,
+    settledShelfExpanded,
+  ].join(":");
   const previousShelfExpansionKeyRef = useRef(shelfExpansionKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the list motion controller to animate or not after each layout-affecting commit
   useLayoutEffect(() => {
@@ -3445,11 +3513,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      const pushForkChildren = (thread: EnvironmentThreadShell) => {
+                        const rowKey = threadShellKey(thread);
+                        const children = forkChildrenByRowKey.get(rowKey);
+                        if (children === undefined) return;
+                        items.push(
+                          <ForkThreadChildren
+                            key={`fork-children:${rowKey}`}
+                            threads={children}
+                            activeThreadKey={routeThreadKey}
+                            onOpen={navigateToThread}
+                          />,
+                        );
+                      };
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          const rowThread = threadByKey.get(item.key)!;
+                          items.push(renderThreadRow(rowThread, item.section));
+                          if (item.section !== "snoozed" && item.section !== "settled") {
+                            pushForkChildren(rowThread);
+                          }
                           continue;
                         }
                         if (projectFolders !== null && item.marker === "active-placeholder") {
@@ -3473,6 +3558,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   sidebarFolderRowId(folder.group.projectKey),
                                 ),
                               );
+                              pushForkChildren(thread);
                             }
                           }
                           continue;
@@ -3515,6 +3601,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                       dragTargetSection !== "active"))
                                 }
                                 isDropTarget={dragTargetSection === "active"}
+                              />,
+                            );
+                            break;
+                          case "pinned-rest-header":
+                            items.push(
+                              <SidebarSectionHeader
+                                key="pinned-rest-shelf-header"
+                                marker="pinned-rest-header"
+                                label="Pinned"
+                                count={pinnedRestThreads.length}
+                                dragging={from !== null}
+                                isDropTarget={dragTargetSection === "pinned"}
+                                toggle={{
+                                  expanded: pinnedRestShelfExpanded,
+                                  onToggle: togglePinnedRestShelf,
+                                }}
+                              />,
+                            );
+                            break;
+                          case "completed-header":
+                            items.push(
+                              <SidebarSectionHeader
+                                key="completed-shelf-header"
+                                marker="completed-header"
+                                label="Work completed"
+                                count={completedThreads.length}
+                                toggle={{
+                                  expanded: completedShelfExpanded,
+                                  onToggle: toggleCompletedShelf,
+                                }}
                               />,
                             );
                             break;

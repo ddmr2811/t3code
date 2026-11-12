@@ -201,6 +201,8 @@ export type SidebarListMarker =
   | "active-placeholder"
   | "settled-placeholder"
   | "pinned-divider"
+  | "pinned-rest-header"
+  | "completed-header"
   | "working-header"
   | "snoozed-header"
   | "settled-header";
@@ -223,6 +225,9 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     const item = items[i]!;
     if (item.kind !== "marker") continue;
     if (item.marker === "pinned-divider") section = "active";
+    // Fork shelves: pinned threads that do not wait on the user, then finished work.
+    else if (item.marker === "pinned-rest-header") section = "pinned";
+    else if (item.marker === "completed-header") section = "active";
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
@@ -254,6 +259,8 @@ export function resolveSidebarDropTarget(
   for (const item of moved) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
+      else if (item.marker === "pinned-rest-header") currentSection = "pinned";
+      else if (item.marker === "completed-header") currentSection = "active";
       else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
