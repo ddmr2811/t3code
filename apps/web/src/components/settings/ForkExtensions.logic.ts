@@ -384,7 +384,11 @@ const readOnlyMachineReason = (column: MatrixColumn) =>
 export type ForkCellAction =
   | { readonly kind: "toggle"; readonly agent: ForkExtensionAgent; readonly enabled: boolean }
   | { readonly kind: "install"; readonly agent: ForkExtensionAgent }
+  /** Opens the row's detail, where the problem and its fix are; `reason` is the tooltip. */
+  | { readonly kind: "details"; readonly reason: string }
   | { readonly kind: "none"; readonly reason: string };
+
+const sentence = (text: string) => (/[.!?…]$/.test(text) ? text : `${text}.`);
 
 /** What a click on a matrix cell does (spec §6.1); `none` carries the tooltip's reason. */
 export function forkCellAction(
@@ -408,6 +412,17 @@ export function forkCellAction(
   }
   if (cell.state === "notApplicable") {
     return { kind: "none", reason: `Not available for ${agent}.` };
+  }
+  // An amber cell explains itself rather than being switched off by a click.
+  if (cell.state === "needsAttention") {
+    const problem = isSnapshotCell(cell) ? cell.problem : null;
+    return {
+      kind: "details",
+      reason:
+        problem === null
+          ? "Click for details"
+          : `${sentence(problem.summary)} ${problem.nextStep}`.trim(),
+    };
   }
   if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column) };
   if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };

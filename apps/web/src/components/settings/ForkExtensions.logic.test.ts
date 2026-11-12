@@ -531,6 +531,23 @@ describe("page helpers", () => {
     });
   });
 
+  it("explains a cell that needs attention instead of switching it off", () => {
+    const broken = mcp("playwright", [
+      cell("claude", { state: "needsAttention", problem: npxMissing }),
+      cell("codex", { state: "needsAttention", problem: { ...npxMissing, summary: "Gone." } }),
+    ]);
+    const { columns, rows } = buildMatrix(
+      [machine(PC, "This PC", { snapshot: snapshot([broken]) })],
+      "mcp",
+    );
+    expect(
+      columns.map((column, index) => forkCellAction(column, rows[0]!.cells[index]!, broken)),
+    ).toEqual([
+      { kind: "details", reason: "npx not found. Install Node.js on this machine." },
+      { kind: "details", reason: "Gone. Install Node.js on this machine." },
+    ]);
+  });
+
   it("sends a claude.ai connector's switch and removal to claude.ai", () => {
     const projects = [{ path: "E:/repo", title: "repo", disabled: false }];
     const connector: ForkExtensionItem = {

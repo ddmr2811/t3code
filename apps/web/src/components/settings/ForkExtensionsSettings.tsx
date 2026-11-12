@@ -123,6 +123,10 @@ export function ForkExtensionsSettings() {
       row.itemsByMachine.get(column.environmentId) ?? row.item,
     );
     if (action.kind === "none") return;
+    if (action.kind === "details") {
+      setSelectedId(row.item.id);
+      return;
+    }
     if (action.kind === "install") {
       onInstallHere(row.item.id, column.environmentId, action.agent);
       return;
@@ -426,7 +430,7 @@ function MatrixCellButton({
   );
   const stateLabel = forkCellStateLabel(cell);
   const hint =
-    action.kind === "none"
+    action.kind === "none" || action.kind === "details"
       ? action.reason
       : action.kind === "install"
         ? "Click to install here"

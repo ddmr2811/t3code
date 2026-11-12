@@ -217,6 +217,15 @@ describe("ForkExtensionsSettings", () => {
     expect(state.calls).toEqual([]);
   });
 
+  it("opens the detail from a cell that needs attention, without switching it off", async () => {
+    setup();
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await page.getByRole("button", { name: "playwright on VPS · Claude: Needs attention" }).click();
+    const detail = page.getByRole("region", { name: "playwright details" });
+    await expect.element(detail.getByText("npx not found")).toBeVisible();
+    expect(state.calls).toEqual([]);
+  });
+
   it("opens the detail with a cell's problem and next step", async () => {
     setup();
     await using _screen = await render(<ForkExtensionsSettings />);
