@@ -197,3 +197,84 @@ it.effect("parks automatic pull until activation without delaying command readin
     }),
   ),
 );
+
+const targetProject = (id: string, workspaceRoot: string) => ({
+  id: ProjectId.make(id),
+  workspaceRoot,
+  autoPull: true,
+});
+
+const runAutoPull = (
+  status: Record<string, unknown>,
+  settings: typeof DEFAULT_SERVER_SETTINGS,
+  projects = [targetProject("target-project", "/target-project")],
+) => {
+  const pulls: string[] = [];
+  return ServerRuntimeStartup.autoPullProjects(projects, settings).pipe(
+    Effect.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        statusDetails: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasUpstream: true,
+            hasWorkingTreeChanges: false,
+            aheadCount: 0,
+            behindCount: 2,
+            ...status,
+          } as never),
+        pullCurrentBranch: (cwd) =>
+          Effect.sync(() => {
+            pulls.push(cwd);
+            return { status: "pulled", refName: "dev", upstreamRef: "origin/dev" } as never;
+          }),
+      }),
+    ),
+    Effect.as(pulls),
+  );
+};
+
+const withTarget = (forkTargetBranch: string, projectId = "target-project") => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  defaultAutoPull: true,
+  projectSettingsOverrides: { [ProjectId.make(projectId)]: { forkTargetBranch } },
+});
+const noTarget = { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true };
+const onDev = { branch: "dev", isDefaultBranch: false };
+
+it.effect("auto pull follows the target branch when the folder is on it", () =>
+  Effect.gen(function* () {
+    expect(yield* runAutoPull(onDev, withTarget("dev"))).toEqual(["/target-project"]);
+  }),
+);
+
+it.effect("auto pull skips a non-default folder when there is no target", () =>
+  Effect.gen(function* () {
+    expect(yield* runAutoPull(onDev, noTarget)).toEqual([]);
+  }),
+);
+
+it.effect("auto pull skips the default branch when the target is another branch", () =>
+  Effect.gen(function* () {
+    const main = { branch: "main", isDefaultBranch: true };
+    expect(yield* runAutoPull(main, withTarget("dev"))).toEqual([]);
+  }),
+);
+
+it.effect("auto pull skips the target branch with working tree changes or local commits", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* runAutoPull({ ...onDev, hasWorkingTreeChanges: true }, withTarget("dev")),
+    ).toEqual([]);
+    expect(yield* runAutoPull({ ...onDev, aheadCount: 1 }, withTarget("dev"))).toEqual([]);
+  }),
+);
+
+it.effect("auto pull uses the first non-null target among projects sharing a folder", () =>
+  Effect.gen(function* () {
+    const projects = [
+      targetProject("plain-project", "/shared"),
+      targetProject("target-project", "/shared"),
+    ];
+    expect(yield* runAutoPull(onDev, withTarget("dev"), projects)).toEqual(["/shared"]);
+  }),
+);

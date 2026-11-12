@@ -44,6 +44,11 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import {
+  firstForkTargetBranch,
+  forkTargetBranchFor,
+  isForkAutoPullBranch,
+} from "./fork/targetBranch.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { getServerOwners } from "./telemetry/Identify.ts";
@@ -194,22 +199,28 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const workspaceRoots = [
-    ...new Set(
-      projects
-        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
-        .map((project) => project.workspaceRoot),
-    ),
-  ];
+  const enabledProjects = projects.filter(
+    (project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull,
+  );
+  const workspaceRoots = [...new Set(enabledProjects.map((project) => project.workspaceRoot))];
 
   yield* Effect.forEach(
     workspaceRoots,
     (cwd) =>
       Effect.gen(function* () {
+        const targetBranch = firstForkTargetBranch(
+          enabledProjects
+            .filter((project) => project.workspaceRoot === cwd)
+            .map((project) => forkTargetBranchFor(settings, project.id)),
+        );
         const status = yield* git.statusDetails(cwd);
         if (
           !status.isRepo ||
-          !status.isDefaultBranch ||
+          !isForkAutoPullBranch({
+            branch: status.branch,
+            isDefaultBranch: status.isDefaultBranch,
+            targetBranch,
+          }) ||
           !status.hasUpstream ||
           status.hasWorkingTreeChanges ||
           status.aheadCount > 0
@@ -219,7 +230,9 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
             reason: !status.isRepo
               ? "not-a-repository"
               : !status.isDefaultBranch
-                ? "not-on-default-branch"
+                ? targetBranch === null
+                  ? "not-on-default-branch"
+                  : "not-on-target-branch"
                 : !status.hasUpstream
                   ? "no-upstream"
                   : status.hasWorkingTreeChanges

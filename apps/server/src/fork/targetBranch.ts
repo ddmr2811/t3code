@@ -37,3 +37,8 @@ export function forkPrBaseCandidate(input: {
   if (input.targetBranch === null || input.headBranch === input.targetBranch) return null;
   return input.targetBranch;
 }
+
+/** Primer destino no nulo de varios proyectos que comparten carpeta. */
+export function firstForkTargetBranch(targets: ReadonlyArray<string | null>): string | null {
+  return targets.find((target): target is string => target !== null) ?? null;
+}
