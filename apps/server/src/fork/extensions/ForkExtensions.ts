@@ -381,7 +381,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Review Focus 5: a switched-off Claude server re-added from the terminal shows
-   * `stashDiscarded` in this snapshot, and its stale copy is dropped (a write, so queued).
+   * `stashDiscarded` in this snapshot, and its stale copy is dropped. That is a write, so it
+   * waits for the queue in a fiber of the service; the snapshot never waits behind an install.
    */
   const discardStashConflicts = Effect.fn("ForkExtensions.discardStashConflicts")(function* (
     agents: ReadonlyArray<ResolvedAgent>,
@@ -404,6 +405,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
       Effect.provide(context),
+      Effect.forkIn(scope),
     );
   });
 

@@ -2,7 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -64,7 +67,13 @@ interface Options {
   readonly respond?: (
     argv: ReadonlyArray<string>,
     input: ProcessRunner.ProcessRunInput,
+    /** The default fake CLI, to run before answering differently. */
+    fake: (argv: ReadonlyArray<string>) => RunnerResult,
   ) => RunnerResult | undefined;
+  /** `<app>/.mcp.json` (Claude project scope). */
+  readonly appMcpJson?: unknown;
+  /** `claude` resolves to an npm script shim (`.cmd`), as on Windows with an npm install. */
+  readonly claudeScriptShim?: boolean;
   readonly claudeJson?: (paths: { appKey: string; otherKey: string }) => unknown;
   readonly stash?: Record<string, unknown>;
   /** After the first read of this file (by basename), rewrite it with this text. */
@@ -108,6 +117,12 @@ const withHarness = <A, E>(
       )}\n`,
     );
     yield* realFs.writeFileString(codexToml, CODEX_TOML);
+    if (options.appMcpJson !== undefined) {
+      yield* realFs.writeFileString(
+        path.join(appPath, ".mcp.json"),
+        JSON.stringify(options.appMcpJson),
+      );
+    }
     if (options.stash !== undefined) {
       yield* realFs.makeDirectory(path.dirname(stashFile), { recursive: true });
       yield* realFs.writeFileString(
@@ -207,7 +222,7 @@ const withHarness = <A, E>(
         run: (input) => {
           const argv = [input.command, ...input.args];
           return Ref.update(calls, (all) => [...all, { argv, cwd: input.cwd }]).pipe(
-            Effect.andThen(() => options.respond?.(argv, input) ?? fakeCli(argv)),
+            Effect.andThen(() => options.respond?.(argv, input, fakeCli) ?? fakeCli(argv)),
           );
         },
       }),
@@ -247,6 +262,12 @@ const withHarness = <A, E>(
           Layer.succeed(HostProcess.HomeDirectory, root),
           Layer.succeed(HostProcess.Environment, {}),
           Layer.succeed(FileSystem.FileSystem, fs),
+          // Hermetic spawn resolution: no real binary is looked up on this machine.
+          Layer.succeed(SpawnExecutableResolution, (command: string) =>
+            options.claudeScriptShim === true && command === "claude"
+              ? "C:\\npm\\claude.cmd"
+              : undefined,
+          ),
         ),
       ),
     );
@@ -568,9 +589,207 @@ describe("ForkExtensions.setEnabled (Claude MCP)", () => {
           expect(snapshot.items.find((item) => item.id === "mcp:context7")?.cells[0]).toMatchObject(
             { state: "unknown", stashDiscarded: true },
           );
+          // The discard runs in the write queue; queueing behind it waits for it.
+          yield* Effect.yieldNow;
+          yield* service.withWriteLock(Effect.void);
           expect(yield* readJson(stashFile)).toEqual({});
         }),
       { stash: { context7: { type: "stdio", command: "old" } } },
+    ),
+  );
+
+  it.effect("the snapshot does not wait for a busy write queue to drop a revived copy", () =>
+    withHarness(
+      ({ service, stashFile, readJson }) =>
+        Effect.gen(function* () {
+          const held = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const holder = yield* service
+            .withWriteLock(
+              Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+            )
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(held);
+          const snapshot = yield* service.snapshot;
+          expect(snapshot.items.find((item) => item.id === "mcp:context7")?.cells[0]).toMatchObject(
+            { stashDiscarded: true },
+          );
+          expect(Object.keys(yield* readJson(stashFile))).toEqual(["context7"]);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(holder);
+          yield* Effect.yieldNow;
+          yield* service.withWriteLock(Effect.void);
+          expect(yield* readJson(stashFile)).toEqual({});
+        }),
+      { stash: { context7: { type: "stdio", command: "old" } } },
+    ),
+  );
+
+  it.effect("a remove that times out after removing keeps the only copy", () =>
+    withHarness(
+      ({ service, claudeJsonFile, stashFile, readJson }) =>
+        Effect.gen(function* () {
+          const result = yield* service.setEnabled({
+            itemId: "mcp:context7",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({ ok: false, problem: { reason: "timeout" } });
+          expect((yield* readJson(claudeJsonFile)).mcpServers).toEqual({});
+          expect((yield* readJson(stashFile)).context7.definition).toEqual(CONTEXT7);
+        }),
+      {
+        respond: (argv, input, fake) =>
+          argv[2] === "remove"
+            ? fake(argv).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProcessRunner.ProcessTimeoutError({
+                      command: input.command,
+                      argumentCount: input.args.length,
+                      timeoutMs: 60_000,
+                    }),
+                  ),
+                ),
+              )
+            : undefined,
+      },
+    ),
+  );
+
+  it.effect("a refused remove (server still live) drops the new copy", () =>
+    withHarness(
+      ({ service, claudeJsonFile, stashFile, readJson }) =>
+        Effect.gen(function* () {
+          const result = yield* service.setEnabled({
+            itemId: "mcp:context7",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({ ok: false, problem: { reason: "commandFailed" } });
+          expect((yield* readJson(claudeJsonFile)).mcpServers.context7).toEqual(CONTEXT7);
+          expect(yield* readJson(stashFile)).toEqual({});
+        }),
+      {
+        respond: (argv) =>
+          argv[2] === "remove" ? Effect.succeed(output("", 1, "locked")) : undefined,
+      },
+    ),
+  );
+
+  it.effect("off then on restores a server defined both for the user and in a project", () =>
+    withHarness(
+      ({ service, calls, claudeJsonFile, stashFile, appKey, readJson }) =>
+        Effect.gen(function* () {
+          const off = yield* service.setEnabled({
+            itemId: "mcp:context7",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(off).toEqual({ agent: "claude", ok: true, problem: null });
+          const switchedOff = yield* readJson(claudeJsonFile);
+          expect(switchedOff.mcpServers).toEqual({});
+          expect(switchedOff.projects[appKey].disabledMcpServers).toEqual(["context7"]);
+
+          const on = yield* service.setEnabled({
+            itemId: "mcp:context7",
+            agent: "claude",
+            enabled: true,
+            projectPath: null,
+          });
+          expect(on).toEqual({ agent: "claude", ok: true, problem: null });
+          const restored = yield* readJson(claudeJsonFile);
+          expect(restored.mcpServers.context7).toEqual(CONTEXT7);
+          expect(restored.projects[appKey].disabledMcpServers).toEqual([]);
+          expect(restored.projects[appKey].mcpServers.context7).toEqual({ command: "local-c7" });
+          expect(yield* readJson(stashFile)).toEqual({});
+          expect(writes(yield* Ref.get(calls)).map((call) => call.argv.slice(0, 5))).toEqual([
+            ["claude", "mcp", "remove", "-s", "user"],
+            ["claude", "mcp", "add-json", "-s", "user"],
+          ]);
+        }),
+      {
+        claudeJson: ({ appKey }) => ({
+          mcpServers: { context7: CONTEXT7 },
+          projects: { [appKey]: { mcpServers: { context7: { command: "local-c7" } } } },
+        }),
+      },
+    ),
+  );
+
+  it.effect("global off skips a T3 project Claude never opened and says so", () =>
+    withHarness(
+      ({ service, claudeJsonFile, readJson }) =>
+        Effect.gen(function* () {
+          const result = yield* service.setEnabled({
+            itemId: "mcp:shared",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({
+            agent: "claude",
+            ok: true,
+            problem: { reason: "notFound", summary: expect.stringContaining("App") },
+          });
+          const projects = (yield* readJson(claudeJsonFile)).projects;
+          expect(Object.values(projects).map((p: any) => p.disabledMcpServers)).toEqual([
+            ["shared"],
+          ]);
+        }),
+      {
+        claudeJson: ({ otherKey }) => ({
+          mcpServers: {},
+          projects: { [otherKey]: { mcpServers: { shared: { command: "shared-mcp" } } } },
+        }),
+        appMcpJson: { mcpServers: { shared: { command: "shared-mcp" } } },
+      },
+    ),
+  );
+
+  it.effect("an empty saved copy is invalidInput and nothing is run", () =>
+    withHarness(
+      ({ service, calls, stashFile, readJson }) =>
+        Effect.gen(function* () {
+          const result = yield* service.setEnabled({
+            itemId: "mcp:saved",
+            agent: "claude",
+            enabled: true,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            problem: {
+              reason: "invalidInput",
+              summary: "The saved copy of saved is empty.",
+              nextStep: "Add the server again by hand.",
+            },
+          });
+          expect(writes(yield* Ref.get(calls))).toEqual([]);
+          expect(Object.keys(yield* readJson(stashFile))).toEqual(["saved"]);
+        }),
+      { stash: { saved: null } },
+    ),
+  );
+
+  it.effect("add-json is refused when claude is an npm script shim (cmd.exe re-parsing)", () =>
+    withHarness(
+      ({ service, calls, stashFile, readJson }) =>
+        Effect.gen(function* () {
+          const result = yield* service.setEnabled({
+            itemId: "mcp:saved",
+            agent: "claude",
+            enabled: true,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({ ok: false, problem: { reason: "unsupported" } });
+          expect(writes(yield* Ref.get(calls))).toEqual([]);
+          expect((yield* readJson(stashFile)).saved.definition).toEqual(CONTEXT7);
+        }),
+      { stash: { saved: CONTEXT7 }, claudeScriptShim: true },
     ),
   );
 
@@ -852,6 +1071,56 @@ describe("ForkExtensions.uninstall", () => {
         const [loose] = yield* service.uninstall({ itemId: "skill:notes", agents: ["codex"] });
         expect(loose).toEqual({ agent: "codex", ok: true, problem: null });
         expect(yield* fs.exists(path.join(codexSkills, "notes"))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("skips local copies whose project folder is gone, and says so", () =>
+    withHarness(
+      ({ service, calls, appKey }) =>
+        Effect.gen(function* () {
+          const [result] = yield* service.uninstall({ itemId: "mcp:db", agents: ["claude"] });
+          expect(result).toMatchObject({
+            agent: "claude",
+            ok: true,
+            problem: {
+              reason: "notFound",
+              summary: expect.stringContaining("left in 1 project whose folder no longer exists"),
+            },
+          });
+          expect(writes(yield* Ref.get(calls))).toEqual([
+            { argv: ["claude", "mcp", "remove", "-s", "local", "db"], cwd: appKey },
+          ]);
+        }),
+      {
+        claudeJson: ({ appKey, otherKey }) => ({
+          mcpServers: {},
+          projects: {
+            [appKey]: { mcpServers: { db: { command: "db-mcp" } } },
+            [otherKey]: { mcpServers: { db: { command: "db-mcp" } } },
+          },
+        }),
+      },
+    ),
+  );
+});
+
+describe("ForkExtensions.install into a missing project folder", () => {
+  it.effect("is invalidInput and runs nothing", () =>
+    withHarness(({ service, calls, root }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const [result] = yield* service.install({
+          ...remoteMcp,
+          agents: ["claude"],
+          scope: "local",
+          projectPath: path.join(root, "gone"),
+        });
+        expect(result).toMatchObject({
+          ok: false,
+          problem: { reason: "invalidInput", summary: expect.stringContaining("no longer exists") },
+        });
+        expect(writes(yield* Ref.get(calls))).toEqual([]);
       }),
     ),
   );

@@ -1,6 +1,7 @@
 import {
   ForkExtensionsError,
   type ForkExtensionAgent,
+  type ForkExtensionProblem,
   type ForkInstallRequest,
   type ForkInstallResult,
   type ForkProblemReason,
@@ -9,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { isCommandMissingCause } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -119,13 +121,35 @@ const agentOf = (
     : Effect.succeed(resolved);
 };
 
+/**
+ * Done, but not everywhere (a project folder that is gone, a project Claude never opened).
+ * Reported as `ok: true` with the problem, so the summary still reaches the user.
+ */
+interface Caveat {
+  readonly _tag: "Caveat";
+  readonly problem: ForkExtensionProblem;
+}
+
+const caveat = (summary: string, nextStep: string): Caveat => ({
+  _tag: "Caveat",
+  problem: { reason: "notFound", summary, nextStep, rawOutput: null },
+});
+
+const isCaveat = (value: unknown): value is Caveat => isRecord(value) && value._tag === "Caveat";
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
 /** One agent's outcome; typed failures and defects both become a problem, never a failure. */
 const toResult = <R>(
   agent: ForkExtensionAgent,
   effect: Effect.Effect<unknown, ForkExtensionsError, R>,
 ): Effect.Effect<ForkInstallResult, never, R> =>
   effect.pipe(
-    Effect.as<ForkInstallResult>({ agent, ok: true, problem: null }),
+    Effect.map((value): ForkInstallResult =>
+      isCaveat(value)
+        ? { agent, ok: true, problem: value.problem }
+        : { agent, ok: true, problem: null },
+    ),
     Effect.catch((error) =>
       Effect.succeed<ForkInstallResult>({ agent, ok: false, problem: error.problem }),
     ),
@@ -259,6 +283,23 @@ const projectsDefining = Effect.fn("ForkExtensions.projectsDefining")(function* 
   return found.flatMap(Option.toArray);
 });
 
+/** Splits project folders into those that still exist and those that are gone. */
+const partitionByFolder = Effect.fn("ForkExtensions.partitionByFolder")(function* (
+  paths: ReadonlyArray<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const checked = yield* Effect.forEach(paths, (folder) =>
+    fs.exists(folder).pipe(
+      Effect.orElseSucceed(() => false),
+      Effect.map((exists) => ({ folder, exists })),
+    ),
+  );
+  return {
+    present: checked.filter((entry) => entry.exists).map((entry) => entry.folder),
+    missing: checked.filter((entry) => !entry.exists).map((entry) => entry.folder),
+  };
+});
+
 type McpRequest = Extract<ForkInstallRequest, { readonly _tag: "mcp" }>;
 type PluginRequest = Extract<ForkInstallRequest, { readonly _tag: "plugin" }>;
 type SkillRequest = Extract<ForkInstallRequest, { readonly _tag: "skill" }>;
@@ -303,6 +344,16 @@ const installClaudeMcp = Effect.fn("ForkExtensions.installClaudeMcp")(function* 
         "alreadyExists",
         `Claude Code has a switched-off server named "${request.name}".`,
         "Pick another name, or switch the existing one back on.",
+      );
+    }
+  }
+  if (request.scope !== "user" && request.projectPath !== null) {
+    const { missing } = yield* partitionByFolder([request.projectPath]);
+    if (missing.length > 0) {
+      return yield* problem(
+        "invalidInput",
+        `The project folder ${request.projectPath} no longer exists.`,
+        "Pick another project, or restore the folder and retry.",
       );
     }
   }
@@ -728,9 +779,14 @@ const uninstallClaudeMcp = Effect.fn("ForkExtensions.uninstallClaudeMcp")(functi
     yield* runCli(agent, ["mcp", "remove", "-s", "user", name]);
     removed = true;
   }
-  for (const project of view.projects) {
-    if (!Object.hasOwn(project.servers, name)) continue;
-    yield* runCli(agent, ["mcp", "remove", "-s", "local", name], { cwd: project.path });
+  // `remove -s local` runs from the project folder; a folder that is gone can't be entered.
+  const { present, missing } = yield* partitionByFolder(
+    view.projects
+      .filter((project) => Object.hasOwn(project.servers, name))
+      .map((project) => project.path),
+  );
+  for (const folder of present) {
+    yield* runCli(agent, ["mcp", "remove", "-s", "local", name], { cwd: folder });
     removed = true;
   }
   if (Object.hasOwn(stashed, name)) {
@@ -743,6 +799,12 @@ const uninstallClaudeMcp = Effect.fn("ForkExtensions.uninstallClaudeMcp")(functi
       "unsupported",
       `"${name}" is ${removed ? "also " : ""}defined in the .mcp.json of ${inRepos.map((project) => project.title).join(", ")}.`,
       "Remove it from that repo's .mcp.json by hand, or switch it off per project.",
+    );
+  }
+  if (missing.length > 0) {
+    return caveat(
+      `${removed ? `Removed "${name}", but it is` : `"${name}" is`} left in ${plural(missing.length, "project")} whose folder no longer exists: ${missing.join(", ")}.`,
+      "Nothing uses it there. If a folder comes back, run `claude mcp remove -s local` in it.",
     );
   }
   if (!removed) return yield* notFoundOn("claude", `MCP server named "${name}"`);
@@ -807,6 +869,85 @@ const setClaudeMcpForProject = Effect.fn("ForkExtensions.setClaudeMcpForProject"
 });
 
 /**
+ * Stashes the exact user definition, then `claude mcp remove -s user`. When the CLI fails
+ * (or times out after writing), the copy is dropped only if the server is still live;
+ * otherwise it is the only copy left and is kept.
+ */
+const stashAndRemove = Effect.fn("ForkExtensions.stashAndRemove")(function* (
+  agent: ResolvedAgent,
+  name: string,
+  definition: unknown,
+) {
+  yield* stashClaudeMcp(name, "user", definition);
+  yield* runCli(agent, ["mcp", "remove", "-s", "user", name]).pipe(
+    Effect.tapError(() =>
+      readClaudeConfig(agent).pipe(
+        Effect.flatMap(({ view }) =>
+          Object.hasOwn(view.userServers, name) ? discardClaudeMcp(name) : Effect.void,
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("Extensions kept a switched-off copy after a failed remove", {
+            name,
+            reason: error.problem.reason,
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+/**
+ * On Windows, an npm `.cmd` shim that runs a script goes through cmd.exe, which re-parses the
+ * quotes of a JSON argument; `&`/`|` inside it could then run as commands. Shims of native
+ * executables are bypassed (`bypassNpmShim`), so only the script-shim case is refused.
+ */
+const assertJsonArgumentSafe = Effect.fn("ForkExtensions.assertJsonArgumentSafe")(function* (
+  agent: ResolvedAgent,
+  args: ReadonlyArray<string>,
+) {
+  const spawn = yield* resolveSpawnCommand(agent.binaryPath, args, {
+    env: agent.env,
+    extendEnv: true,
+    bypassNpmShim: true,
+  });
+  if (spawn.shell) {
+    return yield* problem(
+      "unsupported",
+      `${AGENT_NAMES[agent.agent]} runs through a Windows script shim here, so T3 can't pass the saved definition safely. The saved copy was kept.`,
+      `Install the native ${AGENT_NAMES[agent.agent]} build, or add the server again by hand.`,
+    );
+  }
+});
+
+/** Ruling 10: peek, then `add-json`; the caller discards the copy only after success. */
+const reAddFromStash = Effect.fn("ForkExtensions.reAddFromStash")(function* (
+  agent: ResolvedAgent,
+  name: string,
+) {
+  const saved = yield* peekClaudeMcp(name);
+  if (!isRecord(saved)) {
+    return yield* problem(
+      "invalidInput",
+      `The saved copy of ${name} is empty.`,
+      "Add the server again by hand.",
+    );
+  }
+  const definition = yield* encodeJson(saved).pipe(
+    Effect.mapError((cause) =>
+      problem(
+        "invalidInput",
+        `The saved copy of "${name}" can't be turned back into JSON.`,
+        "Add the server again by hand.",
+        String(cause),
+      ),
+    ),
+  );
+  const args = ["mcp", "add-json", "-s", "user", name, definition];
+  yield* assertJsonArgumentSafe(agent, args);
+  yield* runCli(agent, args);
+});
+
+/**
  * Global switch of a Claude MCP server. User scope: off = stash the exact definition and
  * `claude mcp remove`; on = `add-json` it back, dropping the stash only after that worked.
  * Local/project scope: the per-project switch in every project that has it.
@@ -845,52 +986,47 @@ const setClaudeMcpGlobally = Effect.fn("ForkExtensions.setClaudeMcpGlobally")(fu
     return yield* notFoundOn("claude", `MCP server named "${name}"`);
   }
 
+  // Projects where it is defined per project (local, or a repo's .mcp.json Claude has opened).
+  const repoKeys = inRepos.flatMap((project) => {
+    const key = projectKeyOf(read.view, project.path);
+    return key === undefined ? [] : [key];
+  });
+  const definingKeys = new Set([...localKeys, ...repoKeys].map(comparablePath));
+
   if (!enabled) {
-    const repoKeys: Array<string> = [];
-    for (const project of inRepos) {
-      const key = projectKeyOf(read.view, project.path);
-      if (key === undefined) return yield* neverOpened(project.path);
-      repoKeys.push(key);
-    }
+    // Ruling 17: a T3 project Claude never opened has no key to write; skip it and say so.
+    const unopened = inRepos.filter(
+      (project) => projectKeyOf(read.view, project.path) === undefined,
+    );
     const keys = [...new Set([...localKeys, ...repoKeys])];
     if (keys.length > 0) yield* writeProjectSwitches(agent, read, keys, name, true);
-    if (user !== undefined) {
-      yield* stashClaudeMcp(name, "user", user);
-      // If the CLI refuses, the server is still live: drop the copy so nothing is duplicated.
-      yield* runCli(agent, ["mcp", "remove", "-s", "user", name]).pipe(
-        Effect.tapError(() => discardClaudeMcp(name).pipe(Effect.ignore)),
+    if (user !== undefined) yield* stashAndRemove(agent, name, user);
+    if (unopened.length > 0) {
+      return caveat(
+        `Switched off, except in ${unopened.map((project) => project.title).join(", ")}: Claude Code hasn't opened ${unopened.length === 1 ? "that project" : "those projects"} yet.`,
+        "Open Claude Code once in that project, then switch it off again.",
       );
     }
     return;
   }
 
   if (inStash) {
-    if (user === undefined) {
-      const definition = yield* peekClaudeMcp(name).pipe(
-        Effect.flatMap(encodeJson),
-        Effect.mapError((cause) =>
-          isForkExtensionsError(cause)
-            ? cause
-            : problem(
-                "invalidInput",
-                `The saved copy of "${name}" can't be turned back into JSON.`,
-                "Add the server again by hand.",
-                String(cause),
-              ),
-        ),
-      );
-      yield* runCli(agent, ["mcp", "add-json", "-s", "user", name, definition]);
-    }
+    if (user === undefined) yield* reAddFromStash(agent, name);
     // Live config wins: a server re-added from the terminal makes the copy stale.
     yield* discardClaudeMcp(name);
-    return;
   }
-  if (user === undefined) {
-    const keys = read.view.projects
-      .filter((project) => project.disabled.includes(name))
-      .map((project) => project.path);
-    if (keys.length > 0) yield* writeProjectSwitches(agent, read, keys, name, false);
-  }
+  // add-json rewrote ~/.claude.json, so the per-project switches are read again. Global off
+  // switched it off where it is defined per project; on switches those back on.
+  const fresh = inStash ? yield* readClaudeConfig(agent) : read;
+  const noUserCopy = user === undefined && !inStash;
+  const keys = fresh.view.projects
+    .filter(
+      (project) =>
+        project.disabled.includes(name) &&
+        (noUserCopy || definingKeys.has(comparablePath(project.path))),
+    )
+    .map((project) => project.path);
+  if (keys.length > 0) yield* writeProjectSwitches(agent, fresh, keys, name, false);
 });
 
 const setCodexMcp = Effect.fn("ForkExtensions.setCodexMcp")(function* (

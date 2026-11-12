@@ -236,6 +236,8 @@ export const runCli = Effect.fn("ForkExtensions.runCli")(function* (
       args,
       env: agent.env,
       timeout: Duration.millis(timeoutMs),
+      // A shim of a native binary is spawned directly: no cmd.exe re-parsing of arguments.
+      bypassNpmShim: true,
       ...(opts?.stdin === undefined ? {} : { stdin: opts.stdin }),
       ...(opts?.cwd === undefined ? {} : { cwd: opts.cwd }),
     })

@@ -31,6 +31,8 @@ export interface ProcessRunInput {
   readonly truncatedMarker?: string | undefined;
   /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
+  /** Spawn an npm cmd-shim's native executable directly instead of through cmd.exe. */
+  readonly bypassNpmShim?: boolean | undefined;
 }
 
 export interface ProcessRunOutput {
@@ -272,11 +274,10 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.command,
-    input.args,
-    input.env === undefined ? {} : { env: input.env, extendEnv },
-  );
+  const spawnCommand = yield* resolveSpawnCommand(input.command, input.args, {
+    ...(input.env === undefined ? {} : { env: input.env, extendEnv }),
+    ...(input.bypassNpmShim === true ? { bypassNpmShim: true } : {}),
+  });
 
   const toSpawnError = (cause: unknown) =>
     new ProcessSpawnError({
