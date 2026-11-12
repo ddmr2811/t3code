@@ -18,6 +18,8 @@ const WIDGET_WINDOW_NAME = "t3-fork-resource-widget";
 const WIDGET_SIZE = { width: 380, height: 170 };
 const POSITION_KEY = "t3code:fork:resource-widget-position";
 const REFRESH_MS = 2_000;
+const POSITION_SAVE_MS = 1_000;
+const POSITION_SETTLE_MS = 700;
 const ENABLED_KEY = "t3code:fork:resource-widget-enabled";
 const AUTOSTART_KEY = "t3code:fork:autostart";
 
@@ -90,18 +92,33 @@ function setWidgetWindow(next: Window | null) {
   for (const listener of listeners) listener();
 }
 
+let positionTimer: ReturnType<typeof setInterval> | undefined;
+let lastSavedPosition = "";
+
 function savePosition(popup: Window) {
+  // A closing window reports 0,0, so only an open one is read.
+  if (popup.closed) return;
+  const value = JSON.stringify({ left: popup.screenX, top: popup.screenY });
+  if (value === lastSavedPosition) return;
+  lastSavedPosition = value;
   try {
-    localStorage.setItem(POSITION_KEY, JSON.stringify({ left: popup.screenX, top: popup.screenY }));
+    localStorage.setItem(POSITION_KEY, value);
   } catch {
     // Losing the position is harmless.
   }
+}
+
+/** Saved while open: the app can quit, or the OS close the window, without telling this renderer first. */
+function trackPosition(popup: Window) {
+  clearInterval(positionTimer);
+  positionTimer = setInterval(() => savePosition(popup), POSITION_SAVE_MS);
 }
 
 function closeWidget() {
   const popup = widgetWindow;
   if (popup === null) return;
   setWidgetWindow(null);
+  clearInterval(positionTimer);
   if (!popup.closed) {
     savePosition(popup);
     popup.close();
@@ -116,11 +133,13 @@ export function toggleForkResourceWidget() {
   }
   const popup = openWidgetWindow();
   if (popup === null) return;
-  // Closed from its own side (Alt+F4, the OS): keep the position and forget the window.
+  // Closed from its own side (Alt+F4, the OS): forget the window.
   popup.addEventListener("pagehide", () => {
-    savePosition(popup);
-    if (widgetWindow === popup) setWidgetWindow(null);
+    if (widgetWindow !== popup) return;
+    clearInterval(positionTimer);
+    setWidgetWindow(null);
   });
+  trackPosition(popup);
   window.addEventListener("pagehide", closeWidget, { once: true });
   setWidgetWindow(popup);
 }
@@ -161,6 +180,17 @@ function openWidgetWindow(): Window | null {
   ].join(",");
   const child = window.open("about:blank", WIDGET_WINDOW_NAME, features);
   if (child === null) return null;
+  if (position) {
+    // The shell places the window's invisible resize border at the asked position, a few
+    // pixels off the reported one; correct it once so reopening does not creep.
+    setTimeout(() => {
+      if (child.closed) return;
+      const dx = position.left - child.screenX;
+      const dy = position.top - child.screenY;
+      // Moving lands short by the same amount as opening did, so ask for that much more.
+      if (dx !== 0 || dy !== 0) child.moveTo(position.left + dx, position.top + dy);
+    }, POSITION_SETTLE_MS);
+  }
   const root = document.documentElement;
   child.document.title = "T3 Code machines";
   child.document.documentElement.className = root.className;
