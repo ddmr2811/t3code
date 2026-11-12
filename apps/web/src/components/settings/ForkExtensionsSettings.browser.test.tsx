@@ -270,6 +270,21 @@ describe("ForkExtensionsSettings", () => {
     const detail = page.getByRole("region", { name: "playwright details" });
     await expect.element(detail.getByText("npx not found")).toBeVisible();
     expect(state.calls).toEqual([]);
+
+    // The detail still turns it off: a server that keeps failing is one to switch off.
+    state.results.set(forkExtensionsSetEnabled.label, { agent: "claude", ok: true, problem: null });
+    await detail.getByRole("button", { name: "Turn off" }).click();
+    await expect
+      .poll(() => state.calls)
+      .toEqual([
+        {
+          label: forkExtensionsSetEnabled.label,
+          value: {
+            environmentId: VPS,
+            input: { itemId: "mcp:playwright", agent: "claude", enabled: false, projectPath: null },
+          },
+        },
+      ]);
   });
 
   it("opens the detail with a cell's problem and next step", async () => {

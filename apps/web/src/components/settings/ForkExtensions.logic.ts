@@ -424,6 +424,16 @@ export function forkCellAction(
           : `${sentence(problem.summary)} ${problem.nextStep}`.trim(),
     };
   }
+  return forkSwitchAction(column, cell, item);
+}
+
+/** What switching the cell does, ignoring that an amber cell's click opens its detail. */
+function forkSwitchAction(
+  column: MatrixColumn,
+  cell: MatrixCell,
+  item: ForkExtensionItem,
+): ForkCellAction {
+  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell) };
   if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column) };
   if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };
   // Connectors belong to the claude.ai account: no CLI here can switch or remove them.
@@ -441,6 +451,22 @@ export function forkCellAction(
 }
 
 /**
+ * The "Turn off" an amber cell offers in its detail: its click only explains, but a server that
+ * keeps failing is exactly one to switch off. Null for every other cell.
+ */
+export function forkDetailTurnOff(
+  column: MatrixColumn,
+  cell: MatrixCell,
+  item: ForkExtensionItem,
+): Extract<ForkCellAction, { kind: "toggle" }> | null {
+  if (cell.state !== "needsAttention") return null;
+  const action = forkCellAction(column, cell, item);
+  if (action.kind !== "details") return null;
+  const turnOff = forkSwitchAction(column, cell, item);
+  return turnOff.kind === "toggle" && !turnOff.enabled ? turnOff : null;
+}
+
+/**
  * Why a click that turns a cell off asks first; null when it can just go. Claude's global off of
  * a user-scope remote server is `claude mcp remove`, which also drops its sign-in.
  */
@@ -448,8 +474,11 @@ export function forkTurnOffWarning(
   column: MatrixColumn,
   cell: MatrixCell,
   item: ForkExtensionItem,
+  options: { readonly fromDetail?: boolean } = {},
 ): string | null {
-  const action = forkCellAction(column, cell, item);
+  const action = options.fromDetail
+    ? (forkDetailTurnOff(column, cell, item) ?? forkCellAction(column, cell, item))
+    : forkCellAction(column, cell, item);
   if (action.kind !== "toggle" || action.enabled || action.agent !== "claude") return null;
   if (item.transport !== "http" && item.transport !== "sse") return null;
   if (!isSnapshotCell(cell) || !cell.scopes.includes("user")) return null;

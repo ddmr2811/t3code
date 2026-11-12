@@ -30,6 +30,7 @@ import {
   forkCellStateLabel,
   forkColumnLabel,
   forkSourceTag,
+  forkDetailTurnOff,
   forkTurnOffWarning,
   oldestHealthCheck,
   type MatrixCell,
@@ -79,6 +80,7 @@ export function ForkExtensionsSettings() {
     readonly column: MatrixColumn;
     readonly cell: MatrixCell;
     readonly warning: string;
+    readonly fromDetail: boolean;
   } | null>(null);
   // Each "Install here" remounts the form (a new key) with that item and only that place checked.
   const [installHere, setInstallHere] = useState<{
@@ -143,10 +145,13 @@ export function ForkExtensionsSettings() {
     row: MatrixRow,
     column: MatrixColumn,
     cell: MatrixCell,
-    confirmed = false,
+    { confirmed = false, fromDetail = false }: { confirmed?: boolean; fromDetail?: boolean } = {},
   ) => {
     const item = row.itemsByMachine.get(column.environmentId) ?? row.item;
-    const action = forkCellAction(column, cell, item);
+    // An amber cell's click only explains; its detail's "Turn off" switches it.
+    const action =
+      (fromDetail ? forkDetailTurnOff(column, cell, item) : null) ??
+      forkCellAction(column, cell, item);
     if (action.kind === "none") return;
     if (action.kind === "details") {
       setSelectedId(row.item.id);
@@ -158,9 +163,9 @@ export function ForkExtensionsSettings() {
     }
     const key = `${row.item.id}\n${column.key}`;
     if (pending.has(key)) return;
-    const warning = confirmed ? null : forkTurnOffWarning(column, cell, item);
+    const warning = confirmed ? null : forkTurnOffWarning(column, cell, item, { fromDetail });
     if (warning !== null) {
-      setTurnOff({ row, column, cell, warning });
+      setTurnOff({ row, column, cell, warning, fromDetail });
       return;
     }
     setPending((current) => new Set(current).add(key));
@@ -205,20 +210,40 @@ export function ForkExtensionsSettings() {
       nowMs={nowMs}
       onInstallHere={onInstallHere}
       onNotices={(next) => addNotices(detailRow.item.kind, next)}
-      renderCellActions={(context) => (
-        <ForkAuthorizeButton
-          context={context}
-          onLogin={(agent) =>
-            authorize.start({
-              environmentId: context.column.environmentId,
-              machineLabel: context.column.machineLabel,
-              agent,
-              itemId: detailRow.item.id,
-              itemName: detailRow.item.name,
-            })
-          }
-        />
-      )}
+      renderCellActions={(context) => {
+        const canTurnOff =
+          forkDetailTurnOff(context.column, context.cell, context.item ?? detailRow.item) !== null;
+        const turnOffKey = `${detailRow.item.id}
+${context.column.key}`;
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            <ForkAuthorizeButton
+              context={context}
+              onLogin={(agent) =>
+                authorize.start({
+                  environmentId: context.column.environmentId,
+                  machineLabel: context.column.machineLabel,
+                  agent,
+                  itemId: detailRow.item.id,
+                  itemName: detailRow.item.name,
+                })
+              }
+            />
+            {canTurnOff ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={pending.has(turnOffKey)}
+                onClick={() =>
+                  void clickCell(detailRow, context.column, context.cell, { fromDetail: true })
+                }
+              >
+                Turn off
+              </Button>
+            ) : null}
+          </div>
+        );
+      }}
     >
       <ForkPerProjectSection
         row={detailRow}
@@ -380,7 +405,10 @@ export function ForkExtensionsSettings() {
                         // The detail opens right under its row, not below every other row. A
                         // plain row: it is a panel, without the matrix rows' hover and padding.
                         <tr className="border-b">
-                          <td colSpan={columns.length + 2}>{renderDetail(row)}</td>
+                          {/* max-w-0: the panel wraps to the table's width instead of widening every column. */}
+                          <td colSpan={columns.length + 2} className="max-w-0">
+                            {renderDetail(row)}
+                          </td>
                         </tr>
                       ) : null}
                     </Fragment>
@@ -411,7 +439,10 @@ export function ForkExtensionsSettings() {
                 <Button
                   onClick={() => {
                     setTurnOff(null);
-                    void clickCell(turnOff.row, turnOff.column, turnOff.cell, true);
+                    void clickCell(turnOff.row, turnOff.column, turnOff.cell, {
+                      confirmed: true,
+                      fromDetail: turnOff.fromDetail,
+                    });
                   }}
                 >
                   Turn off

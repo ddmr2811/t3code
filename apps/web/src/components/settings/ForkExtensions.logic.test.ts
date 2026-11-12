@@ -18,6 +18,7 @@ import {
   forkCellAction,
   forkProjectToggleGroups,
   forkSourceTag,
+  forkDetailTurnOff,
   forkTurnOffWarning,
   forkUninstallTargets,
   HEALTH_STALE_MS,
@@ -574,6 +575,36 @@ describe("page helpers", () => {
       { kind: "details", reason: "npx not found. Install Node.js on this machine." },
       { kind: "details", reason: "Gone. Install Node.js on this machine." },
     ]);
+  });
+
+  it("still lets an amber cell be switched off from its detail", () => {
+    const broken = {
+      ...mcp("notion", [
+        cell("claude", { state: "needsAttention", problem: npxMissing }),
+        cell("codex", { state: "needsAttention", problem: npxMissing }),
+      ]),
+      transport: "http" as const,
+    };
+    const working = mcp("playwright", [cell("claude")]);
+    const { columns, rows } = buildMatrix(
+      [machine(PC, "This PC", { snapshot: snapshot([broken, working]) })],
+      "mcp",
+    );
+    const row = (id: string) => rows.find((entry) => entry.item.id === id)!;
+    expect(
+      columns.map((column, index) =>
+        forkDetailTurnOff(column, row("mcp:notion").cells[index]!, broken),
+      ),
+    ).toEqual([
+      { kind: "toggle", agent: "claude", enabled: false },
+      { kind: "toggle", agent: "codex", enabled: false },
+    ]);
+    // The same sign-in warning applies as from the matrix.
+    expect(
+      forkTurnOffWarning(columns[0]!, row("mcp:notion").cells[0]!, broken, { fromDetail: true }),
+    ).toBe("You'll have to authorize it again when you turn it back on.");
+    // A working cell is switched from the matrix, not the detail.
+    expect(forkDetailTurnOff(columns[0]!, row("mcp:playwright").cells[0]!, working)).toBeNull();
   });
 
   it("sends a claude.ai connector's switch and removal to claude.ai", () => {
