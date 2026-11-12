@@ -25,12 +25,14 @@ import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
+  type EnvironmentStreamCommandRpcTag,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
   RpcPermissionGuard,
+  runStreamGuarded,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1059,6 +1061,67 @@ export function createEnvironmentRpcCommand<
           (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
         ),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+      );
+    },
+  });
+  return {
+    ...command,
+    requiredScopes: permissions.requiredScopes,
+    permissionAtom: permissions.permissionAtom,
+  };
+}
+
+/**
+ * Fork: a client-guarded stream command, such as a one-shot login that must not be replayed on
+ * reconnect. `onEvent` sees every value; the command resolves with the last one.
+ */
+export function createEnvironmentRpcStreamCommand<
+  R,
+  ER,
+  TTag extends EnvironmentStreamCommandRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly onSettled?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: EnvironmentRpcInput<TTag>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Effect.Effect<void, never, R>;
+  },
+) {
+  const permissions = createCommandPermissions(runtime, options.tag);
+  const command = createEnvironmentCommand(runtime, {
+    label: options.label,
+    execute: (
+      input: {
+        readonly payload: EnvironmentRpcInput<TTag>;
+        readonly onEvent: (value: EnvironmentRpcStreamValue<TTag>) => void;
+      },
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentIdType,
+    ) => {
+      let last = Option.none<EnvironmentRpcStreamValue<TTag>>();
+      return permissions.authorize(registry, environmentId, input.payload).pipe(
+        Effect.andThen(
+          Stream.runForEach(runStreamGuarded(options.tag, input.payload), (value) =>
+            Effect.sync(() => {
+              last = Option.some(value);
+              input.onEvent(value);
+            }),
+          ),
+        ),
+        Effect.map(() => last),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, payload) =>
+            createCommandPermissions(runtime, method).authorize(registry, id, payload),
+        }),
+        Effect.ensuring(
+          options.onSettled?.({ environmentId, input: input.payload }, registry) ?? Effect.void,
+        ),
       );
     },
   });
