@@ -389,7 +389,8 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
           <button
             type="button"
             aria-label="Open T3 Code"
-            onClick={window.forkBridge.showMain}
+            // Called without the click event: the bridge cannot clone it and would throw.
+            onClick={() => window.forkBridge?.showMain()}
             className="flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
           >
             <AppWindowIcon className="size-3.5" />
