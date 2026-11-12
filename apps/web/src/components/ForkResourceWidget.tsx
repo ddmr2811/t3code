@@ -3,19 +3,25 @@
 // desktop shell frames it and keeps the app in the tray (apps/desktop/src/window/ForkResourceWidget.ts).
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { AppWindowIcon, XIcon } from "lucide-react";
+import * as Option from "effect/Option";
+import { AppWindowIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
+import { useNowMinute } from "../hooks/useNowMinute";
 import { formatBytes } from "../lib/formatBytes";
 import { useResourceTelemetry } from "../lib/resourceTelemetryState";
 import { cn } from "../lib/utils";
 import { useVisibleThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
+import { useEnvironmentQuery } from "../state/query";
+import { serverEnvironment } from "../state/server";
+import { isSidebarHiddenThread } from "./Sidebar.logic";
+import { isWorkCompletedThread } from "./sidebar/forkInbox";
 
 /** Must match the frame name the desktop shell allows. */
 const WIDGET_WINDOW_NAME = "t3-fork-resource-widget";
-const WIDGET_SIZE = { width: 380, height: 170 };
+const WIDGET_SIZE = { width: 520, height: 170 };
 const POSITION_KEY = "t3code:fork:resource-widget-position";
 const REFRESH_MS = 2_000;
 const POSITION_SAVE_MS = 1_000;
@@ -210,45 +216,112 @@ function openWidgetWindow(): Window | null {
   return child;
 }
 
+/** A machine past this share of its CPU or memory is a poor place for the next task. */
+const BUSY_SHARE = 0.85;
+const SATURATED_SHARE = 0.95;
+/** Below this, the operating system is holding the CPU back (heat, power plan). */
+const THROTTLED_SPEED_PERCENT = 80;
+/** Numbers older than this are shown dimmed rather than passed off as current. */
+const STALE_MS = 15_000;
+
+function shareTone(share: number | null): string {
+  if (share === null) return "text-foreground";
+  if (share >= SATURATED_SHARE) return "text-destructive";
+  if (share >= BUSY_SHARE) return "text-warning-foreground";
+  return "text-foreground";
+}
+
 function MachineRow(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly workingThreads: number;
+  readonly waitingThreads: number;
 }) {
-  const telemetry = useResourceTelemetry(props.environmentId);
-  const refresh = telemetry.refresh;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls this machine's telemetry snapshot while the widget window is open
+  const { environmentId } = props;
+  // T3 Code's own footprint: the agents and server on that machine.
+  const telemetry = useResourceTelemetry(environmentId);
+  // The whole machine, whatever else runs on it. The server already samples this for load balancing.
+  const host = useEnvironmentQuery(serverEnvironment.hostResources({ environmentId, input: {} }));
+  const refreshTelemetry = telemetry.refresh;
+  const refreshHost = host.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls this machine's load while the widget window is open
   useEffect(() => {
-    const timer = setInterval(refresh, REFRESH_MS);
+    const timer = setInterval(() => {
+      refreshTelemetry();
+      refreshHost();
+    }, REFRESH_MS);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refreshTelemetry, refreshHost]);
+  const nowMs = Date.parse(`${useNowMinute()}:00Z`);
 
+  const resources = host.data;
   const snapshot = telemetry.data;
-  const all = snapshot?.groups.allT3;
-  // A machine that reports nothing is unreachable or this connection may not read its diagnostics.
-  const unavailable = !snapshot && (telemetry.error !== null || !telemetry.isPending);
+  const agents = snapshot?.groups.backend;
+  const cpuShare = resources?.cpuUtilization ?? null;
+  const memoryShare =
+    resources && resources.totalMemoryBytes > 0
+      ? 1 - resources.availableMemoryBytes / resources.totalMemoryBytes
+      : null;
+  // Process CPU is per core; the machine's is a share of all cores.
+  const agentsCpuShare =
+    agents && resources && resources.cpuCount > 0
+      ? agents.currentCpuPercent / 100 / resources.cpuCount
+      : null;
+  const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
+  const throttled = speedLimit !== null && speedLimit < THROTTLED_SPEED_PERCENT;
+  const unreachable = !resources && (host.error !== null || !host.isPending);
+  // The minute tick lags by up to a minute, so only clearly old samples count as stale.
+  const stale = resources !== null && nowMs - host.dataUpdatedAt > STALE_MS + 60_000;
   const cell = "truncate text-end font-mono font-semibold tabular-nums";
+  const percent = (share: number | null) => (share === null ? "…" : `${Math.round(share * 100)}%`);
+
   return (
     <div
       role="row"
-      className="col-span-5 grid grid-cols-subgrid items-center rounded-md bg-muted/30 px-2.5 py-1.5 text-sm"
+      className={cn(
+        "col-span-6 grid grid-cols-subgrid items-center rounded-md bg-muted/30 px-2.5 py-1.5 text-sm",
+        stale && "opacity-50",
+      )}
     >
-      <span className="truncate font-medium">{props.label}</span>
-      {unavailable ? (
+      <span className="flex min-w-0 items-center gap-1.5 font-medium">
+        <span className="truncate">{props.label}</span>
+        {throttled ? (
+          <TriangleAlertIcon
+            role="img"
+            aria-label={`CPU held to ${speedLimit.toFixed(0)}% speed`}
+            className="size-3.5 shrink-0 text-warning-foreground"
+          />
+        ) : null}
+      </span>
+      {unreachable ? (
         <span className="col-span-3 truncate text-end text-muted-foreground text-xs">
-          {telemetry.error ?? "No data"}
+          {host.error ?? "No data"}
         </span>
       ) : (
         <>
-          <span className={cell}>{all ? `${all.currentCpuPercent.toFixed(0)}%` : "…"}</span>
-          <span className={cell}>{all ? formatBytes(all.currentRssBytes) : "…"}</span>
-          <span className={cell}>{all ? String(all.processCount) : "…"}</span>
+          <span className={cn(cell, shareTone(cpuShare))}>{percent(cpuShare)}</span>
+          <span className={cn(cell, shareTone(memoryShare))}>
+            {resources
+              ? `${formatBytes(resources.totalMemoryBytes - resources.availableMemoryBytes)} / ${formatBytes(resources.totalMemoryBytes)}`
+              : "…"}
+          </span>
+          <span className={cn(cell, "font-normal text-muted-foreground")}>
+            {agents ? `${percent(agentsCpuShare)} · ${formatBytes(agents.currentRssBytes)}` : "…"}
+          </span>
         </>
       )}
       <span
         className={cn(cell, props.workingThreads > 0 ? "text-foreground" : "text-muted-foreground")}
       >
         {props.workingThreads}
+      </span>
+      <span
+        className={cn(
+          cell,
+          props.waitingThreads > 0 ? "text-warning-foreground" : "text-muted-foreground",
+        )}
+      >
+        {props.waitingThreads}
       </span>
     </div>
   );
@@ -257,14 +330,18 @@ function MachineRow(props: {
 function WidgetBody({ onClose }: { readonly onClose: () => void }) {
   const environments = useEnvironmentIdentities();
   const threads = useVisibleThreadShells();
-  const workingByEnvironment = new Map<string, number>();
+  const working = new Map<string, number>();
+  const waiting = new Map<string, number>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null || thread.settledOverride === "settled") continue;
-    if (!isThreadWorking(thread)) continue;
-    workingByEnvironment.set(
-      thread.environmentId,
-      (workingByEnvironment.get(thread.environmentId) ?? 0) + 1,
-    );
+    if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
+    if (isSidebarHiddenThread(thread) || thread.settledOverride === "settled") continue;
+    // Same split as the sidebar: working, finished, or waiting on the user.
+    const counts = isThreadWorking(thread)
+      ? working
+      : isWorkCompletedThread(thread)
+        ? null
+        : waiting;
+    counts?.set(thread.environmentId, (counts.get(thread.environmentId) ?? 0) + 1);
   }
   const heading =
     "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
@@ -298,21 +375,23 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
       <div
         role="table"
         aria-label="Connected machines"
-        className="grid min-h-0 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
+        className="grid min-h-0 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
       >
-        <div role="row" className="col-span-5 grid grid-cols-subgrid px-2.5">
+        <div role="row" className="col-span-6 grid grid-cols-subgrid px-2.5">
           <span className={heading}>Machine</span>
           <span className={cn(heading, "text-end")}>CPU</span>
           <span className={cn(heading, "text-end")}>Memory</span>
-          <span className={cn(heading, "text-end")}>Procs</span>
+          <span className={cn(heading, "text-end")}>Agents</span>
           <span className={cn(heading, "text-end")}>Working</span>
+          <span className={cn(heading, "text-end")}>Waiting</span>
         </div>
         {environments.map((environment) => (
           <MachineRow
             key={environment.environmentId}
             environmentId={environment.environmentId}
             label={environment.label}
-            workingThreads={workingByEnvironment.get(environment.environmentId) ?? 0}
+            workingThreads={working.get(environment.environmentId) ?? 0}
+            waitingThreads={waiting.get(environment.environmentId) ?? 0}
           />
         ))}
       </div>
