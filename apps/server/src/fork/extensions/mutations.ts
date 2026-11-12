@@ -793,18 +793,31 @@ const uninstallClaudeMcp = Effect.fn("ForkExtensions.uninstallClaudeMcp")(functi
     yield* discardClaudeMcp(name);
     removed = true;
   }
+  const staleNote =
+    missing.length === 0
+      ? ""
+      : ` It is also left in ${plural(missing.length, "project")} whose folder no longer exists: ${missing.join(", ")}.`;
   if (inRepos.length > 0) {
     // A repo's .mcp.json is shared through git; T3 never edits it.
     return yield* problem(
       "unsupported",
-      `"${name}" is ${removed ? "also " : ""}defined in the .mcp.json of ${inRepos.map((project) => project.title).join(", ")}.`,
-      "Remove it from that repo's .mcp.json by hand, or switch it off per project.",
+      `"${name}" is ${removed ? "also " : ""}defined in the .mcp.json of ${inRepos.map((project) => project.title).join(", ")}.${staleNote}`,
+      missing.length === 0
+        ? "Remove it from that repo's .mcp.json by hand, or switch it off per project."
+        : "Remove it from that repo's .mcp.json by hand, and the stale project entries from ~/.claude.json (or restore the folders).",
+    );
+  }
+  if (missing.length > 0 && !removed) {
+    return yield* problem(
+      "notFound",
+      `Nothing was removed: "${name}" is only left in ${plural(missing.length, "project")} whose folder no longer exists: ${missing.join(", ")}.`,
+      "Remove the stale project entries from ~/.claude.json, or restore the folders.",
     );
   }
   if (missing.length > 0) {
     return caveat(
-      `${removed ? `Removed "${name}", but it is` : `"${name}" is`} left in ${plural(missing.length, "project")} whose folder no longer exists: ${missing.join(", ")}.`,
-      "Nothing uses it there. If a folder comes back, run `claude mcp remove -s local` in it.",
+      `Removed "${name}", but it is left in ${plural(missing.length, "project")} whose folder no longer exists: ${missing.join(", ")}.`,
+      "Nothing uses it there. Remove the stale project entries from ~/.claude.json, or restore the folders.",
     );
   }
   if (!removed) return yield* notFoundOn("claude", `MCP server named "${name}"`);
@@ -999,6 +1012,14 @@ const setClaudeMcpGlobally = Effect.fn("ForkExtensions.setClaudeMcpGlobally")(fu
       (project) => projectKeyOf(read.view, project.path) === undefined,
     );
     const keys = [...new Set([...localKeys, ...repoKeys])];
+    if (keys.length === 0 && user === undefined && !inStash) {
+      // Only in repos Claude never opened: nothing to switch, so not "switched off".
+      return yield* problem(
+        "notFound",
+        `${name} isn't active in any project Claude has opened yet.`,
+        "Open the project in Claude Code once, then try again.",
+      );
+    }
     if (keys.length > 0) yield* writeProjectSwitches(agent, read, keys, name, true);
     if (user !== undefined) yield* stashAndRemove(agent, name, user);
     if (unopened.length > 0) {

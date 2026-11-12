@@ -268,6 +268,10 @@ const withHarness = <A, E>(
               ? "C:\\npm\\claude.cmd"
               : undefined,
           ),
+          // Shims only exist on Windows; resolveSpawnCommand skips the resolver elsewhere.
+          options.claudeScriptShim === true
+            ? Layer.succeed(HostProcess.Platform, "win32")
+            : Layer.empty,
         ),
       ),
     );
@@ -1122,6 +1126,83 @@ describe("ForkExtensions.install into a missing project folder", () => {
         });
         expect(writes(yield* Ref.get(calls))).toEqual([]);
       }),
+    ),
+  );
+});
+
+describe("ForkExtensions: nothing done is never reported as done", () => {
+  it.effect("global off of a server only in a repo Claude never opened is notFound", () =>
+    withHarness(
+      ({ service, claudeJsonFile, readJson }) =>
+        Effect.gen(function* () {
+          const before = yield* readJson(claudeJsonFile);
+          const result = yield* service.setEnabled({
+            itemId: "mcp:shared",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            problem: {
+              reason: "notFound",
+              summary: "shared isn't active in any project Claude has opened yet.",
+              nextStep: "Open the project in Claude Code once, then try again.",
+            },
+          });
+          expect(yield* readJson(claudeJsonFile)).toEqual(before);
+        }),
+      {
+        claudeJson: () => ({ mcpServers: {}, projects: {} }),
+        appMcpJson: { mcpServers: { shared: { command: "shared-mcp" } } },
+      },
+    ),
+  );
+
+  it.effect("uninstall with only copies in folders that are gone fails and says why", () =>
+    withHarness(
+      ({ service, calls }) =>
+        Effect.gen(function* () {
+          const [result] = yield* service.uninstall({ itemId: "mcp:db", agents: ["claude"] });
+          expect(result).toMatchObject({
+            ok: false,
+            problem: {
+              reason: "notFound",
+              summary: expect.stringContaining("Nothing was removed"),
+              nextStep:
+                "Remove the stale project entries from ~/.claude.json, or restore the folders.",
+            },
+          });
+          expect(writes(yield* Ref.get(calls))).toEqual([]);
+        }),
+      {
+        claudeJson: ({ otherKey }) => ({
+          mcpServers: {},
+          projects: { [otherKey]: { mcpServers: { db: { command: "db-mcp" } } } },
+        }),
+      },
+    ),
+  );
+
+  it.effect("uninstall names both the repo .mcp.json and the folders that are gone", () =>
+    withHarness(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const [result] = yield* service.uninstall({ itemId: "mcp:db", agents: ["claude"] });
+          expect(result).toMatchObject({ ok: false, problem: { reason: "unsupported" } });
+          expect(result!.problem!.summary).toContain(".mcp.json of App");
+          expect(result!.problem!.summary).toContain(
+            "left in 1 project whose folder no longer exists",
+          );
+          expect(result!.problem!.nextStep).toContain("~/.claude.json");
+        }),
+      {
+        claudeJson: ({ otherKey }) => ({
+          mcpServers: {},
+          projects: { [otherKey]: { mcpServers: { db: { command: "db-mcp" } } } },
+        }),
+        appMcpJson: { mcpServers: { db: { command: "db-mcp" } } },
+      },
     ),
   );
 });
