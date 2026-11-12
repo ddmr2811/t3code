@@ -26,9 +26,11 @@ import {
   type MatrixColumn,
   type MatrixRow,
 } from "./ForkExtensions.logic";
+import { ForkAuthorizeButton, useForkAuthorize } from "./ForkExtensionsAuthorize";
 import {
   commandFailureProblem,
   ForkExtensionsDetail,
+  ForkPerProjectSection,
   ForkProblemText,
   resultNotice,
   type ForkNotice,
@@ -108,6 +110,11 @@ export function ForkExtensionsSettings() {
     ]);
   const dropNotice = (key: string) =>
     setNotices((current) => current.filter((notice) => notice.key !== key));
+  // A finished login changes what that machine's health check reports (spec §6.7).
+  const authorize = useForkAuthorize({
+    onNotices: addNotices,
+    onAuthorized: (environmentId) => checkHealth(environmentId),
+  });
 
   const clickCell = async (row: MatrixRow, column: MatrixColumn, cell: MatrixCell) => {
     const action = forkCellAction(
@@ -316,8 +323,30 @@ export function ForkExtensionsSettings() {
             nowMs={nowMs}
             onInstallHere={onInstallHere}
             onNotices={addNotices}
-          />
+            renderCellActions={(context) => (
+              <ForkAuthorizeButton
+                context={context}
+                onLogin={(agent) =>
+                  authorize.start({
+                    environmentId: context.column.environmentId,
+                    machineLabel: context.column.machineLabel,
+                    agent,
+                    itemId: selectedRow.item.id,
+                    itemName: selectedRow.item.name,
+                  })
+                }
+              />
+            )}
+          >
+            <ForkPerProjectSection
+              row={selectedRow}
+              columns={columns}
+              onNotices={addNotices}
+              onNoticeCleared={dropNotice}
+            />
+          </ForkExtensionsDetail>
         ) : null}
+        {authorize.dialog}
       </SettingsSection>
     </SettingsPageContainer>
   );

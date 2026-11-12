@@ -373,6 +373,12 @@ export function forkColumnLabel(column: MatrixColumn): string {
     : `${column.machineLabel} · ${FORK_AGENT_LABELS[column.agent]}`;
 }
 
+/** Where claude.ai connectors are connected; they belong to the account, not to a machine. */
+export const CLAUDE_AI_CONNECTORS_URL = "https://claude.ai/settings/connectors";
+
+const readOnlyMachineReason = (column: MatrixColumn) =>
+  `You can view extensions on ${column.machineLabel} but not change them.`;
+
 export type ForkCellAction =
   | { readonly kind: "toggle"; readonly agent: ForkExtensionAgent; readonly enabled: boolean }
   | { readonly kind: "install"; readonly agent: ForkExtensionAgent }
@@ -401,12 +407,7 @@ export function forkCellAction(
   if (cell.state === "notApplicable") {
     return { kind: "none", reason: `Not available for ${agent}.` };
   }
-  if (!column.canOperate) {
-    return {
-      kind: "none",
-      reason: `You can view extensions on ${column.machineLabel} but not change them.`,
-    };
-  }
+  if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column) };
   if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };
   if (item.readOnly) {
     return {
@@ -458,5 +459,71 @@ export function forkUninstallTargets(
         agent: column.agent,
       },
     ];
+  });
+}
+
+/** CLI that logs a server in on each agent: Task 10 runs `<cli> mcp login <name>`. */
+const AGENT_CLIS: Readonly<Record<ForkExtensionAgent, string>> = {
+  claude: "claude",
+  codex: "codex",
+};
+
+export type ForkAuthorizeAction =
+  | { readonly kind: "none" }
+  /** claude.ai connectors belong to the account: they are connected on claude.ai (Ruling 19). */
+  | { readonly kind: "connector" }
+  | { readonly kind: "disabled"; readonly reason: string }
+  | { readonly kind: "login"; readonly agent: ForkExtensionAgent };
+
+/** Whether a detail cell offers "Authorize", and what it does (spec §6.7). */
+export function forkAuthorizeAction(
+  column: MatrixColumn,
+  cell: MatrixCell,
+  item: ForkExtensionItem | undefined,
+): ForkAuthorizeAction {
+  if (column.agent === null || item === undefined || item.kind !== "mcp") return { kind: "none" };
+  if (!isSnapshotCell(cell) || cell.problem?.reason !== "needsAuthorization") {
+    return { kind: "none" };
+  }
+  if (item.transport === "claudeAi") return { kind: "connector" };
+  if (!column.canOperate) return { kind: "disabled", reason: readOnlyMachineReason(column) };
+  // The login runs in the user's home, where project and local servers are not visible (Ruling 20).
+  if (!cell.scopes.some((scope) => scope === "user" || scope === "plugin")) {
+    return {
+      kind: "disabled",
+      reason: `Authorize it from a terminal in that project (${AGENT_CLIS[column.agent]} mcp login ${item.name}).`,
+    };
+  }
+  return { kind: "login", agent: column.agent };
+}
+
+export interface ForkProjectToggleGroup {
+  readonly column: MatrixColumn;
+  readonly cell: ForkExtensionCell;
+  /** Why this machine's switches are off limits; null when they can be used. */
+  readonly blockedReason: string | null;
+}
+
+/** The detail's "Per project" section: Claude MCP cells that list projects (spec §6.4). */
+export function forkProjectToggleGroups(
+  row: MatrixRow,
+  columns: ReadonlyArray<MatrixColumn>,
+): ReadonlyArray<ForkProjectToggleGroup> {
+  if (row.item.kind !== "mcp") return [];
+  return columns.flatMap((column, index): ReadonlyArray<ForkProjectToggleGroup> => {
+    const cell = row.cells[index];
+    if (column.agent !== "claude" || cell === undefined || !isSnapshotCell(cell)) return [];
+    if (cell.projects.length === 0) return [];
+    const item = row.itemsByMachine.get(column.environmentId) ?? row.item;
+    const blockedReason = !column.canOperate
+      ? readOnlyMachineReason(column)
+      : item.readOnly
+        ? item.pluginId === null
+          ? "This one can't be changed from here."
+          : `Comes with the ${item.pluginId} plugin. Turn the plugin on or off instead.`
+        : cell.state === "disabled"
+          ? "Turned off in every project on this machine. Turn it on first."
+          : null;
+    return [{ column, cell, blockedReason }];
   });
 }

@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   ForkExtensionAgent,
+  ForkExtensionCell,
   ForkExtensionItem,
   ForkExtensionProblem,
   ForkInstallResult,
@@ -12,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useState, type ReactNode } from "react";
 
-import { forkExtensionsUninstall } from "../../state/forkExtensions";
+import { forkExtensionsSetEnabled, forkExtensionsUninstall } from "../../state/forkExtensions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
@@ -26,10 +27,12 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import { Switch } from "../ui/switch";
 import {
   FORK_AGENT_LABELS,
   forkCellStateLabel,
   forkColumnLabel,
+  forkProjectToggleGroups,
   forkSourceTag,
   forkUninstallTargets,
   isSnapshotCell,
@@ -205,7 +208,7 @@ export function ForkExtensionsDetail({
           );
         })}
       </dl>
-      {/* Task 15 puts the "Per project" section here. */}
+      {/* The "Per project" section (ForkPerProjectSection) when the page passes it. */}
       {children}
     </section>
   );
@@ -412,5 +415,123 @@ function UninstallButton({
         </AlertDialogPopup>
       </AlertDialog>
     </>
+  );
+}
+
+/** A switch's requested value, shown until the snapshot that answers it replaces `cell`. */
+interface ProjectToggleRequest {
+  readonly enabled: boolean;
+  readonly cell: ForkExtensionCell;
+}
+
+/**
+ * Spec §6.4: a Claude MCP can also be turned off in single projects. One switch per project the
+ * machine lists for it; results arrive through the page's notices.
+ */
+export function ForkPerProjectSection({
+  row,
+  columns,
+  onNotices,
+  onNoticeCleared,
+}: {
+  readonly row: MatrixRow;
+  readonly columns: ReadonlyArray<MatrixColumn>;
+  readonly onNotices: (notices: ReadonlyArray<ForkNotice>) => void;
+  readonly onNoticeCleared: (key: string) => void;
+}) {
+  const setEnabled = useAtomCommand(forkExtensionsSetEnabled);
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [requested, setRequested] = useState<ReadonlyMap<string, ProjectToggleRequest>>(new Map());
+  const groups = forkProjectToggleGroups(row, columns);
+  if (groups.length === 0) return null;
+  const { item } = row;
+
+  const toggle = async (
+    column: MatrixColumn,
+    cell: ForkExtensionCell,
+    project: ForkExtensionCell["projects"][number],
+    enabled: boolean,
+  ) => {
+    const key = `${column.key}\n${project.path}`;
+    if (pending.has(key)) return;
+    setPending((current) => new Set(current).add(key));
+    setRequested((current) => new Map(current).set(key, { enabled, cell }));
+    const result = await setEnabled({
+      environmentId: column.environmentId,
+      input: { itemId: item.id, agent: cell.agent, enabled, projectPath: project.path },
+    });
+    setPending((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+    const noticeKey = `project:${item.id}\n${key}`;
+    const verb = enabled ? "on" : "off";
+    const where = `${item.name} in ${project.title || project.path} on ${forkColumnLabel(column)}`;
+    const failed = `Couldn't turn ${verb} ${where}`;
+    if (result._tag === "Failure" || !result.value.ok) {
+      setRequested((current) => {
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+    }
+    if (result._tag === "Failure") {
+      const problem = commandFailureProblem(result);
+      if (problem !== null) onNotices([{ key: noticeKey, tone: "error", title: failed, problem }]);
+      return;
+    }
+    const notice = resultNotice(noticeKey, result.value, {
+      done: `Turned ${verb} ${where}`,
+      failed,
+    });
+    if (notice === null) onNoticeCleared(noticeKey);
+    else onNotices([notice]);
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border/60 pt-3">
+      <h4 className="font-medium text-foreground">Per project</h4>
+      {groups.map(({ column, cell, blockedReason }) => {
+        const place = forkColumnLabel(column);
+        return (
+          <div key={column.key} className="space-y-1">
+            <p className="text-muted-foreground">
+              {place}
+              {blockedReason === null ? null : `. ${blockedReason}`}
+            </p>
+            <ul className="space-y-1">
+              {cell.projects.map((project) => {
+                const key = `${column.key}\n${project.path}`;
+                const request = requested.get(key);
+                // Until a new snapshot answers, the switch shows what was asked for.
+                const checked =
+                  request !== undefined && request.cell === cell
+                    ? request.enabled
+                    : !project.disabled;
+                const name = project.title || project.path;
+                return (
+                  <li key={project.path} className="flex min-w-0 items-center gap-2">
+                    <Switch
+                      size="sm"
+                      aria-label={`${name} on ${place}`}
+                      checked={checked}
+                      disabled={blockedReason !== null || pending.has(key)}
+                      onCheckedChange={(next) => void toggle(column, cell, project, next)}
+                    />
+                    <span className="min-w-0 truncate text-foreground">{name}</span>
+                    {project.title && project.title !== project.path ? (
+                      <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
+                        {project.path}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
   );
 }

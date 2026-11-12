@@ -14,7 +14,9 @@ import {
   buildMatrix,
   classifyMachineSupport,
   EMPTY_HEALTH_PROGRESS,
+  forkAuthorizeAction,
   forkCellAction,
+  forkProjectToggleGroups,
   forkSourceTag,
   forkUninstallTargets,
   HEALTH_STALE_MS,
@@ -570,5 +572,97 @@ describe("page helpers", () => {
     expect(forkUninstallTargets(rows[0]!, columns)).toEqual([
       { environmentId: PC, machineLabel: "This PC", agent: "claude" },
     ]);
+  });
+});
+
+describe("authorize and per-project helpers", () => {
+  const needsAuth: ForkExtensionProblem = {
+    reason: "needsAuthorization",
+    summary: "Sign in needed",
+    nextStep: "Click Authorize.",
+    rawOutput: null,
+  };
+
+  it("offers Authorize only where the server can log in, and sends connectors to claude.ai", () => {
+    const context7 = mcp("context7", [
+      cell("claude", { state: "needsAttention", problem: needsAuth }),
+      cell("codex", { state: "needsAttention", problem: npxMissing }),
+    ]);
+    const projectOnly = mcp("internal", [
+      cell("claude", { state: "needsAttention", scopes: ["project"], problem: needsAuth }),
+    ]);
+    const fromPlugin = mcp("plugin:linear:linear", [
+      cell("claude", { state: "needsAttention", scopes: ["plugin"], problem: needsAuth }),
+    ]);
+    const connector: ForkExtensionItem = {
+      ...mcp("claude.ai Gmail", [
+        cell("claude", { state: "needsAttention", scopes: ["claudeAi"], problem: needsAuth }),
+      ]),
+      transport: "claudeAi",
+    };
+    const items = [context7, projectOnly, fromPlugin, connector];
+    const { columns, rows } = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot(items) }),
+        machine(VPS, "VPS", { snapshot: snapshot(items), canOperate: false }),
+      ],
+      "mcp",
+    );
+    const action = (itemId: string, columnIndex: number) => {
+      const row = rows.find((entry) => entry.item.id === itemId)!;
+      const column = columns[columnIndex]!;
+      return forkAuthorizeAction(
+        column,
+        row.cells[columnIndex]!,
+        row.itemsByMachine.get(column.environmentId),
+      );
+    };
+    expect(action("mcp:context7", 0)).toEqual({ kind: "login", agent: "claude" });
+    // A problem that isn't about signing in offers nothing.
+    expect(action("mcp:context7", 1)).toEqual({ kind: "none" });
+    expect(action("mcp:plugin:linear:linear", 0)).toEqual({ kind: "login", agent: "claude" });
+    expect(action("mcp:internal", 0)).toEqual({
+      kind: "disabled",
+      reason: "Authorize it from a terminal in that project (claude mcp login internal).",
+    });
+    expect(action("mcp:context7", 2)).toEqual({
+      kind: "disabled",
+      reason: "You can view extensions on VPS but not change them.",
+    });
+    // Connectors are the account's, so even a read-only machine can send you to claude.ai.
+    expect(action("mcp:claude.ai Gmail", 0)).toEqual({ kind: "connector" });
+    expect(action("mcp:claude.ai Gmail", 2)).toEqual({ kind: "connector" });
+    // Not installed there: nothing to authorize.
+    expect(action("mcp:claude.ai Gmail", 1)).toEqual({ kind: "none" });
+  });
+
+  it("lists Claude MCP cells with projects, and says why a machine's switches are blocked", () => {
+    const projects = [{ path: "E:/repo", title: "repo", disabled: false }];
+    const playwright = mcp("playwright", [
+      cell("claude", { projects }),
+      cell("codex", { projects }),
+    ]);
+    const off = mcp("off", [cell("claude", { state: "disabled", projects })]);
+    const noProjects = mcp("plain", [cell("claude")]);
+    const { columns, rows } = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot([playwright, off, noProjects]) }),
+        machine(VPS, "VPS", { snapshot: snapshot([playwright]), canOperate: false }),
+      ],
+      "mcp",
+    );
+    const groups = (itemId: string) =>
+      forkProjectToggleGroups(
+        rows.find((entry) => entry.item.id === itemId)!,
+        columns,
+      ).map((group) => [group.column.key, group.blockedReason]);
+    expect(groups("mcp:playwright")).toEqual([
+      [`${PC}:claude`, null],
+      [`${VPS}:claude`, "You can view extensions on VPS but not change them."],
+    ]);
+    expect(groups("mcp:off")).toEqual([
+      [`${PC}:claude`, "Turned off in every project on this machine. Turn it on first."],
+    ]);
+    expect(groups("mcp:plain")).toEqual([]);
   });
 });

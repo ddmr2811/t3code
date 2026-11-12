@@ -14,7 +14,11 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { FORK_AGENT_LABELS, type MachineState } from "./ForkExtensions.logic";
+import {
+  CLAUDE_AI_CONNECTORS_URL,
+  FORK_AGENT_LABELS,
+  type MachineState,
+} from "./ForkExtensions.logic";
 import { commandFailureProblem, ForkProblemText } from "./ForkExtensionsDetail";
 import {
   DEFAULT_INSTALL_SELECTION,
@@ -37,8 +41,6 @@ import {
   type ForkInstallTarget,
   type ForkMcpScope,
 } from "./ForkExtensionsInstall.logic";
-
-const CLAUDE_AI_CONNECTORS_URL = "https://claude.ai/settings/connectors";
 
 /** Typing pauses this long before the paste is read; a paste or "Install" reads it at once. */
 const INSPECT_DEBOUNCE_MS = 300;

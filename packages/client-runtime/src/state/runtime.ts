@@ -1071,9 +1071,30 @@ export function createEnvironmentRpcCommand<
   };
 }
 
+/** Fork: ends `stream` when `signal` aborts; ending it interrupts the stream's source. */
+export const takeUntilAborted =
+  (signal: AbortSignal | undefined) =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
+    signal === undefined
+      ? stream
+      : stream.pipe(
+          Stream.interruptWhen(
+            Effect.callback<void>((resume) => {
+              if (signal.aborted) {
+                resume(Effect.void);
+                return;
+              }
+              const onAbort = () => resume(Effect.void);
+              signal.addEventListener("abort", onAbort, { once: true });
+              return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+            }),
+          ),
+        );
+
 /**
  * Fork: a client-guarded stream command, such as a one-shot login that must not be replayed on
- * reconnect. `onEvent` sees every value; the command resolves with the last one.
+ * reconnect. `onEvent` sees every value; the command resolves with the last one. Aborting
+ * `signal` stops the stream (the server sees the interrupt) and resolves with the last value.
  */
 export function createEnvironmentRpcStreamCommand<
   R,
@@ -1100,6 +1121,7 @@ export function createEnvironmentRpcStreamCommand<
       input: {
         readonly payload: EnvironmentRpcInput<TTag>;
         readonly onEvent: (value: EnvironmentRpcStreamValue<TTag>) => void;
+        readonly signal?: AbortSignal;
       },
       registry: AtomRegistry.AtomRegistry,
       environmentId: EnvironmentIdType,
@@ -1107,11 +1129,13 @@ export function createEnvironmentRpcStreamCommand<
       let last = Option.none<EnvironmentRpcStreamValue<TTag>>();
       return permissions.authorize(registry, environmentId, input.payload).pipe(
         Effect.andThen(
-          Stream.runForEach(runStreamGuarded(options.tag, input.payload), (value) =>
-            Effect.sync(() => {
-              last = Option.some(value);
-              input.onEvent(value);
-            }),
+          Stream.runForEach(
+            runStreamGuarded(options.tag, input.payload).pipe(takeUntilAborted(input.signal)),
+            (value) =>
+              Effect.sync(() => {
+                last = Option.some(value);
+                input.onEvent(value);
+              }),
           ),
         ),
         Effect.map(() => last),
