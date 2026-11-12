@@ -1,4 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { ForkResourceWidgetHost } from "../components/ForkResourceWidget";
 import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -16,6 +17,15 @@ function threadRouteTargetKey(target: ThreadRouteTarget | null) {
 }
 
 function ChatRouteLayout() {
+  return (
+    <>
+      <ForkResourceWidgetHost />
+      <UpstreamChatRouteLayout />
+    </>
+  );
+}
+
+function UpstreamChatRouteLayout() {
   // Render both routes here so draft promotion keeps the same ChatView mounted.
   const threadTarget = useThreadRouteTarget();
   // Read matches, not location, so this agrees with the params useThreadRouteTarget reads.
