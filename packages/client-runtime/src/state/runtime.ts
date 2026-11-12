@@ -25,12 +25,14 @@ import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
+  type EnvironmentStreamCommandRpcTag,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
   RpcPermissionGuard,
+  runStreamGuarded,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1059,6 +1061,91 @@ export function createEnvironmentRpcCommand<
           (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
         ),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+      );
+    },
+  });
+  return {
+    ...command,
+    requiredScopes: permissions.requiredScopes,
+    permissionAtom: permissions.permissionAtom,
+  };
+}
+
+/** Fork: ends `stream` when `signal` aborts; ending it interrupts the stream's source. */
+export const takeUntilAborted =
+  (signal: AbortSignal | undefined) =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
+    signal === undefined
+      ? stream
+      : stream.pipe(
+          Stream.interruptWhen(
+            Effect.callback<void>((resume) => {
+              if (signal.aborted) {
+                resume(Effect.void);
+                return;
+              }
+              const onAbort = () => resume(Effect.void);
+              signal.addEventListener("abort", onAbort, { once: true });
+              return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+            }),
+          ),
+        );
+
+/**
+ * Fork: a client-guarded stream command, such as a one-shot login that must not be replayed on
+ * reconnect. `onEvent` sees every value; the command resolves with the last one. Aborting
+ * `signal` stops the stream (the server sees the interrupt) and resolves with the last value.
+ */
+export function createEnvironmentRpcStreamCommand<
+  R,
+  ER,
+  TTag extends EnvironmentStreamCommandRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly onSettled?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: EnvironmentRpcInput<TTag>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Effect.Effect<void, never, R>;
+  },
+) {
+  const permissions = createCommandPermissions(runtime, options.tag);
+  const command = createEnvironmentCommand(runtime, {
+    label: options.label,
+    execute: (
+      input: {
+        readonly payload: EnvironmentRpcInput<TTag>;
+        readonly onEvent: (value: EnvironmentRpcStreamValue<TTag>) => void;
+        readonly signal?: AbortSignal;
+      },
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentIdType,
+    ) => {
+      let last = Option.none<EnvironmentRpcStreamValue<TTag>>();
+      return permissions.authorize(registry, environmentId, input.payload).pipe(
+        Effect.andThen(
+          Stream.runForEach(
+            runStreamGuarded(options.tag, input.payload).pipe(takeUntilAborted(input.signal)),
+            (value) =>
+              Effect.sync(() => {
+                last = Option.some(value);
+                input.onEvent(value);
+              }),
+          ),
+        ),
+        Effect.map(() => last),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, payload) =>
+            createCommandPermissions(runtime, method).authorize(registry, id, payload),
+        }),
+        Effect.ensuring(
+          options.onSettled?.({ environmentId, input: input.payload }, registry) ?? Effect.void,
+        ),
       );
     },
   });

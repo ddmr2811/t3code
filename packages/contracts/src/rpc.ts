@@ -411,6 +411,19 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  ForkAuthorizeCompleteInput,
+  ForkAuthorizeEvent,
+  ForkExtensionAgent,
+  ForkExtensionsError,
+  ForkExtensionsSnapshot,
+  ForkHealthEvent,
+  ForkInstallRequest,
+  ForkInstallResult,
+  ForkPastedSource,
+  ForkSetEnabledInput,
+  ForkUninstallInput,
+} from "./forkExtensions.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -430,6 +443,15 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  // Fork: Extensions settings page.
+  forkExtensionsSnapshot: "forkExtensions.snapshot",
+  forkExtensionsCheckHealth: "forkExtensions.checkHealth",
+  forkExtensionsInspectSource: "forkExtensions.inspectSource",
+  forkExtensionsInstall: "forkExtensions.install",
+  forkExtensionsUninstall: "forkExtensions.uninstall",
+  forkExtensionsSetEnabled: "forkExtensions.setEnabled",
+  forkExtensionsAuthorize: "forkExtensions.authorize",
+  forkExtensionsAuthorizeComplete: "forkExtensions.authorizeComplete",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1427,6 +1449,59 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+// Fork: Extensions settings page.
+const ForkExtensionsRpcError = Schema.Union([ForkExtensionsError, EnvironmentAuthorizationError]);
+
+const WsForkExtensionsSnapshotRpc = Rpc.make(WS_METHODS.forkExtensionsSnapshot, {
+  payload: Schema.Struct({}),
+  success: ForkExtensionsSnapshot,
+  error: ForkExtensionsRpcError,
+});
+
+const WsForkExtensionsCheckHealthRpc = Rpc.make(WS_METHODS.forkExtensionsCheckHealth, {
+  payload: Schema.Struct({}),
+  success: ForkHealthEvent,
+  error: ForkExtensionsRpcError,
+  stream: true,
+});
+
+const WsForkExtensionsInspectSourceRpc = Rpc.make(WS_METHODS.forkExtensionsInspectSource, {
+  payload: Schema.Struct({ text: Schema.String }),
+  success: ForkPastedSource,
+  error: ForkExtensionsRpcError,
+});
+
+const WsForkExtensionsInstallRpc = Rpc.make(WS_METHODS.forkExtensionsInstall, {
+  payload: ForkInstallRequest,
+  success: Schema.Array(ForkInstallResult),
+  error: ForkExtensionsRpcError,
+});
+
+const WsForkExtensionsUninstallRpc = Rpc.make(WS_METHODS.forkExtensionsUninstall, {
+  payload: ForkUninstallInput,
+  success: Schema.Array(ForkInstallResult),
+  error: ForkExtensionsRpcError,
+});
+
+const WsForkExtensionsSetEnabledRpc = Rpc.make(WS_METHODS.forkExtensionsSetEnabled, {
+  payload: ForkSetEnabledInput,
+  success: ForkInstallResult,
+  error: ForkExtensionsRpcError,
+});
+
+const WsForkExtensionsAuthorizeRpc = Rpc.make(WS_METHODS.forkExtensionsAuthorize, {
+  payload: Schema.Struct({ itemId: Schema.String, agent: ForkExtensionAgent }),
+  success: ForkAuthorizeEvent,
+  error: ForkExtensionsRpcError,
+  stream: true,
+});
+
+const WsForkExtensionsAuthorizeCompleteRpc = Rpc.make(WS_METHODS.forkExtensionsAuthorizeComplete, {
+  payload: ForkAuthorizeCompleteInput,
+  success: Schema.Struct({}),
+  error: ForkExtensionsRpcError,
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2198,6 +2273,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsForkExtensionsSnapshotRpc,
+  WsForkExtensionsCheckHealthRpc,
+  WsForkExtensionsInspectSourceRpc,
+  WsForkExtensionsInstallRpc,
+  WsForkExtensionsUninstallRpc,
+  WsForkExtensionsSetEnabledRpc,
+  WsForkExtensionsAuthorizeRpc,
+  WsForkExtensionsAuthorizeCompleteRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

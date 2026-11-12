@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  FORK_EXTENSIONS_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
@@ -290,6 +291,8 @@ export const make = Effect.gen(function* () {
       linkFence: true,
       mcpApprovalCodes: true,
       mcpHostedApproval: true,
+      // Fork: Extensions settings page.
+      forkExtensions: FORK_EXTENSIONS_PROTOCOL_VERSION,
     },
   };
 

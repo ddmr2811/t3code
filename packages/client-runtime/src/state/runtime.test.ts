@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -54,6 +55,7 @@ import {
   environmentSessionGenerationAtom,
   scheduleAtomCommandEffect,
   executeAtomQuery,
+  takeUntilAborted,
   type QueryAnswerHandler,
 } from "./runtime.ts";
 
@@ -1578,5 +1580,52 @@ describe("persisted environment queries", () => {
         expect(AsyncResult.getOrElse(registry.get(harness.atom), () => null)).toBe("cached");
       }),
     ),
+  );
+});
+
+// Fork: the authorize dialog's Cancel ends the login stream through its signal.
+describe("takeUntilAborted", () => {
+  it.effect("ends the stream and interrupts its source when the signal aborts", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The test aborts the signal itself, as the dialog's Cancel does.
+      const controller = new AbortController();
+      const waiting = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const source = Stream.concat(
+        Stream.make(1),
+        Stream.fromEffect(
+          Deferred.succeed(waiting, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+          ),
+        ),
+      );
+      const seen: Array<number> = [];
+      const fiber = yield* source.pipe(
+        takeUntilAborted(controller.signal),
+        Stream.runForEach((value) => Effect.sync(() => seen.push(value))),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(waiting);
+      controller.abort();
+      yield* Deferred.await(interrupted);
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(seen).toEqual([1]);
+    }),
+  );
+
+  it.effect("ends at once for a signal that is already aborted, and leaves others alone", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The test aborts the signal itself, as the dialog's Cancel does.
+      const aborted = new AbortController();
+      aborted.abort();
+      expect(yield* Stream.runCollect(Stream.never.pipe(takeUntilAborted(aborted.signal)))).toEqual(
+        [],
+      );
+      expect(yield* Stream.runCollect(Stream.make(1, 2).pipe(takeUntilAborted(undefined)))).toEqual(
+        [1, 2],
+      );
+    }),
   );
 });
