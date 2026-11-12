@@ -27,6 +27,11 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  firstForkTargetBranch,
+  forkTargetBranchFor,
+  isForkAutoPullBranch,
+} from "../fork/targetBranch.ts";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -166,8 +171,12 @@ export const layerAutomaticFetchInterval = Layer.effect(
 
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
+  readonly targetBranch: (cwd: string) => Effect.Effect<string | null, never>;
 }>("t3/vcs/VcsAutoPullPolicy", {
-  defaultValue: () => ({ isEnabled: () => Effect.succeed(false) }),
+  defaultValue: () => ({
+    isEnabled: () => Effect.succeed(false),
+    targetBranch: () => Effect.succeed(null),
+  }),
 }) {}
 
 export const layerAutoPullPolicy = Layer.effect(
@@ -184,6 +193,14 @@ export const layerAutoPullPolicy = Layer.effect(
           return resolveProjectSettings(settings, project.value.projectId).settings.defaultAutoPull;
         },
         Effect.orElseSucceed(() => false),
+      ),
+      targetBranch: Effect.fn("VcsAutoPullPolicy.targetBranch")(
+        function* (cwd: string) {
+          const project = yield* projects.findActiveByWorkspaceRoot(cwd);
+          if (project._tag === "None") return null;
+          return forkTargetBranchFor(yield* serverSettings.getSettings, project.value.projectId);
+        },
+        Effect.orElseSucceed(() => null),
       ),
     };
   }),
@@ -475,11 +492,20 @@ export const make = Effect.gen(function* () {
         return null;
       }
 
+      const targetBranch = firstForkTargetBranch(
+        yield* Effect.forEach(policyCwds, autoPullPolicy.targetBranch, {
+          concurrency: "unbounded",
+        }),
+      );
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
       if (
         !local.isRepo ||
-        !local.isDefaultRef ||
+        !isForkAutoPullBranch({
+          branch: local.refName,
+          isDefaultBranch: local.isDefaultRef,
+          targetBranch,
+        }) ||
         local.hasWorkingTreeChanges ||
         local.refName !== remoteRead?.branch
       )

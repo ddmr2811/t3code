@@ -585,6 +585,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
             isEnabled: (cwd) => Effect.succeed(cwd === configuredWorkspaceRoot),
+            targetBranch: () => Effect.succeed(null),
           }),
         ),
         Layer.provide(
@@ -629,6 +630,50 @@ describe("VcsStatusBroadcaster", () => {
       }).pipe(Effect.provide(layerTest));
     },
   );
+
+  it.effect.each([
+    { name: "pulls a clean behind folder on the target branch", branch: "dev", pulls: 1 },
+    {
+      name: "does not pull the default branch when a different target is set",
+      branch: "main",
+      pulls: 0,
+    },
+  ] as const)("target branch auto pull: $name", ({ branch, pulls }) => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: {
+        ...baseLocalStatus,
+        isDefaultRef: branch === "main",
+        refName: branch,
+      },
+      currentRemoteStatus: { ...baseRemoteStatus, behindCount: 2 },
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    let pullCalls = 0;
+    state.pullCurrentBranch = () =>
+      Effect.sync(() => {
+        pullCalls += 1;
+        state.currentRemoteStatus = { ...baseRemoteStatus, behindCount: 0 };
+        return { status: "pulled" as const, refName: branch, upstreamRef: `origin/${branch}` };
+      });
+    const layerTest = layerTestFor(state).pipe(
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: () => Effect.succeed(true),
+          targetBranch: () => Effect.succeed("dev"),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const status = yield* broadcaster.refreshStatus("/repo");
+      assert.equal(pullCalls, pulls);
+      assert.equal(status.behindCount, pulls === 1 ? 0 : 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped);
+  });
 
   it.effect("refreshes a loaded cwd without reusing a previous branch's PR", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
@@ -1149,6 +1194,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
             isEnabled: () => Effect.succeed(autoPull),
+            targetBranch: () => Effect.succeed(null),
           }),
         ),
       );
