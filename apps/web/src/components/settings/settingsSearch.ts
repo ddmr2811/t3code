@@ -26,6 +26,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/extensions"
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
@@ -101,6 +102,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/extensions": "Extensions",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
@@ -138,6 +140,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/extensions",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -953,6 +956,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "fork-extensions",
+    title: "Extensions",
+    to: "/settings/extensions",
+    searchTerms: [
+      "mcp servers plugins skills connectors install enable disable authorize marketplace",
+    ],
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1345,6 +1356,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/extensions": null,
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,

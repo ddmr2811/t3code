@@ -215,6 +215,8 @@ describe("searchSettings", () => {
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["Extensions", "fork-extensions"],
+      ["mcp servers", "fork-extensions"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }

@@ -14,11 +14,15 @@ import {
   buildMatrix,
   classifyMachineSupport,
   EMPTY_HEALTH_PROGRESS,
+  forkCellAction,
+  forkSourceTag,
+  forkUninstallTargets,
   HEALTH_STALE_MS,
   isForkHealthRunning,
   isHealthStale,
   isSnapshotCell,
   nextHealthDecision,
+  oldestHealthCheck,
   type MachineState,
   reduceHealthEvent,
 } from "./ForkExtensions.logic";
@@ -481,5 +485,90 @@ describe("health", () => {
     const caughtUp = snapshot(base.items, { healthCheckedAt: "2026-11-12T10:00:00.000Z" });
     expect(applyHealthProgress(caughtUp, progress)).toBe(caughtUp);
     expect(applyHealthProgress(base, null)).toBe(base);
+  });
+});
+
+describe("page helpers", () => {
+  it("decides what a cell click does", () => {
+    const playwright = mcp("playwright", [cell("claude"), cell("codex", { state: "disabled" })]);
+    const fromPlugin = mcp("plugin:github:github", [cell("claude")]);
+    const readOnly = { ...fromPlugin, readOnly: true, pluginId: "github@official" };
+    const { columns, rows } = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot([playwright, readOnly]) }),
+        machine(VPS, "VPS", { snapshot: snapshot([]), canOperate: false }),
+        machine(OLD, "Old", { support: "needsForkUpdate", canOperate: false }),
+      ],
+      "mcp",
+    );
+    const row = rows.find((entry) => entry.item.id === "mcp:playwright")!;
+    const actions = columns.map((column, index) =>
+      forkCellAction(column, row.cells[index]!, row.item),
+    );
+    expect(actions.map((action) => action.kind)).toEqual([
+      "toggle",
+      "toggle",
+      "none",
+      "none",
+      "none",
+    ]);
+    expect(actions[0]).toEqual({ kind: "toggle", agent: "claude", enabled: false });
+    expect(actions[1]).toEqual({ kind: "toggle", agent: "codex", enabled: true });
+    expect(actions[4]).toEqual({
+      kind: "none",
+      reason: "Old needs a fork update to manage extensions.",
+    });
+    const pluginRow = rows.find((entry) => entry.item.id === readOnly.id)!;
+    expect(forkCellAction(columns[0]!, pluginRow.cells[0]!, pluginRow.item)).toMatchObject({
+      kind: "none",
+      reason: expect.stringContaining("github@official"),
+    });
+    expect(forkCellAction(columns[1]!, pluginRow.cells[1]!, pluginRow.item)).toEqual({
+      kind: "install",
+      agent: "codex",
+    });
+  });
+
+  it("tags an item by how it runs", () => {
+    expect(forkSourceTag(mcp("playwright", []))).toBe("npx");
+    expect(
+      forkSourceTag({ ...mcp("x", []), source: "C:\\tools\\uvx.exe run x", transport: "stdio" }),
+    ).toBe("uvx");
+    expect(forkSourceTag({ ...mcp("notion", []), transport: "http" })).toBe("http");
+    expect(forkSourceTag({ ...mcp("claude.ai Drive", []), transport: "claudeAi" })).toBe(
+      "claude.ai",
+    );
+  });
+
+  it("reads the oldest health check across machines", () => {
+    expect(
+      oldestHealthCheck([
+        machine(PC, "This PC", {
+          snapshot: snapshot([], { healthCheckedAt: "2026-11-12T10:00:00.000Z" }),
+        }),
+        machine(VPS, "VPS", {
+          snapshot: snapshot([], { healthCheckedAt: "2026-11-12T09:00:00.000Z" }),
+        }),
+        machine(OLD, "Old", { support: "needsForkUpdate" }),
+      ]),
+    ).toBe("2026-11-12T09:00:00.000Z");
+    expect(oldestHealthCheck([machine(PC, "This PC", { snapshot: snapshot([]) })])).toBeNull();
+  });
+
+  it("lists only installed, changeable copies to uninstall", () => {
+    const playwright = mcp("playwright", [
+      cell("claude"),
+      cell("codex", { state: "notApplicable" }),
+    ]);
+    const { columns, rows } = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot([playwright]) }),
+        machine(VPS, "VPS", { snapshot: snapshot([playwright]), canOperate: false }),
+      ],
+      "mcp",
+    );
+    expect(forkUninstallTargets(rows[0]!, columns)).toEqual([
+      { environmentId: PC, machineLabel: "This PC", agent: "claude" },
+    ]);
   });
 });

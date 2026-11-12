@@ -313,3 +313,150 @@ export function buildMatrix(
   );
   return { columns, rows };
 }
+
+export const FORK_AGENT_LABELS: Readonly<Record<ForkExtensionAgent, string>> = {
+  claude: "Claude",
+  codex: "Codex",
+};
+
+export const FORK_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
+  mcp: "MCP",
+  plugin: "Plugins",
+  skill: "Skills",
+};
+
+/** The short kind shown next to a name, as in the mockup: `claude.ai`, `npx`, `http`, a marketplace. */
+export function forkSourceTag(item: ForkExtensionItem): string {
+  if (item.kind === "plugin") return item.source;
+  if (item.kind === "skill") return item.pluginId === null ? "" : "plugin";
+  switch (item.transport) {
+    case "claudeAi":
+      return "claude.ai";
+    case "plugin":
+      return "plugin";
+    case "http":
+    case "sse":
+      return item.transport;
+    case "stdio": {
+      const command = item.source.trim().split(/\s+/)[0] ?? "";
+      return (
+        command
+          .split(/[\\/]/)
+          .at(-1)
+          ?.replace(/\.(exe|cmd|bat)$/i, "") ?? ""
+      );
+    }
+    default:
+      return "";
+  }
+}
+
+const CELL_STATE_LABELS: Readonly<Record<MatrixCell["state"], string>> = {
+  working: "Working",
+  needsAttention: "Needs attention",
+  disabled: "Disabled",
+  notInstalled: "Not installed",
+  notApplicable: "Not available",
+  unknown: "Installed, not checked yet",
+  agentUnavailable: "Agent unavailable",
+  needsForkUpdate: "Needs a fork update",
+  offline: "Offline",
+};
+
+export function forkCellStateLabel(cell: MatrixCell): string {
+  return CELL_STATE_LABELS[cell.state];
+}
+
+export function forkColumnLabel(column: MatrixColumn): string {
+  return column.agent === null
+    ? column.machineLabel
+    : `${column.machineLabel} · ${FORK_AGENT_LABELS[column.agent]}`;
+}
+
+export type ForkCellAction =
+  | { readonly kind: "toggle"; readonly agent: ForkExtensionAgent; readonly enabled: boolean }
+  | { readonly kind: "install"; readonly agent: ForkExtensionAgent }
+  | { readonly kind: "none"; readonly reason: string };
+
+/** What a click on a matrix cell does (spec §6.1); `none` carries the tooltip's reason. */
+export function forkCellAction(
+  column: MatrixColumn,
+  cell: MatrixCell,
+  item: ForkExtensionItem,
+): ForkCellAction {
+  if (column.support === "needsForkUpdate") {
+    return {
+      kind: "none",
+      reason: `${column.machineLabel} needs a fork update to manage extensions.`,
+    };
+  }
+  if (column.support === "offline") {
+    return { kind: "none", reason: `${column.machineLabel} is offline.` };
+  }
+  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell) };
+  const agent = FORK_AGENT_LABELS[column.agent];
+  if (cell.state === "agentUnavailable") {
+    return { kind: "none", reason: column.problem?.summary ?? `${agent} is unavailable.` };
+  }
+  if (cell.state === "notApplicable") {
+    return { kind: "none", reason: `Not available for ${agent}.` };
+  }
+  if (!column.canOperate) {
+    return {
+      kind: "none",
+      reason: `You can view extensions on ${column.machineLabel} but not change them.`,
+    };
+  }
+  if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };
+  if (item.readOnly) {
+    return {
+      kind: "none",
+      reason:
+        item.pluginId === null
+          ? "This one can't be changed from here."
+          : `Comes with the ${item.pluginId} plugin. Turn the plugin on or off instead.`,
+    };
+  }
+  return { kind: "toggle", agent: column.agent, enabled: cell.state === "disabled" };
+}
+
+/** "checked 12m ago" reads the oldest check, so it never claims a freshness one machine lacks. */
+export function oldestHealthCheck(machines: ReadonlyArray<MachineState>): string | null {
+  let oldest: { readonly iso: string; readonly ms: number } | null = null;
+  for (const machine of machines) {
+    const iso = machine.snapshot?.healthCheckedAt ?? null;
+    if (iso === null) continue;
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) continue;
+    if (oldest === null || ms < oldest.ms) oldest = { iso, ms };
+  }
+  return oldest?.iso ?? null;
+}
+
+export interface ForkUninstallTarget {
+  readonly environmentId: EnvironmentId;
+  readonly machineLabel: string;
+  readonly agent: ForkExtensionAgent;
+}
+
+/** Every installed copy on a machine that can be changed, in column order. */
+export function forkUninstallTargets(
+  row: MatrixRow,
+  columns: ReadonlyArray<MatrixColumn>,
+): ReadonlyArray<ForkUninstallTarget> {
+  return columns.flatMap((column, index): ReadonlyArray<ForkUninstallTarget> => {
+    const cell = row.cells[index];
+    if (column.agent === null || !column.canOperate || cell === undefined) return [];
+    if (!isSnapshotCell(cell) || cell.state === "notInstalled" || cell.state === "notApplicable") {
+      return [];
+    }
+    if (row.itemsByMachine.get(column.environmentId)?.readOnly !== false) return [];
+    return [
+      {
+        environmentId: column.environmentId,
+        machineLabel: column.machineLabel,
+        agent: column.agent,
+      },
+    ];
+  });
+}
