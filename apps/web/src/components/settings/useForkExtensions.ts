@@ -51,7 +51,7 @@ export function useForkExtensions(): ForkExtensionsView {
   const classified = listed.map((identity, index) => {
     const presentation = presentationById.get(identity.environmentId);
     const session = sessions[index]!;
-    // The page installs and toggles, so it needs the same grant as provider settings.
+    // Installs and toggles need the same grant as provider settings; reading needs none of it.
     const operateAccess = resolveRemoteOperateAccess({
       session: AsyncResult.getOrElse(session, () => null),
       isPending: session.waiting || session._tag === "Initial",
@@ -74,8 +74,13 @@ export function useForkExtensions(): ForkExtensionsView {
   const snapshots = useAtomValue(snapshotsAtom(supportedKey));
   const health = useAtomValue(healthAtom(supportedKey));
 
-  const machines = classified.map(({ identity, support, isPending }): MachineState => {
-    const base = { environmentId: identity.environmentId, label: identity.label, support };
+  const machines = classified.map(({ identity, support, isPending, canOperate }): MachineState => {
+    const base = {
+      environmentId: identity.environmentId,
+      label: identity.label,
+      support,
+      canOperate,
+    };
     const index = supportedIds.indexOf(identity.environmentId);
     if (index === -1) {
       return {
@@ -100,7 +105,8 @@ export function useForkExtensions(): ForkExtensionsView {
               healthResult === null ? null : AsyncResult.getOrElse(healthResult, () => null),
             ),
       error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
-      isPending: result.waiting || result._tag === "Initial",
+      // A background refetch keeps showing the snapshot it already has.
+      isPending: snapshot === null && (result.waiting || result._tag === "Initial"),
       isCheckingHealth: isForkHealthRunning(healthResult),
       healthError:
         healthResult?._tag === "Failure" ? formatEnvironmentQueryError(healthResult.cause) : null,

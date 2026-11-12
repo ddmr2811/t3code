@@ -91,6 +91,7 @@ function machine(
     environmentId,
     label,
     support: "supported",
+    canOperate: true,
     snapshot: null,
     error: null,
     isPending: false,
@@ -143,6 +144,25 @@ describe("buildMatrix", () => {
     expect(matrix.rows[0]!.usageTotal).toBe(7);
   });
 
+  it("keeps each machine's own copy of an item, whose source can differ", () => {
+    const onPc = mcp("notion", [cell("claude")]);
+    const onVps = { ...mcp("notion", [cell("claude")]), source: "https://mcp.notion.com/mcp" };
+    const matrix = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot([onPc], { agents: [onlyClaude] }) }),
+        machine(VPS, "VPS", { snapshot: snapshot([onVps], { agents: [onlyClaude] }) }),
+        machine(OLD, "Old", { snapshot: snapshot([], { agents: [onlyClaude] }) }),
+      ],
+      "mcp",
+    );
+    const row = matrix.rows[0]!;
+    expect(row.item.source).toBe("npx notion");
+    expect([...row.itemsByMachine]).toEqual([
+      [PC, onPc],
+      [VPS, onVps],
+    ]);
+  });
+
   it("gives a machine that needs a fork update one column and no installable cells", () => {
     const playwright = mcp("playwright", [cell("claude"), cell("codex")]);
     const matrix = buildMatrix(
@@ -159,6 +179,7 @@ describe("buildMatrix", () => {
       machineLabel: "Old laptop",
       agent: null,
       support: "needsForkUpdate",
+      canOperate: false,
       problem: null,
     });
     const cells = matrix.rows[0]!.cells;
@@ -167,23 +188,38 @@ describe("buildMatrix", () => {
     expect(cells.some((candidate) => candidate.state === "notInstalled")).toBe(false);
   });
 
-  it("shows offline and no-permission machines as one column each with their own state", () => {
+  it("shows an offline machine as one column with its own state", () => {
     const matrix = buildMatrix(
       [
         machine(PC, "This PC", { snapshot: snapshot([mcp("a", [cell("claude")])]) }),
-        machine(VPS, "VPS", { support: "offline" }),
-        machine(OLD, "Shared", { support: "noPermission" }),
+        machine(VPS, "VPS", { support: "offline", canOperate: false }),
       ],
       "mcp",
     );
-    expect(matrix.columns.slice(2).map((column) => [column.agent, column.support])).toEqual([
-      [null, "offline"],
-      [null, "noPermission"],
+    expect(
+      matrix.columns.slice(2).map((column) => [column.agent, column.support, column.canOperate]),
+    ).toEqual([[null, "offline", false]]);
+    expect(matrix.rows[0]!.cells.slice(2)).toEqual([{ state: "offline" }]);
+  });
+
+  it("shows a machine this client may only read with per-agent columns it cannot operate", () => {
+    const shared = mcp("a", [cell("claude"), cell("codex", { state: "disabled" })]);
+    const matrix = buildMatrix(
+      [
+        machine(PC, "This PC", { snapshot: snapshot([mcp("a", [cell("claude"), cell("codex")])]) }),
+        machine(OLD, "Shared", { canOperate: false, snapshot: snapshot([shared]) }),
+      ],
+      "mcp",
+    );
+    expect(
+      matrix.columns.map((column) => [column.machineLabel, column.agent, column.canOperate]),
+    ).toEqual([
+      ["This PC", "claude", true],
+      ["This PC", "codex", true],
+      ["Shared", "claude", false],
+      ["Shared", "codex", false],
     ]);
-    expect(matrix.rows[0]!.cells.slice(2)).toEqual([
-      { state: "offline" },
-      { state: "noPermission" },
-    ]);
+    expect(matrix.rows[0]!.cells.slice(2)).toEqual(shared.cells);
   });
 
   it("gives an unavailable agent with a read problem a column that carries the problem", () => {
@@ -213,6 +249,7 @@ describe("buildMatrix", () => {
         machineLabel: "This PC",
         agent: "claude",
         support: "supported",
+        canOperate: true,
         problem: null,
       },
       {
@@ -221,6 +258,7 @@ describe("buildMatrix", () => {
         machineLabel: "This PC",
         agent: "codex",
         support: "supported",
+        canOperate: true,
         problem: codexBroken,
       },
     ]);
@@ -305,13 +343,18 @@ describe("classifyMachineSupport", () => {
   } as const;
 
   it("supports a connected machine that announces the protocol and lets this client operate", () => {
-    expect(classifyMachineSupport(base)).toEqual({ support: "supported", isPending: false });
+    expect(classifyMachineSupport(base)).toEqual({
+      support: "supported",
+      isPending: false,
+      canOperate: true,
+    });
   });
 
   it("needs a fork update when the capability is absent or older than version 1", () => {
     expect(classifyMachineSupport({ ...base, forkExtensionsVersion: undefined })).toEqual({
       support: "needsForkUpdate",
       isPending: false,
+      canOperate: false,
     });
     expect(classifyMachineSupport({ ...base, forkExtensionsVersion: 0 }).support).toBe(
       "needsForkUpdate",
@@ -325,25 +368,30 @@ describe("classifyMachineSupport", () => {
     expect(classifyMachineSupport({ ...base, connectionPhase: "offline" })).toEqual({
       support: "offline",
       isPending: false,
+      canOperate: false,
     });
     expect(classifyMachineSupport({ ...base, connectionPhase: "connecting" })).toEqual({
       support: "offline",
       isPending: true,
+      canOperate: false,
     });
     expect(classifyMachineSupport({ ...base, hasServerConfig: false })).toEqual({
       support: "offline",
       isPending: true,
+      canOperate: false,
     });
   });
 
-  it("has no permission when operate is denied, pending while the session loads", () => {
+  it("reads a machine without operate access read-only, and does not wait for that access", () => {
     expect(classifyMachineSupport({ ...base, operateAccess: "denied" })).toEqual({
-      support: "noPermission",
+      support: "supported",
       isPending: false,
+      canOperate: false,
     });
     expect(classifyMachineSupport({ ...base, operateAccess: "pending" })).toEqual({
-      support: "noPermission",
-      isPending: true,
+      support: "supported",
+      isPending: false,
+      canOperate: false,
     });
   });
 });

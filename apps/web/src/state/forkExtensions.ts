@@ -1,4 +1,4 @@
-import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, type ForkExtensionsSnapshot, WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -50,53 +50,83 @@ const forkExtensionsHealth = createEnvironmentRpcSubscriptionAtomFamily(connecti
 const forkExtensionsHealthAtom = (environmentId: EnvironmentId) =>
   forkExtensionsHealth({ environmentId, input: {} });
 
-/** Set by "Check status"; dropped with the page, like the decision that reads it. */
-const healthWanted = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(false).pipe(Atom.withLabel(`web-fork-extensions-health-wanted:${environmentId}`)),
-);
-
 export interface ForkMachineHealth {
   readonly decision: HealthDecision;
   /** null until a check starts on this machine. */
   readonly result: AsyncResult.AsyncResult<ForkHealthProgress, unknown> | null;
+  /** The finished check whose snapshot refetch was already asked for. */
+  readonly refreshedFor: string | null;
 }
 
-/**
- * Health of one machine while the page is open: the first snapshot decides whether opening the
- * page checks it (spec §7.2). The atom is dropped with its last reader, so each visit decides again.
- */
-export const forkExtensionsMachineHealth = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get): ForkMachineHealth => {
-    const previous = Option.getOrNull(get.self<ForkMachineHealth>());
-    const wanted = get(healthWanted(environmentId));
-    const snapshot =
-      wanted || previous?.decision.decided === true
-        ? null
-        : AsyncResult.getOrElse(get(forkExtensionsSnapshotAtom(environmentId)), () => null);
-    const decision = nextHealthDecision(previous?.decision ?? null, {
-      wanted,
-      snapshot,
-      nowMs: Date.now(),
-    });
-    return {
-      decision,
-      result: decision.active ? get(forkExtensionsHealthAtom(environmentId)) : null,
-    };
-  }).pipe(Atom.withLabel(`web-fork-extensions-machine-health:${environmentId}`)),
-);
+/** Sources are parameters so tests can stand in for the RPC atoms. */
+export function makeForkMachineHealth(sources: {
+  readonly snapshot: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<ForkExtensionsSnapshot, unknown>>;
+  readonly health: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<ForkHealthProgress, unknown>>;
+  readonly now: () => number;
+}) {
+  /** Set by "Check status"; dropped with the page, like the decision that reads it. */
+  const wanted = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(false).pipe(Atom.withLabel(`web-fork-extensions-health-wanted:${environmentId}`)),
+  );
 
-/** "Check status" on one machine: starts a check, or runs a finished one again. */
-export function requestForkHealthCheck(
-  registry: AtomRegistry.AtomRegistry,
-  environmentId: EnvironmentId,
-): void {
-  const current = registry.get(forkExtensionsMachineHealth(environmentId));
-  if (!current.decision.active) {
-    registry.set(healthWanted(environmentId), true);
-  } else if (!isForkHealthRunning(current.result)) {
-    registry.refresh(forkExtensionsHealthAtom(environmentId));
-  }
+  /**
+   * Health of one machine while the page is open: the first snapshot decides whether opening the
+   * page checks it (spec §7.2). The atom is dropped with its last reader, so each visit decides
+   * again.
+   */
+  const machineHealth = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): ForkMachineHealth => {
+      const previous = Option.getOrNull(get.self<ForkMachineHealth>());
+      const isWanted = get(wanted(environmentId));
+      const snapshot =
+        isWanted || previous?.decision.decided === true
+          ? null
+          : AsyncResult.getOrElse(get(sources.snapshot(environmentId)), () => null);
+      const decision = nextHealthDecision(previous?.decision ?? null, {
+        wanted: isWanted,
+        snapshot,
+        nowMs: sources.now(),
+      });
+      const result = decision.active ? get(sources.health(environmentId)) : null;
+      const checkedAt =
+        result === null ? null : (AsyncResult.getOrElse(result, () => null)?.checkedAt ?? null);
+      const refreshedFor = previous?.refreshedFor ?? null;
+      if (checkedAt !== null && checkedAt !== refreshedFor) {
+        // The server cached the check: refetch the snapshot so the cached one carries its time
+        // (a later visit then skips the check) and its canonical cell states replace the overlay.
+        // Deferred: this builds while React renders, and a refresh would re-render other readers.
+        const registry = get.registry;
+        queueMicrotask(() => registry.refresh(sources.snapshot(environmentId)));
+      }
+      return { decision, result, refreshedFor: checkedAt ?? refreshedFor };
+    }).pipe(Atom.withLabel(`web-fork-extensions-machine-health:${environmentId}`)),
+  );
+
+  /** "Check status" on one machine: starts a check, or runs a finished one again. */
+  const request = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId): void => {
+    const current = registry.get(machineHealth(environmentId));
+    if (!current.decision.active) {
+      registry.set(wanted(environmentId), true);
+    } else if (!isForkHealthRunning(current.result)) {
+      registry.refresh(sources.health(environmentId));
+    }
+  };
+
+  return { machineHealth, request };
 }
+
+const machineHealth = makeForkMachineHealth({
+  snapshot: forkExtensionsSnapshotAtom,
+  health: forkExtensionsHealthAtom,
+  now: Date.now,
+});
+
+export const forkExtensionsMachineHealth = machineHealth.machineHealth;
+export const requestForkHealthCheck = machineHealth.request;
 
 /** Every write changes what the machine's snapshot shows. */
 const refreshSnapshot = (

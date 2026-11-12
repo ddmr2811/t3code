@@ -133,27 +133,60 @@ beforeEach(() => {
     session: { authenticated: true, scopes: [] },
   });
   state.snapshots.set(PC, AsyncResult.success(snapshot));
-  state.health.set(PC, { decision: { decided: true, active: false }, result: null });
+  state.snapshots.set(SHARED, AsyncResult.initial(true));
+  for (const id of [PC, SHARED]) {
+    state.health.set(id, { decision: { decided: true, active: false }, result: null });
+  }
 });
 
 describe("useForkExtensions", () => {
-  it("asks only supported machines for a snapshot or a health check (Review Focus 4)", () => {
+  it("asks only machines that speak the protocol, including read-only ones (Review Focus 4)", () => {
     const { machines } = useForkExtensions();
 
     expect(
       state.reads.filter((read) => read.label !== "sessions").map((read) => [read.label, read.key]),
     ).toEqual([
-      ["web-fork-extensions-snapshots", PC],
-      ["web-fork-extensions-health", PC],
+      [
+        "web-fork-extensions-snapshots",
+        `${PC}
+${SHARED}`,
+      ],
+      [
+        "web-fork-extensions-health",
+        `${PC}
+${SHARED}`,
+      ],
     ]);
-    expect(machines.map((machine) => [machine.label, machine.support, machine.error])).toEqual([
-      ["This PC", "supported", null],
-      ["Old laptop", "needsForkUpdate", null],
-      ["VPS", "offline", null],
-      ["Shared", "noPermission", null],
-    ]);
+    expect(machines.map((machine) => [machine.label, machine.support, machine.canOperate])).toEqual(
+      [
+        ["This PC", "supported", true],
+        ["Old laptop", "needsForkUpdate", false],
+        ["VPS", "offline", false],
+        ["Shared", "supported", false],
+      ],
+    );
     expect(machines[0]!.snapshot).toBe(snapshot);
     expect(machines.slice(1).every((machine) => machine.snapshot === null)).toBe(true);
+    expect(machines.map((machine) => machine.isPending)).toEqual([false, false, false, true]);
+  });
+
+  it("asks a machine whose operate access is still loading for its snapshot right away", () => {
+    state.sessions.set(SHARED, AsyncResult.initial(true));
+    const shared = useForkExtensions().machines[3]!;
+    expect(shared.support).toBe("supported");
+    expect(shared.canOperate).toBe(false);
+    expect(state.reads.at(-2)).toEqual({
+      label: "web-fork-extensions-snapshots",
+      key: `${PC}
+${SHARED}`,
+    });
+  });
+
+  it("stays settled while a snapshot it already shows refetches", () => {
+    state.snapshots.set(PC, AsyncResult.success(snapshot, { waiting: true }));
+    const pc = useForkExtensions().machines[0]!;
+    expect(pc.isPending).toBe(false);
+    expect(pc.snapshot).toBe(snapshot);
   });
 
   it("lays a running health check over the snapshot", () => {
@@ -172,12 +205,18 @@ describe("useForkExtensions", () => {
     expect(pc.snapshot?.items[0]?.cells[0]?.state).toBe("working");
   });
 
-  it("refreshes and checks only supported machines", () => {
+  it("refreshes and checks only machines that speak the protocol", () => {
     const view = useForkExtensions();
     view.refresh();
     view.checkHealth();
     view.checkHealth(OLD);
-    expect(state.registry.refresh.mock.calls).toEqual([[{ snapshotOf: PC }]]);
-    expect(state.requestHealth.mock.calls).toEqual([[state.registry, PC]]);
+    expect(state.registry.refresh.mock.calls).toEqual([
+      [{ snapshotOf: PC }],
+      [{ snapshotOf: SHARED }],
+    ]);
+    expect(state.requestHealth.mock.calls).toEqual([
+      [state.registry, PC],
+      [state.registry, SHARED],
+    ]);
   });
 });

@@ -15,44 +15,54 @@ import { AsyncResult } from "effect/reactivity";
 /** Spec §7.2: opening the page re-checks health only when the cached check is older than this. */
 export const HEALTH_STALE_MS = 600_000;
 
-export type MachineSupport = "supported" | "needsForkUpdate" | "offline" | "noPermission";
+export type MachineSupport = "supported" | "needsForkUpdate" | "offline";
 
 export interface MachineState {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** While `isPending`, a value other than "supported" is provisional (still connecting or loading permissions). */
+  /** While `isPending`, "offline" is provisional: the machine is still connecting. */
   readonly support: MachineSupport;
+  /**
+   * Installing, toggling and authorizing need the operate grant; without it (or while it loads)
+   * the machine is read-only (spec §7.1, as in SecretsSettings).
+   */
+  readonly canOperate: boolean;
   /** The latest health check run from this page is already laid over it. */
   readonly snapshot: ForkExtensionsSnapshot | null;
   readonly error: string | null;
+  /** True only until the first snapshot arrives; a background refetch keeps it false. */
   readonly isPending: boolean;
   readonly isCheckingHealth: boolean;
   readonly healthError: string | null;
 }
 
+/** The snapshot needs only read access, so operate access never holds it back. */
 export function classifyMachineSupport(input: {
   readonly connectionPhase: EnvironmentConnectionPhase;
   readonly hasServerConfig: boolean;
   readonly forkExtensionsVersion: number | undefined;
   readonly operateAccess: "granted" | "denied" | "pending";
-}): { readonly support: MachineSupport; readonly isPending: boolean } {
+}): {
+  readonly support: MachineSupport;
+  readonly isPending: boolean;
+  readonly canOperate: boolean;
+} {
+  const canOperate = input.operateAccess === "granted";
   // An incompatible host is what an old build looks like from here.
-  if (input.connectionPhase === "unsupported")
-    return { support: "needsForkUpdate", isPending: false };
+  if (input.connectionPhase === "unsupported") {
+    return { support: "needsForkUpdate", isPending: false, canOperate: false };
+  }
   if (input.connectionPhase !== "connected") {
     const connecting =
       input.connectionPhase === "connecting" || input.connectionPhase === "reconnecting";
-    return { support: "offline", isPending: connecting };
+    return { support: "offline", isPending: connecting, canOperate: false };
   }
-  if (!input.hasServerConfig) return { support: "offline", isPending: true };
+  if (!input.hasServerConfig) return { support: "offline", isPending: true, canOperate: false };
   // Spec §6.5: absent on upstream T3 Code and on fork builds from before Extensions.
   if (input.forkExtensionsVersion === undefined || input.forkExtensionsVersion < 1) {
-    return { support: "needsForkUpdate", isPending: false };
+    return { support: "needsForkUpdate", isPending: false, canOperate: false };
   }
-  if (input.operateAccess !== "granted") {
-    return { support: "noPermission", isPending: input.operateAccess === "pending" };
-  }
-  return { support: "supported", isPending: false };
+  return { support: "supported", isPending: false, canOperate };
 }
 
 export function isHealthStale(healthCheckedAt: string | null, nowMs: number): boolean {
@@ -168,6 +178,8 @@ export interface MatrixColumn {
   /** null: the single column of a machine whose support is not "supported". */
   readonly agent: ForkExtensionAgent | null;
   readonly support: MachineSupport;
+  /** false: show it, but do not offer installs or toggles there (Tasks 13 and 14). */
+  readonly canOperate: boolean;
   /** Why this agent could not be read on that machine (header: "Codex: <summary>"). */
   readonly problem: ForkExtensionProblem | null;
 }
@@ -183,6 +195,8 @@ export type MatrixCell =
 export interface MatrixRow {
   /** The item as the first machine that has it reports it. */
   readonly item: ForkExtensionItem;
+  /** Each machine's own copy (its source or transport may differ from `item`'s). */
+  readonly itemsByMachine: ReadonlyMap<EnvironmentId, ForkExtensionItem>;
   /** Aligned with `columns`. */
   readonly cells: ReadonlyArray<MatrixCell>;
   readonly usageTotal: number;
@@ -201,7 +215,11 @@ export function isSnapshotCell(cell: MatrixCell): cell is ForkExtensionCell {
 const AGENT_ORDER: ReadonlyArray<ForkExtensionAgent> = ["claude", "codex"];
 
 function machineColumns(machine: MachineState): ReadonlyArray<MatrixColumn> {
-  const base = { environmentId: machine.environmentId, machineLabel: machine.label };
+  const base = {
+    environmentId: machine.environmentId,
+    machineLabel: machine.label,
+    canOperate: machine.support === "supported" && machine.canOperate,
+  };
   if (machine.support !== "supported") {
     return [
       {
@@ -272,8 +290,14 @@ export function buildMatrix(
         : { state: "notInstalled" };
     });
     const real = cells.filter(isSnapshotCell);
+    const own = new Map<EnvironmentId, ForkExtensionItem>();
+    for (const [environmentId, items] of itemsByMachine) {
+      const copy = items.get(item.id);
+      if (copy !== undefined) own.set(environmentId, copy);
+    }
     return {
       item,
+      itemsByMachine: own,
       cells,
       usageTotal: real.reduce((total, cell) => total + cell.usageCount, 0),
       hasProblem: real.some((cell) => cell.state === "needsAttention" || cell.problem !== null),
