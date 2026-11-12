@@ -126,7 +126,12 @@ const statusClient = (status: number) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status }))),
   );
 
-const ref = { owner: "o", repo: "r", path: null, ref: null };
+const ref: { owner: string; repo: string; path: string | null; ref: string | null } = {
+  owner: "o",
+  repo: "r",
+  path: null,
+  ref: null,
+};
 const run = (client: HttpClient.HttpClient, input = ref) =>
   resolveGithubRepo(input).pipe(Effect.provideService(HttpClient.HttpClient, client));
 
