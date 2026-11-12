@@ -207,11 +207,20 @@ export function useForkAuthorize(options: {
     if (problem !== null) setStep(id, { ...step, finishing: false, problem });
   };
 
+  // While pasting, the login waits on the machine: a stray click or Escape must not end it,
+  // so only Cancel and the close button leave this step.
+  const pasting = state?.step.tag === "paste";
   const dialog = (
     <Dialog
       open={state?.open ?? false}
-      onOpenChange={(open) => {
-        if (!open) close();
+      disablePointerDismissal={pasting}
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (pasting && (details.reason === "escape-key" || details.reason === "outside-press")) {
+          details.cancel();
+          return;
+        }
+        close();
       }}
       onOpenChangeComplete={(open) => {
         if (!open) setState((current) => (current?.open === true ? current : null));

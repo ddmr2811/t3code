@@ -9,7 +9,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import type { MachineState } from "./ForkExtensions.logic";
 
@@ -260,6 +260,41 @@ describe("ForkExtensions authorize and per-project toggles", () => {
     runs[0]!.end({ _tag: "authUrl", sessionId: "session-1", url: URL_FROM_SERVER });
     expect(callsOf(forkExtensionsAuthorizeComplete.label)).toEqual([]);
     expect(state.checkHealth).not.toHaveBeenCalled();
+  });
+
+  it("keeps the login while pasting: a click outside or Escape does not close it", async () => {
+    reset([
+      machine(PC, "This PC", [
+        mcp("context7", [cell("claude", { state: "needsAttention", problem: needsAuth })]),
+      ]),
+    ]);
+    const runs = holdAuthorize();
+    await using _screen = await render(<ForkExtensionsSettings />);
+
+    await openDetail("context7");
+    await page.getByRole("button", { name: "Authorize", exact: true }).click();
+    await vi.waitFor(() => expect(runs).toHaveLength(1));
+    runs[0]!.input.onEvent({ _tag: "authUrl", sessionId: "session-1", url: URL_FROM_SERVER });
+    const dialog = page.getByRole("dialog");
+    const address = dialog.getByRole("textbox", {
+      name: "Address of the page your browser landed on",
+    });
+    await expect.element(address).toBeVisible();
+    await address.fill(REDIRECT);
+
+    const backdrop = document.querySelector<HTMLElement>('[data-slot="dialog-backdrop"]');
+    expect(backdrop).not.toBeNull();
+    await userEvent.click(backdrop!, { position: { x: 4, y: 4 }, force: true });
+    await expect.element(address).toHaveValue(REDIRECT);
+    expect(runs[0]!.input.signal?.aborted).toBe(false);
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(address).toHaveValue(REDIRECT);
+    expect(runs[0]!.input.signal?.aborted).toBe(false);
+    // Cancel is the way out.
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect(runs[0]!.input.signal?.aborted).toBe(true);
+    runs[0]!.end(null);
   });
 
   it("shows why the login failed", async () => {
