@@ -1,6 +1,6 @@
 import type { ForkExtensionKind } from "@t3tools/contracts";
 import { RefreshCwIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
@@ -43,6 +43,11 @@ import { useForkExtensions } from "./useForkExtensions";
 
 const KINDS: ReadonlyArray<ForkExtensionKind> = ["mcp", "plugin", "skill"];
 
+/** A notice belongs to the tab of the item it is about, and shows only there. */
+interface PageNotice extends ForkNotice {
+  readonly kind: ForkExtensionKind;
+}
+
 const EMPTY_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
   mcp: "No MCP servers on these machines yet.",
   plugin: "No plugins on these machines yet.",
@@ -57,7 +62,7 @@ export function ForkExtensionsSettings() {
   const [kind, setKind] = useState<ForkExtensionKind>("mcp");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  const [notices, setNotices] = useState<ReadonlyArray<ForkNotice>>([]);
+  const [notices, setNotices] = useState<ReadonlyArray<PageNotice>>([]);
   // Each "Install here" remounts the form (a new key) with that item and only that place checked.
   const [installHere, setInstallHere] = useState<{
     readonly key: number;
@@ -71,7 +76,6 @@ export function ForkExtensionsSettings() {
 
   const matrices = new Map(KINDS.map((entry) => [entry, buildMatrix(machines, entry)] as const));
   const { columns, rows } = matrices.get(kind)!;
-  const selectedRow = rows.find((row) => row.item.id === selectedId);
   const answered = machines.filter((machine) => machine.snapshot !== null);
   const anyChecking = machines.some((machine) => machine.isCheckingHealth);
   const oldestCheck = oldestHealthCheck(answered);
@@ -103,16 +107,18 @@ export function ForkExtensionsSettings() {
     return lines;
   });
 
-  const addNotices = (next: ReadonlyArray<ForkNotice>) =>
+  const addNotices = (noticeKind: ForkExtensionKind, next: ReadonlyArray<ForkNotice>) =>
     setNotices((current) => [
-      ...next,
+      ...next.map((notice) => ({ ...notice, kind: noticeKind })),
       ...current.filter((notice) => !next.some((entry) => entry.key === notice.key)),
     ]);
+  const visibleNotices = notices.filter((notice) => notice.kind === kind);
   const dropNotice = (key: string) =>
     setNotices((current) => current.filter((notice) => notice.key !== key));
   // A finished login changes what that machine's health check reports (spec §6.7).
   const authorize = useForkAuthorize({
-    onNotices: addNotices,
+    // Only MCP servers log in.
+    onNotices: (next) => addNotices("mcp", next),
     onAuthorized: (environmentId) => checkHealth(environmentId),
   });
 
@@ -154,7 +160,9 @@ export function ForkExtensionsSettings() {
     const failed = `Couldn't ${verb} ${row.item.name} on ${place}`;
     if (result._tag === "Failure") {
       const problem = commandFailureProblem(result);
-      if (problem !== null) addNotices([{ key: noticeKey, tone: "error", title: failed, problem }]);
+      if (problem !== null) {
+        addNotices(row.item.kind, [{ key: noticeKey, tone: "error", title: failed, problem }]);
+      }
       return;
     }
     const notice = resultNotice(noticeKey, result.value, {
@@ -162,8 +170,40 @@ export function ForkExtensionsSettings() {
       failed,
     });
     if (notice === null) dropNotice(noticeKey);
-    else addNotices([notice]);
+    else addNotices(row.item.kind, [notice]);
   };
+
+  const renderDetail = (detailRow: MatrixRow) => (
+    <ForkExtensionsDetail
+      key={detailRow.item.id}
+      row={detailRow}
+      columns={columns}
+      nowMs={nowMs}
+      onInstallHere={onInstallHere}
+      onNotices={(next) => addNotices(detailRow.item.kind, next)}
+      renderCellActions={(context) => (
+        <ForkAuthorizeButton
+          context={context}
+          onLogin={(agent) =>
+            authorize.start({
+              environmentId: context.column.environmentId,
+              machineLabel: context.column.machineLabel,
+              agent,
+              itemId: detailRow.item.id,
+              itemName: detailRow.item.name,
+            })
+          }
+        />
+      )}
+    >
+      <ForkPerProjectSection
+        row={detailRow}
+        columns={columns}
+        onNotices={(next) => addNotices(detailRow.item.kind, next)}
+        onNoticeCleared={dropNotice}
+      />
+    </ForkExtensionsDetail>
+  );
 
   return (
     <SettingsPageContainer>
@@ -221,6 +261,30 @@ export function ForkExtensionsSettings() {
             ))}
           </ul>
         ) : null}
+        {visibleNotices.length > 0 ? (
+          <div className="space-y-2 px-3 pt-2 sm:px-4">
+            {visibleNotices.map((notice) => (
+              <Alert key={notice.key} variant={notice.tone} controlAlignment="first-line">
+                <AlertTitle className="wrap-anywhere">{notice.title}</AlertTitle>
+                {notice.problem !== null ? (
+                  <AlertDescription>
+                    <ForkProblemText problem={notice.problem} />
+                  </AlertDescription>
+                ) : null}
+                <AlertAction>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Dismiss"
+                    onClick={() => dropNotice(notice.key)}
+                  >
+                    <XIcon />
+                  </Button>
+                </AlertAction>
+              </Alert>
+            ))}
+          </div>
+        ) : null}
         <div className="px-1 pt-2 pb-1 sm:px-2">
           {machines.length === 0 ? (
             <p className="px-2 py-3 text-sm text-muted-foreground">
@@ -250,44 +314,52 @@ export function ForkExtensionsSettings() {
                   const selected = row.item.id === selectedId;
                   const tag = forkSourceTag(row.item);
                   return (
-                    <TableRow
-                      key={row.item.id}
-                      aria-selected={selected}
-                      data-state={selected ? "selected" : undefined}
-                      className="cursor-pointer"
-                      onClick={() => setSelectedId(selected ? null : row.item.id)}
-                    >
-                      <TableCell className="max-w-64">
-                        <span className="flex min-w-0 items-baseline gap-1.5">
-                          <button
-                            type="button"
-                            aria-expanded={selected}
-                            className="min-w-0 truncate font-semibold text-foreground"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setSelectedId(selected ? null : row.item.id);
-                            }}
-                          >
-                            {row.item.name}
-                          </button>
-                          {tag ? (
-                            <span className="shrink-0 text-2xs text-muted-foreground">{tag}</span>
-                          ) : null}
-                        </span>
-                      </TableCell>
-                      {columns.map((column, index) => (
-                        <TableCell key={column.key} className="text-center">
-                          <MatrixCellButton
-                            row={row}
-                            column={column}
-                            cell={row.cells[index]!}
-                            pending={pending.has(`${row.item.id}\n${column.key}`)}
-                            onClick={() => void clickCell(row, column, row.cells[index]!)}
-                          />
+                    <Fragment key={row.item.id}>
+                      <TableRow
+                        aria-selected={selected}
+                        data-state={selected ? "selected" : undefined}
+                        className="cursor-pointer"
+                        onClick={() => setSelectedId(selected ? null : row.item.id)}
+                      >
+                        <TableCell className="max-w-64">
+                          <span className="flex min-w-0 items-baseline gap-1.5">
+                            <button
+                              type="button"
+                              aria-expanded={selected}
+                              className="min-w-0 truncate font-semibold text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedId(selected ? null : row.item.id);
+                              }}
+                            >
+                              {row.item.name}
+                            </button>
+                            {tag ? (
+                              <span className="shrink-0 text-2xs text-muted-foreground">{tag}</span>
+                            ) : null}
+                          </span>
                         </TableCell>
-                      ))}
-                      <TableCell className="text-center">{row.usageTotal}</TableCell>
-                    </TableRow>
+                        {columns.map((column, index) => (
+                          <TableCell key={column.key} className="text-center">
+                            <MatrixCellButton
+                              row={row}
+                              column={column}
+                              cell={row.cells[index]!}
+                              pending={pending.has(`${row.item.id}\n${column.key}`)}
+                              onClick={() => void clickCell(row, column, row.cells[index]!)}
+                            />
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-center">{row.usageTotal}</TableCell>
+                      </TableRow>
+                      {selected ? (
+                        // The detail opens right under its row, not below every other row. A
+                        // plain row: it is a panel, without the matrix rows' hover and padding.
+                        <tr className="border-b">
+                          <td colSpan={columns.length + 2}>{renderDetail(row)}</td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </TableBody>
@@ -295,61 +367,6 @@ export function ForkExtensionsSettings() {
           )}
         </div>
         {columns.length > 0 && rows.length > 0 ? <Legend /> : null}
-        {notices.length > 0 ? (
-          <div className="space-y-2 px-3 pb-3 sm:px-4">
-            {notices.map((notice) => (
-              <Alert key={notice.key} variant={notice.tone} controlAlignment="first-line">
-                <AlertTitle className="wrap-anywhere">{notice.title}</AlertTitle>
-                {notice.problem !== null ? (
-                  <AlertDescription>
-                    <ForkProblemText problem={notice.problem} />
-                  </AlertDescription>
-                ) : null}
-                <AlertAction>
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Dismiss"
-                    onClick={() => dropNotice(notice.key)}
-                  >
-                    <XIcon />
-                  </Button>
-                </AlertAction>
-              </Alert>
-            ))}
-          </div>
-        ) : null}
-        {selectedRow !== undefined ? (
-          <ForkExtensionsDetail
-            key={selectedRow.item.id}
-            row={selectedRow}
-            columns={columns}
-            nowMs={nowMs}
-            onInstallHere={onInstallHere}
-            onNotices={addNotices}
-            renderCellActions={(context) => (
-              <ForkAuthorizeButton
-                context={context}
-                onLogin={(agent) =>
-                  authorize.start({
-                    environmentId: context.column.environmentId,
-                    machineLabel: context.column.machineLabel,
-                    agent,
-                    itemId: selectedRow.item.id,
-                    itemName: selectedRow.item.name,
-                  })
-                }
-              />
-            )}
-          >
-            <ForkPerProjectSection
-              row={selectedRow}
-              columns={columns}
-              onNotices={addNotices}
-              onNoticeCleared={dropNotice}
-            />
-          </ForkExtensionsDetail>
-        ) : null}
         {authorize.dialog}
       </SettingsSection>
     </SettingsPageContainer>

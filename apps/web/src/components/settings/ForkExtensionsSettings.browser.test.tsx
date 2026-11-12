@@ -204,6 +204,15 @@ describe("ForkExtensionsSettings", () => {
     await page.getByRole("button", { name: "playwright on This PC · Claude: Working" }).click();
     await expect.element(page.getByText("The config changed while you were editing")).toBeVisible();
     await expect.element(page.getByText("Refresh and try again.")).toBeVisible();
+    // Above the table, where it can be seen without scrolling past every row.
+    const alert = page.getByRole("alert").element();
+    const table = page.getByRole("table").element();
+    expect(alert.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // It belongs to the MCP tab: hidden on Plugins, back on MCP.
+    await page.getByRole("button", { name: /^Plugins · / }).click();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    await page.getByRole("button", { name: /^MCP · / }).click();
+    await expect.element(page.getByText("Refresh and try again.")).toBeVisible();
   });
 
   it("asks to install in an empty cell and never toggles a plugin's server", async () => {
@@ -232,6 +241,11 @@ describe("ForkExtensionsSettings", () => {
     await page.getByRole("button", { name: "playwright", exact: true }).click();
     const detail = page.getByRole("region", { name: "playwright details" });
     await expect.element(detail.getByText("npx not found")).toBeVisible();
+    // Inline, as the table row right under the selected one.
+    const rows = page.getByRole("row").elements();
+    const selected = rows.findIndex((row) => row.getAttribute("aria-selected") === "true");
+    expect(rows[selected]!.textContent).toMatch(/^playwright/);
+    expect(rows[selected + 1]!.contains(detail.element())).toBe(true);
     await expect
       .element(detail.getByText("Install Node.js on VPS so npx is on its PATH."))
       .toBeVisible();
