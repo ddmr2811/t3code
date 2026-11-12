@@ -137,9 +137,21 @@ const answer = (label: string, reply: Answer) => state.answers.set(label, reply)
 const environmentOf = (value: unknown) => (value as { environmentId: EnvironmentId }).environmentId;
 const installCalls = () => state.calls.filter((call) => call.label === forkExtensionsInstall.label);
 
+const pasteBox = () => page.getByRole("textbox", { name: "Paste something to install" });
+const inspectCalls = () =>
+  state.calls.filter((call) => call.label === forkExtensionsInspectSource.label);
+
+/**
+ * A real paste (`insertFromPaste`): read at once, with no typing debounce, so a test never
+ * races the 300 ms timer. Typing then Install is covered on its own below.
+ */
 async function paste(text: string) {
-  await page.getByRole("textbox", { name: "Paste something to install" }).fill(text);
-  await page.getByRole("button", { name: "Install", exact: true }).click();
+  await expect.element(pasteBox()).toBeVisible();
+  const input = pasteBox().element() as HTMLInputElement;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+  input.dispatchEvent(
+    new InputEvent("input", { bubbles: true, inputType: "insertFromPaste", data: text }),
+  );
 }
 
 describe("ForkExtensionsInstall", () => {
@@ -158,6 +170,52 @@ describe("ForkExtensionsInstall", () => {
     ]);
     await expect.element(page.getByRole("checkbox", { name: "VPS · Codex" })).toBeChecked();
     await expect.element(page.getByRole("button", { name: "Install in 4 places" })).toBeVisible();
+  });
+
+  it("the top Install installs the open form, keeping its edits, without reading the paste again", async () => {
+    setup();
+    answer(forkExtensionsInspectSource.label, () => AsyncResult.success(notion));
+    answer(forkExtensionsInstall.label, () =>
+      AsyncResult.success([
+        { agent: "claude", ok: true, problem: null },
+        { agent: "codex", ok: true, problem: null },
+      ]),
+    );
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await paste("https://mcp.notion.com/mcp");
+    const name = page.getByRole("textbox", { name: "Name" });
+    await expect.element(name).toHaveValue("notion");
+    await name.fill("notion-work");
+    await page.getByRole("button", { name: "Install", exact: true }).click();
+
+    await vi.waitFor(() => expect(installCalls()).toHaveLength(2));
+    expect(installCalls().map((call) => call.value)).toEqual([
+      { environmentId: PC, input: expect.objectContaining({ name: "notion-work" }) },
+      { environmentId: VPS, input: expect.objectContaining({ name: "notion-work" }) },
+    ]);
+    expect(inspectCalls()).toHaveLength(1);
+  });
+
+  it("typed text is read once, even when Install is clicked after the typing pause", async () => {
+    setup();
+    let answerInspect: () => void = () => {};
+    answer(
+      forkExtensionsInspectSource.label,
+      () =>
+        new Promise((resolve) => {
+          answerInspect = () => resolve(AsyncResult.success(notion));
+        }),
+    );
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await pasteBox().fill("https://mcp.notion.com/mcp");
+    // The typing pause has run the read; Install for the same text must not run another.
+    await vi.waitFor(() => expect(inspectCalls()).toHaveLength(1));
+    await page.getByRole("button", { name: "Install", exact: true }).click();
+    await expect.element(page.getByText("Detecting…")).toBeVisible();
+    answerInspect();
+    await expect.element(page.getByRole("textbox", { name: "Name" })).toHaveValue("notion");
+    expect(inspectCalls()).toHaveLength(1);
+    expect(installCalls()).toEqual([]);
   });
 
   it("finishes on one machine while another fails, with that one's next step", async () => {

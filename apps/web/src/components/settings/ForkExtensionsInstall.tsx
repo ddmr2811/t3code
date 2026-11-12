@@ -67,6 +67,8 @@ type FormState =
       readonly phase: "ready";
       /** "item": opened by "Install here" for an item another machine has. */
       readonly origin: "pasted" | "item";
+      /** The pasted text the form was read from (trimmed); empty for "item". */
+      readonly source: string;
       readonly title: string | null;
       /** null: the paste was not recognised and the type is picked by hand. */
       readonly draft: ForkInstallDraft | null;
@@ -90,7 +92,13 @@ function initialForm(
       ? null
       : findForkItem(machines, installHere.itemId, installHere.environmentId);
   if (item === null) return EMPTY_FORM;
-  return { phase: "ready", origin: "item", title: item.name, draft: draftFromItem(item) };
+  return {
+    phase: "ready",
+    origin: "item",
+    source: "",
+    title: item.name,
+    draft: draftFromItem(item),
+  };
 }
 
 const placeLabel = (target: ForkInstallTarget) =>
@@ -127,6 +135,11 @@ export function ForkExtensionsInstall({
   const [statuses, setStatuses] = useState<ReadonlyMap<string, ForkInstallStatus>>(new Map());
   /** Only the latest paste's answer is shown. */
   const inspectRun = useRef(0);
+  /**
+   * The text the open (or opening) form was read from: reading it again would only throw away
+   * the edits made in the form. Cleared when that read fails or the form closes.
+   */
+  const inspectedText = useRef<string | null>(null);
   /** Only the latest install's answers are shown: closing or changing the form abandons it. */
   const installRun = useRef(0);
   const fieldId = useId();
@@ -144,16 +157,21 @@ export function ForkExtensionsInstall({
   };
 
   const inspect = async (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed === inspectedText.current) return;
     const run = ++inspectRun.current;
     const environmentId = forkInstallInspectMachine(machines, primaryEnvironmentId);
     if (environmentId === null) {
+      inspectedText.current = null;
       setForm({ phase: "error", problem: NO_MACHINE });
       return;
     }
+    inspectedText.current = trimmed;
     setForm({ phase: "inspecting" });
-    const result = await inspectSource({ environmentId, input: { text: value.trim() } });
+    const result = await inspectSource({ environmentId, input: { text: trimmed } });
     if (run !== inspectRun.current) return;
     if (result._tag === "Failure") {
+      inspectedText.current = null;
       const problem = commandFailureProblem(result);
       setForm(problem === null ? EMPTY_FORM : { phase: "error", problem });
       return;
@@ -162,6 +180,7 @@ export function ForkExtensionsInstall({
     setForm({
       phase: "ready",
       origin: "pasted",
+      source: trimmed,
       title: null,
       draft: draftFromPasted(result.value),
     });
@@ -175,6 +194,7 @@ export function ForkExtensionsInstall({
   const close = () => {
     debouncedInspect.cancel();
     inspectRun.current += 1;
+    inspectedText.current = null;
     setText("");
     setForm(EMPTY_FORM);
     resetChoices();
@@ -261,6 +281,8 @@ export function ForkExtensionsInstall({
     }));
 
   const autoFocus = form.phase === "ready" && form.origin === "item";
+  const formForText =
+    form.phase === "ready" && form.origin === "pasted" && form.source === text.trim();
 
   return (
     <div className="space-y-3 px-3 pt-3 sm:px-4">
@@ -270,6 +292,11 @@ export function ForkExtensionsInstall({
           event.preventDefault();
           if (running || text.trim() === "") return;
           debouncedInspect.cancel();
+          // The form for this very text is open: Install installs it, edits and all.
+          if (formForText) {
+            void runInstall();
+            return;
+          }
           void inspect(text);
         }}
       >
@@ -286,7 +313,16 @@ export function ForkExtensionsInstall({
             )
           }
         />
-        <Button type="submit" size="sm" disabled={running || text.trim() === ""}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={
+            running ||
+            text.trim() === "" ||
+            (formForText &&
+              (plan === null || plan.blocker !== null || draft?.type === "claudeAiConnector"))
+          }
+        >
           Install
         </Button>
       </form>
