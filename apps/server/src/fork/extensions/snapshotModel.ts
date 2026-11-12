@@ -104,8 +104,11 @@ export const comparablePath = (value: string): string =>
  * Same rule as the web's `joinCommandLine`, so "Install here" splits the source back into
  * the exact parts (a home folder like `C:\Users\Jane Doe` has a space).
  */
-const quoteCommandPart = (part: string): string =>
-  /\s/.test(part) || part === "" ? `"${part}"` : part;
+const quoteCommandPart = (part: string): string => {
+  if (part !== "" && !/\s/.test(part) && !/^["']/.test(part)) return part;
+  // A part holding `"` goes in single quotes: the double-quoted form can't carry it.
+  return part.includes('"') && !part.includes("'") ? `'${part}'` : `"${part}"`;
+};
 
 const describeMcp = (
   definition: unknown,

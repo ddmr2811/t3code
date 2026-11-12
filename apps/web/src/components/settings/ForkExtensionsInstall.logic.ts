@@ -90,10 +90,15 @@ export function splitCommandLine(
   return { command, args };
 }
 
+function quoteCommandPart(part: string): string {
+  if (part !== "" && !/\s/.test(part) && !/^["']/.test(part)) return part;
+  // A part holding `"` goes in single quotes: the double-quoted form can't carry it.
+  return part.includes('"') && !part.includes("'") ? `'${part}'` : `"${part}"`;
+}
+
+/** Same rule as the server's `describeMcp`, so "Install here" splits its source back. */
 export function joinCommandLine(command: string, args: ReadonlyArray<string>): string {
-  return [command, ...args]
-    .map((part) => (/\s/.test(part) || part === "" ? `"${part}"` : part))
-    .join(" ");
+  return [command, ...args].map(quoteCommandPart).join(" ");
 }
 
 /** null: not recognised, the type is picked by hand. */

@@ -124,6 +124,13 @@ describe("command lines", () => {
       command: "C:\\Program Files\\srv.exe",
       args: ["--name", "a b"],
     });
+    // A part holding double quotes goes in single quotes (snapshotModel's describeMcp agrees).
+    const json = joinCommandLine("srv", ["--config", '{"a": 1}', '"x"', "it's"]);
+    expect(json).toBe(`srv --config '{"a": 1}' '"x"' it's`);
+    expect(splitCommandLine(json)).toEqual({
+      command: "srv",
+      args: ["--config", '{"a": 1}', '"x"', "it's"],
+    });
   });
 });
 

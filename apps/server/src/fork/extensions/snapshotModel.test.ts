@@ -255,6 +255,7 @@ describe("buildSnapshotItems", () => {
           JSON.stringify({
             mcpServers: {
               srv: { command: "C:\\Users\\Jane Doe\\bin\\srv.exe", args: ["--name", "a b", ""] },
+              json: { command: "srv", args: ["--config", '{"a": 1}', '"x"'] },
             },
           }),
         ),
@@ -264,6 +265,8 @@ describe("buildSnapshotItems", () => {
     expect(find(items, "mcp:srv").source).toBe(
       '"C:\\Users\\Jane Doe\\bin\\srv.exe" --name "a b" ""',
     );
+    // A part holding double quotes goes in single quotes.
+    expect(find(items, "mcp:json").source).toBe(`srv --config '{"a": 1}' '"x"'`);
     expect(find(items, "mcp:context7").source).toBe("npx -y @upstash/context7-mcp");
   });
 
