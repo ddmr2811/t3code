@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../../config.ts";
 import {
@@ -13,6 +14,7 @@ import {
   enableSkill,
   listDisabledSkills,
   listStashedClaudeMcp,
+  peekClaudeMcp,
   stashClaudeMcp,
   takeClaudeMcp,
 } from "./disabledStore.ts";
@@ -53,6 +55,9 @@ describe("disabledStore", () => {
         "my server/1": definition,
         other: { type: "http", url: "https://x" },
       });
+      expect(yield* peekClaudeMcp("my server/1")).toEqual(definition);
+      expect(yield* peekClaudeMcp("missing")).toBeNull();
+      expect(Object.keys(yield* listStashedClaudeMcp())).toHaveLength(2);
       expect(yield* takeClaudeMcp("my server/1")).toEqual(definition);
       expect(yield* takeClaudeMcp("my server/1")).toBeNull();
       expect(Object.keys(yield* listStashedClaudeMcp())).toEqual(["other"]);
@@ -110,6 +115,62 @@ describe("disabledStore", () => {
       Effect.gen(function* () {
         const error = yield* disableSkill("claude", skillsDir, "../evil").pipe(Effect.flip);
         expect(error.problem.reason).toBe("invalidInput");
+      }),
+    ).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("a non-EXDEV rename failure leaves source untouched and no destination", () =>
+    withSkillsDir(({ fs, path, skillsDir }) =>
+      Effect.gen(function* () {
+        yield* makeSkill(fs, path, skillsDir, "pdf");
+        const busy = {
+          ...fs,
+          rename: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "rename",
+                cause: { code: "EBUSY" },
+              }),
+            ),
+        } as FileSystem.FileSystem;
+        const error = yield* disableSkill("claude", skillsDir, "pdf").pipe(
+          Effect.provideService(FileSystem.FileSystem, busy),
+          Effect.flip,
+        );
+        expect(error.problem.reason).toBe("commandFailed");
+        expect(error.problem.summary).toContain("in use");
+        expect(yield* fs.readFileString(path.join(skillsDir, "pdf", "SKILL.md"))).toBe("# pdf\n");
+        expect(yield* listDisabledSkills("claude")).toEqual([]);
+      }),
+    ).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("an EXDEV rename falls back to copy and removes the source last", () =>
+    withSkillsDir(({ fs, path, skillsDir }) =>
+      Effect.gen(function* () {
+        yield* makeSkill(fs, path, skillsDir, "pdf");
+        let first = true;
+        const exdev = {
+          ...fs,
+          rename: (from: string, to: string) =>
+            first && ((first = false), true)
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "FileSystem",
+                    method: "rename",
+                    cause: { code: "EXDEV" },
+                  }),
+                )
+              : fs.rename(from, to),
+        } as FileSystem.FileSystem;
+        yield* disableSkill("claude", skillsDir, "pdf").pipe(
+          Effect.provideService(FileSystem.FileSystem, exdev),
+        );
+        expect(yield* fs.exists(path.join(skillsDir, "pdf"))).toBe(false);
+        expect(yield* listDisabledSkills("claude")).toEqual(["pdf"]);
       }),
     ).pipe(Effect.provide(layer)),
   );

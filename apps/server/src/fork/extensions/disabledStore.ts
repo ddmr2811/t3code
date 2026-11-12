@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - random suffix for a temp sibling has no Effect equivalent.
+import * as NodeCrypto from "node:crypto";
+
 import { ForkExtensionsError } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -117,7 +120,11 @@ export const stashClaudeMcp = Effect.fn("ForkExtensions.stashClaudeMcp")(functio
   });
 });
 
-/** Returns the stashed definition (or null) and removes it from the stash. */
+/**
+ * Returns the stashed definition (or null) and removes it from the stash. Re-enable flows
+ * must NOT use this: use peekClaudeMcp -> re-add -> discardClaudeMcp, so a failed re-add
+ * never loses the definition.
+ */
 export const takeClaudeMcp = Effect.fn("ForkExtensions.takeClaudeMcp")(function* (name: string) {
   const stash = yield* readStash();
   const entry = stash.entries[name];
@@ -125,6 +132,12 @@ export const takeClaudeMcp = Effect.fn("ForkExtensions.takeClaudeMcp")(function*
   const { [name]: _removed, ...rest } = stash.entries;
   yield* writeStash(stash, rest);
   return entry.definition ?? null;
+});
+
+/** Returns the stashed definition (or null) without removing it. */
+export const peekClaudeMcp = Effect.fn("ForkExtensions.peekClaudeMcp")(function* (name: string) {
+  const stash = yield* readStash();
+  return stash.entries[name]?.definition ?? null;
 });
 
 export const listStashedClaudeMcp = Effect.fn("ForkExtensions.listStashedClaudeMcp")(function* () {
@@ -164,6 +177,11 @@ const alreadyExists = (destination: string) =>
     },
   });
 
+const isCrossDevice = (cause: PlatformError.PlatformError): boolean => {
+  const code = (cause.reason as { readonly cause?: { readonly code?: unknown } }).cause?.code;
+  return code === "EXDEV" || cause.message.includes("EXDEV");
+};
+
 const moveFolder = Effect.fn("ForkExtensions.moveFolder")(function* (
   source: string,
   destination: string,
@@ -178,19 +196,50 @@ const moveFolder = Effect.fn("ForkExtensions.moveFolder")(function* (
   yield* fs
     .makeDirectory(path.dirname(destination), { recursive: true })
     .pipe(Effect.mapError((cause) => fileProblem(destination, cause)));
-  yield* fs.rename(source, destination).pipe(
-    // rename cannot cross devices (EXDEV: skills dir and T3's base dir may be on different
-    // drives), so any rename failure falls back to copy then remove. If the copy also
-    // fails the source is untouched; the partial destination is cleaned up.
-    Effect.catch(() =>
-      fs.copy(source, destination).pipe(
-        Effect.tapError(() =>
-          fs.remove(destination, { recursive: true, force: true }).pipe(Effect.ignore),
-        ),
-        Effect.flatMap(() => fs.remove(source, { recursive: true })),
-      ),
+  const label = path.basename(source);
+  const renamed = yield* fs.rename(source, destination).pipe(
+    Effect.as(true),
+    Effect.catch((cause) =>
+      isCrossDevice(cause)
+        ? Effect.succeed(false)
+        : Effect.fail(
+            new ForkExtensionsError({
+              problem: {
+                reason:
+                  cause.reason._tag === "PermissionDenied" ? "permissionDenied" : "commandFailed",
+                summary: `Couldn't move ${label}: a file in it is in use or not accessible.`,
+                nextStep: "Close anything using that folder and retry. Nothing was changed.",
+                rawOutput: cause.message,
+              },
+            }),
+          ),
+    ),
+  );
+  if (renamed) return;
+
+  // rename cannot cross devices (EXDEV: the skills dir and T3's base dir may be on different
+  // drives), so only then copy into a fresh temp sibling, rename that into place, and
+  // remove the source last. Cleanup only ever removes the temp sibling this call created.
+  const temporary = `${destination}.t3-tmp-${NodeCrypto.randomUUID().slice(0, 8)}`;
+  yield* fs.copy(source, temporary).pipe(
+    Effect.flatMap(() => fs.rename(temporary, destination)),
+    Effect.tapError(() =>
+      fs.remove(temporary, { recursive: true, force: true }).pipe(Effect.ignore),
     ),
     Effect.mapError((cause) => fileProblem(source, cause)),
+  );
+  yield* fs.remove(source, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ForkExtensionsError({
+          problem: {
+            reason: "commandFailed",
+            summary: `Moved ${label}, but couldn't remove the original. Both copies exist.`,
+            nextStep: `Remove ${source} by hand.`,
+            rawOutput: cause.message,
+          },
+        }),
+    ),
   );
 });
 
