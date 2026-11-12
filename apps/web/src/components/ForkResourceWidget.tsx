@@ -3,8 +3,7 @@
 // desktop shell frames it and keeps the app in the tray (apps/desktop/src/window/ForkResourceWidget.ts).
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import type { EnvironmentId } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { AppWindowIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { AppWindowIcon, XIcon } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
@@ -219,8 +218,6 @@ function openWidgetWindow(): Window | null {
 /** A machine past this share of its CPU or memory is a poor place for the next task. */
 const BUSY_SHARE = 0.85;
 const SATURATED_SHARE = 0.95;
-/** Below this, the operating system is holding the CPU back (heat, power plan). */
-const THROTTLED_SPEED_PERCENT = 80;
 /** Numbers older than this are shown dimmed rather than passed off as current. */
 const STALE_MS = 15_000;
 
@@ -267,8 +264,6 @@ function MachineRow(props: {
     agents && resources && resources.cpuCount > 0
       ? agents.currentCpuPercent / 100 / resources.cpuCount
       : null;
-  const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
-  const throttled = speedLimit !== null && speedLimit < THROTTLED_SPEED_PERCENT;
   const unreachable = !resources && (host.error !== null || !host.isPending);
   // The minute tick lags by up to a minute, so only clearly old samples count as stale.
   const stale = resources !== null && nowMs - host.dataUpdatedAt > STALE_MS + 60_000;
@@ -283,16 +278,7 @@ function MachineRow(props: {
         stale && "opacity-50",
       )}
     >
-      <span className="flex min-w-0 items-center gap-1.5 font-medium">
-        <span className="truncate">{props.label}</span>
-        {throttled ? (
-          <TriangleAlertIcon
-            role="img"
-            aria-label={`CPU held to ${speedLimit.toFixed(0)}% speed`}
-            className="size-3.5 shrink-0 text-warning-foreground"
-          />
-        ) : null}
-      </span>
+      <span className="truncate font-medium">{props.label}</span>
       {unreachable ? (
         <span className="col-span-3 truncate text-end text-muted-foreground text-xs">
           {host.error ?? "No data"}
