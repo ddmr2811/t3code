@@ -571,6 +571,50 @@ describe("ForkExtensions.setEnabled (Claude MCP)", () => {
     ),
   );
 
+  it.effect("a remote user server turned back on asks to be authorized again", () =>
+    withHarness(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const off = yield* service.setEnabled({
+            itemId: "mcp:notion",
+            agent: "claude",
+            enabled: false,
+            projectPath: null,
+          });
+          expect(off).toEqual({ agent: "claude", ok: true, problem: null });
+          // `claude mcp remove` cleared its sign-in, so the re-added copy has none.
+          const on = yield* service.setEnabled({
+            itemId: "mcp:notion",
+            agent: "claude",
+            enabled: true,
+            projectPath: null,
+          });
+          expect(on).toEqual({
+            agent: "claude",
+            ok: true,
+            problem: {
+              reason: "needsAuthorization",
+              summary: "notion is back on. Authorize it again.",
+              nextStep: "Click Authorize in its details.",
+              rawOutput: null,
+            },
+          });
+          // The snapshot shows it amber with Authorize until a check or a login says otherwise.
+          const snapshot = yield* service.snapshot;
+          expect(snapshot.items.find((item) => item.id === "mcp:notion")?.cells[0]).toMatchObject({
+            state: "needsAttention",
+            problem: { reason: "needsAuthorization" },
+          });
+        }),
+      {
+        claudeJson: ({ appKey }) => ({
+          mcpServers: { notion: { type: "http", url: "https://mcp.notion.com/mcp" } },
+          projects: { [appKey]: { mcpServers: {} } },
+        }),
+      },
+    ),
+  );
+
   it.effect("a failed re-add keeps the stashed definition (Ruling 10)", () =>
     withHarness(
       ({ service, stashFile, readJson }) =>

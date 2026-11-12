@@ -130,10 +130,26 @@ interface Caveat {
   readonly problem: ForkExtensionProblem;
 }
 
-const caveat = (summary: string, nextStep: string): Caveat => ({
+const caveat = (
+  summary: string,
+  nextStep: string,
+  reason: ForkExtensionProblem["reason"] = "notFound",
+): Caveat => ({
   _tag: "Caveat",
-  problem: { reason: "notFound", summary, nextStep, rawOutput: null },
+  problem: { reason, summary, nextStep, rawOutput: null },
 });
+
+/** Done, but the server has no sign-in now: the result says so and Authorize is offered. */
+const authorizeAgain = (summary: string) =>
+  caveat(summary, "Click Authorize in its details.", "needsAuthorization");
+
+/** A remote (http/sse) definition: the kind that signs in with OAuth. */
+const isRemoteDefinition = (definition: unknown): boolean =>
+  isRecord(definition) &&
+  (typeof definition.url === "string" ||
+    definition.type === "http" ||
+    definition.type === "sse" ||
+    definition.type === "streamable_http");
 
 const isCaveat = (value: unknown): value is Caveat => isRecord(value) && value._tag === "Caveat";
 
@@ -958,6 +974,7 @@ const reAddFromStash = Effect.fn("ForkExtensions.reAddFromStash")(function* (
   const args = ["mcp", "add-json", "-s", "user", name, definition];
   yield* assertJsonArgumentSafe(agent, args);
   yield* runCli(agent, args);
+  return saved;
 });
 
 /**
@@ -1031,8 +1048,10 @@ const setClaudeMcpGlobally = Effect.fn("ForkExtensions.setClaudeMcpGlobally")(fu
     return;
   }
 
+  // `claude mcp remove` (global off) also cleared a remote server's sign-in (claude 2.1.322).
+  let signedOut = false;
   if (inStash) {
-    if (user === undefined) yield* reAddFromStash(agent, name);
+    if (user === undefined) signedOut = isRemoteDefinition(yield* reAddFromStash(agent, name));
     // Live config wins: a server re-added from the terminal makes the copy stale.
     yield* discardClaudeMcp(name);
   }
@@ -1048,6 +1067,7 @@ const setClaudeMcpGlobally = Effect.fn("ForkExtensions.setClaudeMcpGlobally")(fu
     )
     .map((project) => project.path);
   if (keys.length > 0) yield* writeProjectSwitches(agent, fresh, keys, name, false);
+  if (signedOut) return authorizeAgain(`${name} is back on. Authorize it again.`);
 });
 
 const setCodexMcp = Effect.fn("ForkExtensions.setCodexMcp")(function* (

@@ -603,6 +603,48 @@ export const make = Effect.gen(function* () {
     Effect.map(([agents, projects]): MutationContext => ({ agents, projects, withWriteLock })),
   );
 
+  const setHealthCell = Effect.fn("ForkExtensions.setHealthCell")(function* (
+    target: { readonly itemId: string; readonly agent: ForkExtensionAgent },
+    cell: HealthCell,
+  ) {
+    const key = healthCellKey(target.itemId, target.agent);
+    const cache = yield* Ref.modify(healthRef, (current): readonly [HealthCache, HealthCache] => {
+      const cells = new Map(current.cells);
+      cells.set(key, cell);
+      const next: HealthCache = { checkedAt: current.checkedAt, cells };
+      return [next, next];
+    });
+    yield* persistHealth(cache).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Extensions could not save the health cache", {
+          reason: error.problem.reason,
+        }),
+      ),
+      Effect.provide(context),
+    );
+  });
+
+  /** A finished login makes the cached cell stale: it shows unknown until the next check. */
+  const forgetHealthCell = (target: {
+    readonly itemId: string;
+    readonly agent: ForkExtensionAgent;
+  }) => setHealthCell(target, { state: "unknown", problem: null });
+
+  /**
+   * A change that left a server without its sign-in (re-added after a global off, or a Codex
+   * add whose login could not run here) shows it amber with Authorize until a check or login.
+   */
+  const markSignedOut = (itemId: string, results: ReadonlyArray<ForkInstallResult>) =>
+    Effect.forEach(
+      results.filter((result) => result.ok && result.problem?.reason === "needsAuthorization"),
+      (result) =>
+        setHealthCell(
+          { itemId, agent: result.agent },
+          { state: "needsAttention", problem: result.problem },
+        ),
+      { discard: true },
+    );
+
   const install: ForkExtensions["Service"]["install"] = (request) =>
     mutationContext.pipe(
       Effect.flatMap((mutation) => installExtension(mutation, request)),
@@ -645,31 +687,10 @@ export const make = Effect.gen(function* () {
           problem: error.problem,
         }),
       ),
+      Effect.tap((result) => markSignedOut(input.itemId, [result])),
       Effect.provide(context),
       Effect.withSpan("ForkExtensions.setEnabled"),
     );
-
-  /** A finished login makes the cached cell stale: it shows unknown until the next check. */
-  const forgetHealthCell = Effect.fn("ForkExtensions.forgetHealthCell")(function* (target: {
-    readonly itemId: string;
-    readonly agent: ForkExtensionAgent;
-  }) {
-    const key = healthCellKey(target.itemId, target.agent);
-    const cache = yield* Ref.modify(healthRef, (current): readonly [HealthCache, HealthCache] => {
-      const cells = new Map(current.cells);
-      cells.set(key, { state: "unknown", problem: null });
-      const next: HealthCache = { checkedAt: current.checkedAt, cells };
-      return [next, next];
-    });
-    yield* persistHealth(cache).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Extensions could not save the health cache", {
-          reason: error.problem.reason,
-        }),
-      ),
-      Effect.provide(context),
-    );
-  });
 
   const authorizer = yield* makeAuthorizer({ onDone: forgetHealthCell });
 

@@ -8,6 +8,15 @@ import { forkExtensionsSetEnabled } from "../../state/forkExtensions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
@@ -21,6 +30,7 @@ import {
   forkCellStateLabel,
   forkColumnLabel,
   forkSourceTag,
+  forkTurnOffWarning,
   oldestHealthCheck,
   type MatrixCell,
   type MatrixColumn,
@@ -63,6 +73,13 @@ export function ForkExtensionsSettings() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [notices, setNotices] = useState<ReadonlyArray<PageNotice>>([]);
+  // A turn-off that would lose a sign-in waits here for a yes.
+  const [turnOff, setTurnOff] = useState<{
+    readonly row: MatrixRow;
+    readonly column: MatrixColumn;
+    readonly cell: MatrixCell;
+    readonly warning: string;
+  } | null>(null);
   // Each "Install here" remounts the form (a new key) with that item and only that place checked.
   const [installHere, setInstallHere] = useState<{
     readonly key: number;
@@ -122,12 +139,14 @@ export function ForkExtensionsSettings() {
     onAuthorized: (environmentId) => checkHealth(environmentId),
   });
 
-  const clickCell = async (row: MatrixRow, column: MatrixColumn, cell: MatrixCell) => {
-    const action = forkCellAction(
-      column,
-      cell,
-      row.itemsByMachine.get(column.environmentId) ?? row.item,
-    );
+  const clickCell = async (
+    row: MatrixRow,
+    column: MatrixColumn,
+    cell: MatrixCell,
+    confirmed = false,
+  ) => {
+    const item = row.itemsByMachine.get(column.environmentId) ?? row.item;
+    const action = forkCellAction(column, cell, item);
     if (action.kind === "none") return;
     if (action.kind === "details") {
       setSelectedId(row.item.id);
@@ -139,6 +158,11 @@ export function ForkExtensionsSettings() {
     }
     const key = `${row.item.id}\n${column.key}`;
     if (pending.has(key)) return;
+    const warning = confirmed ? null : forkTurnOffWarning(column, cell, item);
+    if (warning !== null) {
+      setTurnOff({ row, column, cell, warning });
+      return;
+    }
     setPending((current) => new Set(current).add(key));
     const result = await setEnabled({
       environmentId: column.environmentId,
@@ -368,6 +392,34 @@ export function ForkExtensionsSettings() {
         </div>
         {columns.length > 0 && rows.length > 0 ? <Legend /> : null}
         {authorize.dialog}
+        <AlertDialog
+          open={turnOff !== null}
+          onOpenChange={(open) => {
+            if (!open) setTurnOff(null);
+          }}
+        >
+          {turnOff === null ? null : (
+            <AlertDialogPopup>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Turn off {turnOff.row.item.name} on {forkColumnLabel(turnOff.column)}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>{turnOff.warning}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                <Button
+                  onClick={() => {
+                    setTurnOff(null);
+                    void clickCell(turnOff.row, turnOff.column, turnOff.cell, true);
+                  }}
+                >
+                  Turn off
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          )}
+        </AlertDialog>
       </SettingsSection>
     </SettingsPageContainer>
   );

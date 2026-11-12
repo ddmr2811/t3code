@@ -18,6 +18,7 @@ import {
   forkCellAction,
   forkProjectToggleGroups,
   forkSourceTag,
+  forkTurnOffWarning,
   forkUninstallTargets,
   HEALTH_STALE_MS,
   isForkHealthRunning,
@@ -529,6 +530,33 @@ describe("page helpers", () => {
       kind: "install",
       agent: "codex",
     });
+  });
+
+  it("asks first before turning off a remote user server that signs in", () => {
+    const remote = {
+      ...mcp("notion", [cell("claude"), cell("codex")]),
+      transport: "http" as const,
+    };
+    const local = mcp("playwright", [cell("claude")]);
+    const projectOnly = {
+      ...mcp("internal", [cell("claude", { scopes: ["project"] })]),
+      transport: "sse" as const,
+    };
+    const { columns, rows } = buildMatrix(
+      [machine(PC, "This PC", { snapshot: snapshot([remote, local, projectOnly]) })],
+      "mcp",
+    );
+    const confirm = (id: string, index: number) => {
+      const row = rows.find((entry) => entry.item.id === id)!;
+      return forkTurnOffWarning(columns[index]!, row.cells[index]!, row.item);
+    };
+    expect(confirm("mcp:notion", 0)).toBe(
+      "You'll have to authorize it again when you turn it back on.",
+    );
+    // Codex keeps the definition (only `enabled` changes); stdio and project servers too.
+    expect(confirm("mcp:notion", 1)).toBeNull();
+    expect(confirm("mcp:playwright", 0)).toBeNull();
+    expect(confirm("mcp:internal", 0)).toBeNull();
   });
 
   it("explains a cell that needs attention instead of switching it off", () => {

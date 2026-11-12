@@ -440,6 +440,22 @@ export function forkCellAction(
   return { kind: "toggle", agent: column.agent, enabled: cell.state === "disabled" };
 }
 
+/**
+ * Why a click that turns a cell off asks first; null when it can just go. Claude's global off of
+ * a user-scope remote server is `claude mcp remove`, which also drops its sign-in.
+ */
+export function forkTurnOffWarning(
+  column: MatrixColumn,
+  cell: MatrixCell,
+  item: ForkExtensionItem,
+): string | null {
+  const action = forkCellAction(column, cell, item);
+  if (action.kind !== "toggle" || action.enabled || action.agent !== "claude") return null;
+  if (item.transport !== "http" && item.transport !== "sse") return null;
+  if (!isSnapshotCell(cell) || !cell.scopes.includes("user")) return null;
+  return "You'll have to authorize it again when you turn it back on.";
+}
+
 /** "checked 12m ago" reads the oldest check, so it never claims a freshness one machine lacks. */
 export function oldestHealthCheck(machines: ReadonlyArray<MachineState>): string | null {
   let oldest: { readonly iso: string; readonly ms: number } | null = null;

@@ -187,6 +187,43 @@ describe("ForkExtensionsSettings", () => {
       ]);
   });
 
+  it("asks before turning off a remote server whose sign-in would be lost", async () => {
+    setup([
+      machine(PC, "This PC", {
+        snapshot: snapshot([
+          mcp("notion", [cell("claude")], {
+            source: "https://mcp.notion.com/mcp",
+            transport: "http",
+          }),
+        ]),
+      }),
+    ]);
+    state.results.set(forkExtensionsSetEnabled.label, { agent: "claude", ok: true, problem: null });
+    await using _screen = await render(<ForkExtensionsSettings />);
+    const notionCell = page.getByRole("button", { name: "notion on This PC · Claude: Working" });
+    await notionCell.click();
+    const confirm = page.getByRole("alertdialog");
+    await expect
+      .element(confirm.getByText("You'll have to authorize it again when you turn it back on."))
+      .toBeVisible();
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    expect(state.calls).toEqual([]);
+
+    await notionCell.click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Turn off" }).click();
+    await expect
+      .poll(() => state.calls)
+      .toEqual([
+        {
+          label: forkExtensionsSetEnabled.label,
+          value: {
+            environmentId: PC,
+            input: { itemId: "mcp:notion", agent: "claude", enabled: false, projectPath: null },
+          },
+        },
+      ]);
+  });
+
   it("shows a failed toggle's cause and next step", async () => {
     setup();
     const result: ForkInstallResult = {
