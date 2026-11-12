@@ -23,7 +23,7 @@ export function forkResourceWidgetWindowOpen(
       fullscreenable: false,
       minWidth: 240,
       minHeight: 150,
-      title: "T3 Code resources",
+      title: "T3 Code machines",
       backgroundColor: "#0b0f1a",
     },
   };

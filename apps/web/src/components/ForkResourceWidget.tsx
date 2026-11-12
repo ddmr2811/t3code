@@ -1,19 +1,22 @@
-// Fork-only: the resource monitor's headline numbers in a small separate window.
+// Fork-only: every connected machine's T3 Code load and working threads in a small separate window.
 // The window is an empty same-origin popup this renderer portals into, so it needs
 // no second app instance and no desktop IPC. The desktop shell makes it frameless
 // and always on top (apps/desktop/src/window/ForkResourceWidget.ts).
-import * as Option from "effect/Option";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
-import { type ReactNode, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 import { formatBytes } from "../lib/formatBytes";
 import { useResourceTelemetry } from "../lib/resourceTelemetryState";
 import { cn } from "../lib/utils";
+import { useVisibleThreadShells } from "../state/entities";
+import { useEnvironmentIdentities } from "../state/environments";
 
 /** Must match the frame name the desktop shell allows. */
 const WIDGET_WINDOW_NAME = "t3-fork-resource-widget";
-const WIDGET_SIZE = { width: 330, height: 210 };
+const WIDGET_SIZE = { width: 380, height: 170 };
 const POSITION_KEY = "t3code:fork:resource-widget-position";
 const REFRESH_MS = 2_000;
 
@@ -98,7 +101,7 @@ function openWidgetWindow(): Window | null {
   const child = window.open("about:blank", WIDGET_WINDOW_NAME, features);
   if (child === null) return null;
   const root = document.documentElement;
-  child.document.title = "T3 Code resources";
+  child.document.title = "T3 Code machines";
   child.document.documentElement.className = root.className;
   child.document.documentElement.style.cssText = root.style.cssText;
   for (const attribute of root.attributes) {
@@ -116,40 +119,14 @@ function openWidgetWindow(): Window | null {
   return child;
 }
 
-function formatRate(bytesPerSecond: number): string {
-  return `${formatBytes(bytesPerSecond)}/s`;
-}
-
-function Stat(props: {
+function MachineRow(props: {
+  readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly value: string;
-  readonly tone?: "warning" | "danger";
+  readonly workingThreads: number;
 }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-md bg-muted/30 px-2.5 py-1.5">
-      <span className="truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
-        {props.label}
-      </span>
-      <span
-        className={cn(
-          "truncate font-mono text-base font-semibold tabular-nums",
-          props.tone === "danger"
-            ? "text-destructive"
-            : props.tone === "warning"
-              ? "text-warning-foreground"
-              : "text-foreground",
-        )}
-      >
-        {props.value}
-      </span>
-    </div>
-  );
-}
-
-function WidgetBody({ onClose }: { readonly onClose: () => void }) {
-  const telemetry = useResourceTelemetry();
+  const telemetry = useResourceTelemetry(props.environmentId);
   const refresh = telemetry.refresh;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the telemetry snapshot while the widget window is open
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls this machine's telemetry snapshot while the widget window is open
   useEffect(() => {
     const timer = setInterval(refresh, REFRESH_MS);
     return () => clearInterval(timer);
@@ -157,44 +134,56 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
 
   const snapshot = telemetry.data;
   const all = snapshot?.groups.allT3;
-  const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
-  const writeRate = all?.ioWriteBytesPerSecond ?? 0;
-  const pending = "…";
+  // A machine that reports nothing is unreachable or this connection may not read its diagnostics.
+  const unavailable = !snapshot && (telemetry.error !== null || !telemetry.isPending);
+  const cell = "truncate text-end font-mono font-semibold tabular-nums";
+  return (
+    <div
+      role="row"
+      className="col-span-5 grid grid-cols-subgrid items-center rounded-md bg-muted/30 px-2.5 py-1.5 text-sm"
+    >
+      <span className="truncate font-medium">{props.label}</span>
+      {unavailable ? (
+        <span className="col-span-3 truncate text-end text-muted-foreground text-xs">
+          {telemetry.error ?? "No data"}
+        </span>
+      ) : (
+        <>
+          <span className={cell}>{all ? `${all.currentCpuPercent.toFixed(0)}%` : "…"}</span>
+          <span className={cell}>{all ? formatBytes(all.currentRssBytes) : "…"}</span>
+          <span className={cell}>{all ? String(all.processCount) : "…"}</span>
+        </>
+      )}
+      <span
+        className={cn(cell, props.workingThreads > 0 ? "text-foreground" : "text-muted-foreground")}
+      >
+        {props.workingThreads}
+      </span>
+    </div>
+  );
+}
 
-  let content: ReactNode;
-  if (telemetry.error && !snapshot) {
-    content = <p className="px-1 text-xs text-destructive">{telemetry.error}</p>;
-  } else {
-    content = (
-      <div className="grid grid-cols-3 gap-1.5">
-        <Stat label="CPU" value={all ? `${all.currentCpuPercent.toFixed(0)}%` : pending} />
-        <Stat label="Memory" value={all ? formatBytes(all.currentRssBytes) : pending} />
-        <Stat label="Processes" value={all ? String(all.processCount) : pending} />
-        <Stat label="Read" value={all ? formatRate(all.ioReadBytesPerSecond) : pending} />
-        <Stat
-          label="Write"
-          value={all ? formatRate(writeRate) : pending}
-          {...(writeRate >= 10 * 1_024 * 1_024
-            ? { tone: "danger" as const }
-            : writeRate >= 1_024 * 1_024
-              ? { tone: "warning" as const }
-              : {})}
-        />
-        <Stat
-          label="Speed limit"
-          value={snapshot ? (speedLimit === null ? "n/a" : `${speedLimit.toFixed(0)}%`) : pending}
-          {...(speedLimit !== null && speedLimit < 80 ? { tone: "warning" as const } : {})}
-        />
-      </div>
+function WidgetBody({ onClose }: { readonly onClose: () => void }) {
+  const environments = useEnvironmentIdentities();
+  const threads = useVisibleThreadShells();
+  const workingByEnvironment = new Map<string, number>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null || thread.settledOverride === "settled") continue;
+    if (!isThreadWorking(thread)) continue;
+    workingByEnvironment.set(
+      thread.environmentId,
+      (workingByEnvironment.get(thread.environmentId) ?? 0) + 1,
     );
   }
+  const heading =
+    "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
 
   return (
     <div className="flex h-screen flex-col gap-2 p-2">
       {/* The window has no frame: this strip is its drag handle. */}
       <div className="flex items-center gap-2 [-webkit-app-region:drag]">
         <span className="flex-1 truncate px-1 text-xs font-medium text-muted-foreground">
-          T3 Code resources
+          T3 Code machines
         </span>
         <button
           type="button"
@@ -205,7 +194,27 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
           <XIcon className="size-3.5" />
         </button>
       </div>
-      {content}
+      <div
+        role="table"
+        aria-label="Connected machines"
+        className="grid min-h-0 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
+      >
+        <div role="row" className="col-span-5 grid grid-cols-subgrid px-2.5">
+          <span className={heading}>Machine</span>
+          <span className={cn(heading, "text-end")}>CPU</span>
+          <span className={cn(heading, "text-end")}>Memory</span>
+          <span className={cn(heading, "text-end")}>Procs</span>
+          <span className={cn(heading, "text-end")}>Working</span>
+        </div>
+        {environments.map((environment) => (
+          <MachineRow
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            label={environment.label}
+            workingThreads={workingByEnvironment.get(environment.environmentId) ?? 0}
+          />
+        ))}
+      </div>
     </div>
   );
 }
