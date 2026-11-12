@@ -1157,6 +1157,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "newWorktreesStartFromOrigin",
   "worktreeSubmodules",
   "defaultAutoPull",
+  "forkTargetBranch",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
@@ -1195,6 +1196,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
+  forkTargetBranch: Schema.optionalKey(TrimmedString),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
@@ -1384,6 +1386,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: branch auto pull keeps current and new PRs target; empty means the default branch. */
+  forkTargetBranch: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1826,6 +1830,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
+  forkTargetBranch: Schema.optionalKey(TrimmedString),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectScript))),

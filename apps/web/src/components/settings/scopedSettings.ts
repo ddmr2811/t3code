@@ -256,6 +256,10 @@ export function planScopedSettingsPatch(
                   };
                   continue;
                 }
+                // Fork: the server drops an empty forkTargetBranch, so only send it to remove an override.
+                if (key === "forkTargetBranch" && value === "" && !Object.hasOwn(current, key)) {
+                  continue;
+                }
                 // Inherit sends null; remove overrides whose keys cannot store null.
                 if (
                   value === null &&

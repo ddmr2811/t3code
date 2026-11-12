@@ -85,6 +85,7 @@ import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
+import { forkPrBaseOnRemote, forkTargetBranchFor } from "../fork/targetBranch.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -701,6 +702,15 @@ export const make = Effect.gen(function* () {
       ));
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
+  const forkTargetBranchOf = (input: {
+    readonly cwd: string;
+    readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
+  }) =>
+    projectSettingsFor(input).pipe(
+      Effect.map(({ settings, projectId }) => forkTargetBranchFor(settings, projectId)),
+      Effect.orElseSucceed(() => null),
+    );
   const readThreadContext = Effect.fnUntraced(
     function* (threadId: ThreadId | undefined) {
       if (threadId === undefined) return undefined;
@@ -2039,6 +2049,7 @@ export const make = Effect.gen(function* () {
     branch: string,
     upstreamRef: string | null,
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
+    targetBranch: string | null,
   ) {
     const configuredRef = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`);
     if (configuredRef?.startsWith("refs/heads/") || configuredRef?.startsWith("refs/remotes/")) {
@@ -2077,6 +2088,14 @@ export const make = Effect.gen(function* () {
         return { baseBranch: upstreamBranch, baseRef: upstreamBranch };
       }
     }
+
+    const forkBase = yield* forkPrBaseOnRemote(gitCore, {
+      cwd,
+      headBranch: branch,
+      targetBranch,
+      headContext,
+    });
+    if (forkBase) return forkBase;
 
     const defaultFromProvider = yield* sourceControlProvider(cwd).pipe(
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
@@ -2303,6 +2322,8 @@ export const make = Effect.gen(function* () {
       status.branch,
       status.upstreamRef,
       headContext,
+      // Fork: the target branch never names the head, so the default base still guards it.
+      null,
     );
     if (baseBranch !== target.branchName) return;
     if (yield* findOpenPr(cwd, headContext)) return;
@@ -2361,6 +2382,7 @@ export const make = Effect.gen(function* () {
       branch,
       details.upstreamRef,
       headContext,
+      yield* forkTargetBranchOf({ cwd, threadId, projectId: settings.projectId ?? undefined }),
     );
     yield* emit({
       kind: "phase_started",

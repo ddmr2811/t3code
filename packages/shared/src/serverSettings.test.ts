@@ -224,6 +224,13 @@ describe("serverSettings helpers", () => {
     expect(resolveProjectScripts(secondUpdate, firstProject)).toEqual([firstAction]);
   });
 
+  it("keeps a saved forkTargetBranch when a patch does not carry the key", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { forkTargetBranch: "dev" });
+    expect(saved.forkTargetBranch).toBe("dev");
+    const other = applyServerSettingsPatch(saved, { defaultAutoPull: true });
+    expect(other.forkTargetBranch).toBe("dev");
+  });
+
   it("preserves other projects' boolean overrides across separate updates and resets", () => {
     const firstProjectId = ProjectId.make("first-project");
     const secondProjectId = ProjectId.make("second-project");
@@ -576,6 +583,49 @@ describe("serverSettings helpers", () => {
       newWorktreesStartFromOrigin: false,
       providerInstances: { [instanceId]: { enabled: false } },
     });
+  });
+
+  it("keeps a project's forkTargetBranch when a whole-entry patch omits the key", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, forkTargetBranch: "dev" },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, newWorktreesStartFromOrigin: true },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      newWorktreesStartFromOrigin: true,
+      forkTargetBranch: "dev",
+    });
+  });
+
+  it("removes a project's forkTargetBranch when a patch entry sends an empty string", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, forkTargetBranch: "dev" },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true, forkTargetBranch: "" } },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
+    expect(
+      applyServerSettingsPatch(current, {
+        projectSettingsOverrides: { [projectId]: { forkTargetBranch: "main" } },
+      }).projectSettingsOverrides[projectId],
+    ).toEqual({ forkTargetBranch: "main" });
   });
 
   // regression: #18334 a newer client must still see this server drop a key it does not know

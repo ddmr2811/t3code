@@ -538,3 +538,23 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("forkTargetBranch setting", () => {
+  it("reads as an empty string when settings come without the key", () => {
+    expect(decodeServerSettings({}).forkTargetBranch).toBe("");
+    expect(DEFAULT_SERVER_SETTINGS.forkTargetBranch).toBe("");
+  });
+
+  it("is a project-scoped key and trims the project override", () => {
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("forkTargetBranch");
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { [projectId]: { forkTargetBranch: " dev " } },
+    });
+    expect(settings.projectSettingsOverrides[projectId]?.forkTargetBranch).toBe("dev");
+  });
+
+  it("accepts the key in a settings patch", () => {
+    expect(decodeServerSettingsPatch({ forkTargetBranch: " dev " }).forkTargetBranch).toBe("dev");
+  });
+});

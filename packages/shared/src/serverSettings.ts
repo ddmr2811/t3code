@@ -29,6 +29,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
+import { withForkTargetBranchOverride } from "./forkTargetBranchOverride.ts";
 import { createModelSelection, readCustomModelEntries } from "./model.ts";
 import {
   getBackgroundActivityBaseProfile,
@@ -278,14 +279,15 @@ function mergeProjectSettingsOverridesPatch(
       continue;
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
-    next.set(projectId, {
+    const merged = {
       // Preserve downgraded storage, but reject new unknown writes so clients can detect unsupported settings.
       ...pickOverrideKeys(current[projectId], false),
       ...pickOverrideKeys(entry, true),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
-    });
+    };
+    next.set(projectId, withForkTargetBranchOverride(merged, current[projectId], entry));
   }
   return Object.fromEntries(next);
 }

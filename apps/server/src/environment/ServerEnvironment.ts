@@ -21,6 +21,7 @@ import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import { FORK_TARGET_BRANCH_PROTOCOL_VERSION } from "../fork/targetBranch.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isSpeechPlatformSupported } from "../speech/platform.ts";
@@ -220,6 +221,7 @@ export const make = Effect.gen(function* () {
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
+      forkTargetBranch: FORK_TARGET_BRANCH_PROTOCOL_VERSION,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,

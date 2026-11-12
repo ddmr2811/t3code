@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "./path.ts";
 import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
+import { markForkTargetBranchCleared } from "./forkTargetBranchOverride.ts";
 
 export type ProjectSettingSource = "environment" | "project" | "t3.json";
 
@@ -210,7 +211,7 @@ export function clearProjectSettingsOverrides(
   if (current === undefined) return null;
   const next = { ...current };
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  return Object.keys(next).length === 0 ? null : markForkTargetBranchCleared(current, next, keys);
 }
 
 export function resolveWorktreeCleanup(

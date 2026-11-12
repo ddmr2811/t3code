@@ -4278,6 +4278,130 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  {
+    const prepare = (input: {
+      readonly head: string;
+      readonly remoteBranches: ReadonlyArray<string>;
+      readonly mergeBase?: string;
+    }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        for (const name of input.remoteBranches) {
+          yield* runGit(repoDir, ["push", "origin", `main:${name}`]);
+        }
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        if (input.mergeBase) yield* runGit(repoDir, ["branch", input.mergeBase, "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", input.head]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        if (input.mergeBase) {
+          yield* runGit(repoDir, ["config", `branch.${input.head}.t3-merge-base`, input.mergeBase]);
+        }
+        yield* runGit(repoDir, ["push", "-u", "origin", input.head]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+          serverSettings: { forkTargetBranch: "dev" },
+        });
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+        expect(result.pr.status).toBe("created");
+        return created(providerCalls);
+      });
+
+    it.effect("a branch with no recorded base targets the project's target branch", () =>
+      Effect.gen(function* () {
+        const calls = yield* prepare({ head: "feature/plain", remoteBranches: ["dev"] });
+        expect(calls).toEqual([{ baseRefName: "dev", headSelector: "feature/plain" }]);
+      }),
+    );
+
+    it.effect("a base recorded on the branch wins over the target branch", () =>
+      Effect.gen(function* () {
+        const calls = yield* prepare({
+          head: "feature/from-release",
+          remoteBranches: ["dev"],
+          mergeBase: "release",
+        });
+        expect(calls).toEqual([{ baseRefName: "release", headSelector: "feature/from-release" }]);
+      }),
+    );
+
+    it.effect("a target branch missing on the remote falls back to the provider default", () =>
+      Effect.gen(function* () {
+        const calls = yield* prepare({ head: "feature/no-dev", remoteBranches: [] });
+        expect(calls).toEqual([{ baseRefName: "main", headSelector: "feature/no-dev" }]);
+      }),
+    );
+
+    it.effect("checks the target branch on the remote the branch is pushed to", () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "fork", "main", "main:dev"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/on-fork"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "feature/on-fork"]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+          serverSettings: { forkTargetBranch: "dev" },
+        });
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+        expect(result.pr.status).toBe("created");
+        expect(created(providerCalls).map((call) => call.baseRefName)).toEqual(["dev"]);
+      }),
+    );
+
+    it.effect("commit_push_pr still refuses the default branch when a target branch is set", () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "origin", "main:dev"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        const readRemoteMain = runGit(repoDir, ["ls-remote", "origin", "refs/heads/main"]).pipe(
+          Effect.map((output) => output.stdout),
+        );
+        const remoteBefore = yield* readRemoteMain;
+        const localBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+        const { manager } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+          serverSettings: { forkTargetBranch: "dev" },
+        });
+
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        }).pipe(Effect.flip);
+
+        expect(yield* readRemoteMain).toBe(remoteBefore);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(localBefore);
+        expect(error.message).toContain("main is the base branch");
+      }),
+    );
+
+    it.effect("a PR from the target branch itself targets the provider default", () =>
+      Effect.gen(function* () {
+        const calls = yield* prepare({ head: "dev", remoteBranches: [] });
+        expect(calls).toEqual([{ baseRefName: "main", headSelector: "dev" }]);
+      }),
+    );
+  }
+
   it.effect.each(["main", "release/1.2"])(
     "generates PR content from branch changes when the remote base advances (%s)",
     (baseBranch) =>
