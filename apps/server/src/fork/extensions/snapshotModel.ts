@@ -96,7 +96,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const pluginName = (pluginId: string): string => pluginId.split("@")[0] ?? pluginId;
 
-const comparablePath = (value: string): string =>
+/** How a T3 project path and a `~/.claude.json` project key are compared. */
+export const comparablePath = (value: string): string =>
   normalizeProjectPathForComparison(value).replaceAll("\\", "/").toLowerCase();
 
 const describeMcp = (

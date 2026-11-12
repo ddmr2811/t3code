@@ -3,9 +3,14 @@ import {
   ForkCellState,
   ForkExtensionProblem,
   type ForkExtensionAgent,
+  type ForkExtensionItem,
   type ForkHealthEvent,
   type ForkExtensionsError,
   type ForkExtensionsSnapshot,
+  type ForkInstallRequest,
+  type ForkInstallResult,
+  type ForkSetEnabledInput,
+  type ForkUninstallInput,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -35,6 +40,14 @@ import {
   type ClaudePluginListEntry,
 } from "./cliJson.ts";
 import { listDisabledSkills, listStashedClaudeMcp } from "./disabledStore.ts";
+import {
+  discardRevivedStash,
+  installExtension,
+  requestAgents,
+  setExtensionEnabled,
+  uninstallExtension,
+  type MutationContext,
+} from "./mutations.ts";
 import { readWithFingerprint, writeIfUnchanged } from "./safeFileEdit.ts";
 import {
   buildSnapshotItems,
@@ -58,6 +71,16 @@ export class ForkExtensions extends Context.Service<
      * share one run (single flight); the result is cached in memory and on disk.
      */
     readonly checkHealth: Stream.Stream<ForkHealthEvent, ForkExtensionsError>;
+    /** Installs in each requested agent; one result per agent, never a failure as a whole. */
+    readonly install: (
+      request: ForkInstallRequest,
+    ) => Effect.Effect<ReadonlyArray<ForkInstallResult>>;
+    /** Removes the item from each agent; one result per agent. */
+    readonly uninstall: (
+      input: ForkUninstallInput,
+    ) => Effect.Effect<ReadonlyArray<ForkInstallResult>>;
+    /** Switches the item on/off for one agent, globally (`projectPath` null) or per project. */
+    readonly setEnabled: (input: ForkSetEnabledInput) => Effect.Effect<ForkInstallResult>;
     /** Runs `effect` in this server's single queue for Extensions writes (CLI and files). */
     readonly withWriteLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -356,6 +379,34 @@ export const make = Effect.gen(function* () {
     Effect.orElseSucceed((): ReadonlyArray<{ path: string; title: string }> => []),
   );
 
+  /**
+   * Review Focus 5: a switched-off Claude server re-added from the terminal shows
+   * `stashDiscarded` in this snapshot, and its stale copy is dropped (a write, so queued).
+   */
+  const discardStashConflicts = Effect.fn("ForkExtensions.discardStashConflicts")(function* (
+    agents: ReadonlyArray<ResolvedAgent>,
+    items: ReadonlyArray<ForkExtensionItem>,
+  ) {
+    const claude = agents.find((agent) => agent.agent === "claude");
+    const names = items
+      .filter(
+        (item) =>
+          item.kind === "mcp" &&
+          item.cells.some((cell) => cell.agent === "claude" && cell.stashDiscarded),
+      )
+      .map((item) => item.name);
+    if (claude === undefined || names.length === 0) return;
+    yield* withWriteLock(discardRevivedStash(claude, names)).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Extensions could not drop a stale switched-off copy", {
+          reason: error.problem.reason,
+          summary: error.problem.summary,
+        }),
+      ),
+      Effect.provide(context),
+    );
+  });
+
   const snapshot: ForkExtensions["Service"]["snapshot"] = Effect.gen(function* () {
     const [agents, projects] = yield* Effect.all(
       [resolveAgents().pipe(Effect.provide(context)), listProjects],
@@ -396,6 +447,7 @@ export const make = Effect.gen(function* () {
       usage,
       projects,
     });
+    yield* discardStashConflicts(agents, items);
     return {
       protocolVersion: FORK_EXTENSIONS_PROTOCOL_VERSION,
       agents: reads.map((read) =>
@@ -521,7 +573,67 @@ export const make = Effect.gen(function* () {
 
   const checkHealth = Stream.fromIterableEffect(sharedHealthCheck);
 
-  return ForkExtensions.of({ snapshot, checkHealth, withWriteLock });
+  const mutationContext = Effect.all(
+    [resolveAgents().pipe(Effect.provide(context)), listProjects],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(([agents, projects]): MutationContext => ({ agents, projects, withWriteLock })),
+  );
+
+  const install: ForkExtensions["Service"]["install"] = (request) =>
+    mutationContext.pipe(
+      Effect.flatMap((mutation) => installExtension(mutation, request)),
+      Effect.catch((error) =>
+        Effect.succeed(
+          requestAgents(request).map((agent): ForkInstallResult => ({
+            agent,
+            ok: false,
+            problem: error.problem,
+          })),
+        ),
+      ),
+      Effect.provide(context),
+      Effect.withSpan("ForkExtensions.install"),
+    );
+
+  const uninstall: ForkExtensions["Service"]["uninstall"] = (input) =>
+    mutationContext.pipe(
+      Effect.flatMap((mutation) => uninstallExtension(mutation, input)),
+      Effect.catch((error) =>
+        Effect.succeed(
+          input.agents.map((agent): ForkInstallResult => ({
+            agent,
+            ok: false,
+            problem: error.problem,
+          })),
+        ),
+      ),
+      Effect.provide(context),
+      Effect.withSpan("ForkExtensions.uninstall"),
+    );
+
+  const setEnabled: ForkExtensions["Service"]["setEnabled"] = (input) =>
+    mutationContext.pipe(
+      Effect.flatMap((mutation) => setExtensionEnabled(mutation, input)),
+      Effect.catch((error) =>
+        Effect.succeed<ForkInstallResult>({
+          agent: input.agent,
+          ok: false,
+          problem: error.problem,
+        }),
+      ),
+      Effect.provide(context),
+      Effect.withSpan("ForkExtensions.setEnabled"),
+    );
+
+  return ForkExtensions.of({
+    snapshot,
+    checkHealth,
+    install,
+    uninstall,
+    setEnabled,
+    withWriteLock,
+  });
 });
 
 /** @public Wired into the server runtime by the Extensions RPC methods. */

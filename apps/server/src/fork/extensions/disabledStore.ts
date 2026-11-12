@@ -285,3 +285,37 @@ export const listDisabledSkills = Effect.fn("ForkExtensions.listDisabledSkills")
     .pipe(Effect.mapError((cause) => fileProblem(dir, cause)));
   return names.toSorted() as ReadonlyArray<string>;
 });
+
+/** Deletes a loose skill: its folder in `skillsDir` and/or its switched-off copy. */
+export const removeSkill = Effect.fn("ForkExtensions.removeSkill")(function* (
+  agent: DisabledStoreAgent,
+  skillsDir: string,
+  name: string,
+) {
+  yield* assertSkillName(name);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let removed = false;
+  for (const folder of [
+    path.join(skillsDir, name),
+    path.join(yield* stashedSkillDir(agent), name),
+  ]) {
+    if (!(yield* fs.exists(folder).pipe(Effect.mapError((cause) => fileProblem(folder, cause))))) {
+      continue;
+    }
+    yield* fs
+      .remove(folder, { recursive: true })
+      .pipe(Effect.mapError((cause) => fileProblem(folder, cause)));
+    removed = true;
+  }
+  if (!removed) {
+    return yield* new ForkExtensionsError({
+      problem: {
+        reason: "notFound",
+        summary: `There is no skill named "${name}" to remove.`,
+        nextStep: "Refresh the page; it may have been removed from the terminal.",
+        rawOutput: null,
+      },
+    });
+  }
+});
