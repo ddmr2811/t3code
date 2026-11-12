@@ -6,7 +6,7 @@ import {
   HouseIcon,
   SettingsIcon,
 } from "lucide-react";
-import { toggleForkResourceWidget } from "../ForkResourceWidget";
+import { toggleForkResourceWidget, useForkWidgetEnabled } from "../ForkResourceWidget";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -234,6 +234,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const forkWidgetEnabled = useForkWidgetEnabled();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -297,11 +298,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          <SidebarUtilityItem
-            icon={<ActivityIcon />}
-            label="Resource widget"
-            onClick={toggleForkResourceWidget}
-          />
+          {forkWidgetEnabled ? (
+            <SidebarUtilityItem
+              icon={<ActivityIcon />}
+              label="Machines widget"
+              onClick={toggleForkResourceWidget}
+            />
+          ) : null}
         </>
       )}
       <SidebarThreadUndoNotice />

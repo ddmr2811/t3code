@@ -1,10 +1,9 @@
-// Fork-only: every connected machine's T3 Code load and working threads in a small separate window.
-// The window is an empty same-origin popup this renderer portals into, so it needs
-// no second app instance and no desktop IPC. The desktop shell makes it frameless
-// and always on top (apps/desktop/src/window/ForkResourceWidget.ts).
+// Fork-only: every connected machine's T3 Code load and working threads in a small window,
+// off until the user turns it on. This renderer portals into an empty same-origin popup; the
+// desktop shell frames it and keeps the app in the tray (apps/desktop/src/window/ForkResourceWidget.ts).
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { XIcon } from "lucide-react";
+import { AppWindowIcon, XIcon } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
@@ -19,6 +18,68 @@ const WIDGET_WINDOW_NAME = "t3-fork-resource-widget";
 const WIDGET_SIZE = { width: 380, height: 170 };
 const POSITION_KEY = "t3code:fork:resource-widget-position";
 const REFRESH_MS = 2_000;
+const ENABLED_KEY = "t3code:fork:resource-widget-enabled";
+const AUTOSTART_KEY = "t3code:fork:autostart";
+
+interface ForkBridge {
+  readonly showMain: () => void;
+  readonly quit: () => void;
+  readonly setAutostart: (enabled: boolean) => void;
+}
+
+declare global {
+  interface Window {
+    /** Present in the desktop app only (apps/desktop/src/preload.ts). */
+    readonly forkBridge?: ForkBridge;
+  }
+}
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, value: boolean) {
+  try {
+    if (value) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    // Without storage the option simply does not persist.
+  }
+  for (const listener of listeners) listener();
+}
+
+/** Whether the desktop shell can keep the widget alive and start with the system. */
+export function forkWidgetHasDesktopShell(): boolean {
+  return window.forkBridge !== undefined;
+}
+
+export function useForkWidgetEnabled(): boolean {
+  return useSyncExternalStore(subscribe, () => readFlag(ENABLED_KEY));
+}
+
+export function setForkWidgetEnabled(enabled: boolean) {
+  if (enabled) {
+    writeFlag(ENABLED_KEY, true);
+    if (widgetWindow === null) toggleForkResourceWidget();
+    return;
+  }
+  closeWidget();
+  if (readFlag(AUTOSTART_KEY)) setForkAutostart(false);
+  writeFlag(ENABLED_KEY, false);
+}
+
+export function useForkAutostart(): boolean {
+  return useSyncExternalStore(subscribe, () => readFlag(AUTOSTART_KEY));
+}
+
+export function setForkAutostart(enabled: boolean) {
+  window.forkBridge?.setAutostart(enabled);
+  writeFlag(AUTOSTART_KEY, enabled);
+}
 
 const listeners = new Set<() => void>();
 let widgetWindow: Window | null = null;
@@ -185,6 +246,16 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
         <span className="flex-1 truncate px-1 text-xs font-medium text-muted-foreground">
           T3 Code machines
         </span>
+        {window.forkBridge ? (
+          <button
+            type="button"
+            aria-label="Open T3 Code"
+            onClick={window.forkBridge.showMain}
+            className="flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
+          >
+            <AppWindowIcon className="size-3.5" />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Close widget"
@@ -222,6 +293,13 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
 /** Mount once in the app shell. Renders nothing in the main window. */
 export function ForkResourceWidgetHost() {
   const popup = useSyncExternalStore(subscribe, () => widgetWindow);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on app start, reopens the widget the user enabled and re-applies start with the system
+  useEffect(() => {
+    // Browsers block a popup nobody clicked for; the desktop shell does not.
+    if (window.forkBridge === undefined || !readFlag(ENABLED_KEY)) return;
+    if (readFlag(AUTOSTART_KEY)) window.forkBridge.setAutostart(true);
+    if (widgetWindow === null) toggleForkResourceWidget();
+  }, []);
   if (popup === null || popup.closed) return null;
   return createPortal(<WidgetBody onClose={closeWidget} />, popup.document.body);
 }

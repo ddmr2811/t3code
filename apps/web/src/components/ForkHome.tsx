@@ -28,6 +28,13 @@ import { useEnvironmentIdentities } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { isSidebarHiddenThread, sortScopedProjectsForSidebar } from "./Sidebar.logic";
+import {
+  forkWidgetHasDesktopShell,
+  setForkAutostart,
+  setForkWidgetEnabled,
+  useForkAutostart,
+  useForkWidgetEnabled,
+} from "./ForkResourceWidget";
 import { isWorkCompletedThread } from "./sidebar/forkInbox";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
@@ -112,6 +119,59 @@ function ThreadRow(props: {
         </span>
       </button>
     </li>
+  );
+}
+
+function OptionRow(props: {
+  readonly title: string;
+  readonly description: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-md px-3 py-2 hover:bg-accent">
+      <input
+        type="checkbox"
+        className="mt-1 size-4 shrink-0 cursor-pointer accent-primary"
+        checked={props.checked}
+        onChange={(event) => props.onChange(event.target.checked)}
+      />
+      <span className="flex min-w-0 flex-col">
+        <span className="text-sm">{props.title}</span>
+        <span className="text-muted-foreground text-xs">{props.description}</span>
+      </span>
+    </label>
+  );
+}
+
+function ForkOptions() {
+  const widgetEnabled = useForkWidgetEnabled();
+  const autostart = useForkAutostart();
+  const hasShell = forkWidgetHasDesktopShell();
+  return (
+    <section>
+      <SectionTitle>Fork options</SectionTitle>
+      <div className="flex flex-col">
+        <OptionRow
+          title="Machines widget"
+          description={
+            hasShell
+              ? "A small always-on-top window with every connected machine. While it is open, closing this window keeps T3 Code running in the tray."
+              : "A small window with every connected machine."
+          }
+          checked={widgetEnabled}
+          onChange={setForkWidgetEnabled}
+        />
+        {hasShell && widgetEnabled ? (
+          <OptionRow
+            title="Start with the system"
+            description="Starts T3 Code in the tray when you sign in, showing only the widget."
+            checked={autostart}
+            onChange={setForkAutostart}
+          />
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -277,6 +337,8 @@ export function ForkHome() {
                 <ul className="flex flex-col">{renderThreadRows(recentThreads)}</ul>
               </section>
             ) : null}
+
+            <ForkOptions />
           </div>
         </div>
       </div>

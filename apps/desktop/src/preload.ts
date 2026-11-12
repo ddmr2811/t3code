@@ -85,6 +85,15 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+// Fork: the machines widget asks the shell to show the window, quit, or start with the system.
+// Handled in window/ForkResourceWidget.ts, which accepts only the main window's top frame.
+contextBridge.exposeInMainWorld("forkBridge", {
+  showMain: () => void ipcRenderer.invoke("fork:show-main"),
+  quit: () => void ipcRenderer.invoke("fork:quit"),
+  setAutostart: (enabled: boolean) =>
+    void ipcRenderer.invoke("fork:set-autostart", enabled === true),
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);

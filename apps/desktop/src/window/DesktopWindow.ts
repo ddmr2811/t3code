@@ -18,7 +18,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
-import { forkResourceWidgetWindowOpen, hardenForkResourceWidget } from "./ForkResourceWidget.ts";
+import { forkResourceWidgetWindowOpen, installForkWidget } from "./ForkResourceWidget.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -659,7 +659,10 @@ export const make = Effect.gen(function* () {
       void runPromise(previewManager.prepareWebview(contents));
     });
 
-    hardenForkResourceWidget(window.webContents);
+    installForkWidget(window, {
+      iconPath: "icon" in iconOption ? iconOption.icon : undefined,
+      appName: environment.displayName,
+    });
     window.webContents.setWindowOpenHandler((details) => {
       const { url } = details;
       const forkWidget = forkResourceWidgetWindowOpen(details, applicationUrl);
