@@ -14,6 +14,11 @@ export interface ClaudePluginListEntry {
 export interface CodexMcpListEntry {
   readonly name: string;
   readonly enabled: boolean;
+  /**
+   * `auth_status`: `unsupported` for servers that don't sign in (what codex prints for stdio);
+   * `notLoggedIn`, `bearerToken` or `oAuth` for remote ones (the spellings in the codex binary).
+   */
+  readonly authStatus?: string | undefined;
   readonly transport: {
     readonly type: string;
     readonly command?: string | undefined;
@@ -39,6 +44,7 @@ const CodexMcpList = Schema.fromJsonString(
     Schema.Struct({
       name: Schema.String,
       enabled: Schema.Boolean,
+      auth_status: Schema.optional(Schema.NullOr(Schema.String)),
       transport: Schema.Struct({
         type: Schema.String,
         command: Schema.optional(Schema.String),
@@ -73,5 +79,14 @@ export const decodeCodexMcpList = (
   stdout: string,
 ): Effect.Effect<ReadonlyArray<CodexMcpListEntry>, ForkExtensionsError> =>
   decodeCodexMcp(stdout).pipe(
+    Effect.map((servers) =>
+      servers.map(({ auth_status, ...server }): CodexMcpListEntry =>
+        typeof auth_status === "string" ? { ...server, authStatus: auth_status } : server,
+      ),
+    ),
     Effect.mapError(() => decodeFailure("codex mcp list --json", stdout)),
   );
+
+/** A remote server Codex has no sign-in for (`not_logged_in` is accepted as well). */
+export const codexNeedsLogin = (server: CodexMcpListEntry): boolean =>
+  server.authStatus?.replaceAll("_", "").toLowerCase() === "notloggedin";

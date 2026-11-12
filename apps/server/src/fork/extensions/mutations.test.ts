@@ -5,6 +5,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -357,6 +358,77 @@ describe("ForkExtensions.install", () => {
             : undefined,
       },
     ),
+  );
+
+  it.effect(
+    "a Codex remote add that hangs on its sign-in but wrote the server asks to authorize",
+    () => {
+      // Without a terminal, `codex mcp add --url` may wait on an OAuth login after writing
+      // config.toml; T3 stops it early and looks at the list instead of reporting a timeout.
+      let added = false;
+      let addTimeout: Duration.Duration | undefined;
+      return withHarness(
+        ({ service }) =>
+          Effect.gen(function* () {
+            const [claude, codex] = yield* service.install(remoteMcp);
+            expect(claude).toEqual({ agent: "claude", ok: true, problem: null });
+            expect(codex).toEqual({
+              agent: "codex",
+              ok: true,
+              problem: {
+                reason: "needsAuthorization",
+                summary: "linear is installed in Codex, but it isn't signed in yet.",
+                nextStep: "Click Authorize in its details.",
+                rawOutput: null,
+              },
+            });
+            expect(addTimeout).toEqual(Duration.seconds(20));
+            const snapshot = yield* service.snapshot;
+            const cell = snapshot.items
+              .find((item) => item.id === "mcp:linear")
+              ?.cells.find((candidate) => candidate.agent === "codex");
+            expect(cell).toMatchObject({
+              state: "needsAttention",
+              problem: { reason: "needsAuthorization" },
+            });
+          }),
+        {
+          respond: (argv, input) => {
+            if (argv[0] !== "codex") return undefined;
+            if (argv[2] === "add") {
+              added = true;
+              addTimeout = Duration.fromInputUnsafe(input.timeout!);
+              return Effect.fail(
+                new ProcessRunner.ProcessTimeoutError({
+                  command: "codex",
+                  argumentCount: argv.length - 1,
+                  timeoutMs: 20_000,
+                }),
+              );
+            }
+            if (argv.slice(1).join(" ") === "mcp list --json") {
+              return Effect.succeed(
+                output(
+                  JSON.stringify(
+                    added
+                      ? [
+                          {
+                            name: "linear",
+                            enabled: true,
+                            auth_status: "notLoggedIn",
+                            transport: { type: "streamable_http", url: remoteMcp.url },
+                          },
+                        ]
+                      : [],
+                  ),
+                ),
+              );
+            }
+            return undefined;
+          },
+        },
+      );
+    },
   );
 
   it.effect("adds a local-scope command server from the project folder", () =>

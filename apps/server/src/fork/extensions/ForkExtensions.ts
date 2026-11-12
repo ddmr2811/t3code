@@ -41,6 +41,7 @@ import { readClaudeJson } from "./claudeJson.ts";
 import { parseClaudeMcpList, type ClaudeMcpListEntry } from "./claudeMcpList.ts";
 import {
   decodeClaudePluginList,
+  codexNeedsLogin,
   decodeCodexMcpList,
   type ClaudePluginListEntry,
 } from "./cliJson.ts";
@@ -506,15 +507,39 @@ export const make = Effect.gen(function* () {
     const push = (itemId: string, agent: ForkExtensionAgent, cell: HealthCell) =>
       cells.push({ _tag: "cell", itemId, agent, state: cell.state, problem: cell.problem });
 
-    // Codex has no connection probe in v1: switched off is disabled, otherwise working.
-    if (available.has("codex")) {
+    // Codex has no connection probe in v1: switched off is disabled; a remote server its list
+    // reports as not logged in needs authorization; otherwise working.
+    const codex = agents.find((agent) => agent.agent === "codex");
+    if (available.has("codex") && codex !== undefined) {
+      const signedOut = yield* runCli(codex, ["mcp", "list", "--json"], {
+        timeoutMs: SNAPSHOT_CLI_TIMEOUT_MS,
+      }).pipe(
+        Effect.flatMap(({ stdout }) => decodeCodexMcpList(stdout)),
+        Effect.map(
+          (servers) =>
+            new Set(servers.filter(codexNeedsLogin).map((server) => `mcp:${server.name}`)),
+        ),
+        Effect.orElseSucceed(() => new Set<string>()),
+        Effect.provide(context),
+      );
       for (const item of current.items) {
         const cell = item.cells.find((candidate) => candidate.agent === "codex");
         if (item.kind !== "mcp" || cell === undefined || !isCheckable(cell.state)) continue;
-        push(item.id, "codex", {
-          state: cell.state === "disabled" ? "disabled" : "working",
-          problem: null,
-        });
+        if (cell.state === "disabled") {
+          push(item.id, "codex", { state: "disabled", problem: null });
+        } else if (signedOut.has(item.id)) {
+          push(item.id, "codex", {
+            state: "needsAttention",
+            problem: {
+              reason: "needsAuthorization",
+              summary: "Codex isn't signed in to this server.",
+              nextStep: "Authorize it.",
+              rawOutput: null,
+            },
+          });
+        } else {
+          push(item.id, "codex", { state: "working", problem: null });
+        }
       }
     }
 
@@ -648,6 +673,9 @@ export const make = Effect.gen(function* () {
   const install: ForkExtensions["Service"]["install"] = (request) =>
     mutationContext.pipe(
       Effect.flatMap((mutation) => installExtension(mutation, request)),
+      Effect.tap((results) =>
+        request._tag === "mcp" ? markSignedOut(`mcp:${request.name}`, results) : Effect.void,
+      ),
       Effect.catch((error) =>
         Effect.succeed(
           requestAgents(request).map((agent): ForkInstallResult => ({

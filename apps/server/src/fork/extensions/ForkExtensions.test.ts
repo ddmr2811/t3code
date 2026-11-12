@@ -56,7 +56,8 @@ const pluginList = (pluginsDir: string, join: (...parts: Array<string>) => strin
     { id: "broken@synced", scope: "user", enabled: true, installPath: join(pluginsDir, "broken") },
   ]);
 
-type CodexBehavior = "missing" | "failing" | "listed";
+/** "listedRemote": also a remote server Codex has no sign-in for (`auth_status`). */
+type CodexBehavior = "missing" | "failing" | "listed" | "listedRemote";
 
 /**
  * Login terminal of `claude mcp login --no-browser`: prints its link, exits 0 once a line is
@@ -127,12 +128,25 @@ const recordingRunner = (
             ) {
               return claudeMcpList(input);
             }
-            if (input.command === "codex" && codex === "listed") {
+            if (input.command === "codex" && (codex === "listed" || codex === "listedRemote")) {
               return Effect.succeed(
                 output(
                   JSON.stringify([
                     { name: "docs", enabled: true, transport: { type: "stdio", command: "docs" } },
                     { name: "off", enabled: false, transport: { type: "stdio", command: "off" } },
+                    ...(codex === "listedRemote"
+                      ? [
+                          {
+                            name: "linear",
+                            enabled: true,
+                            auth_status: "notLoggedIn",
+                            transport: {
+                              type: "streamable_http",
+                              url: "https://mcp.linear.app/mcp",
+                            },
+                          },
+                        ]
+                      : []),
                   ]),
                 ),
               );
@@ -537,6 +551,29 @@ describe("ForkExtensions.checkHealth", () => {
           ]);
         }),
       { codex: "listed", claudeMcpList: () => Effect.succeed(output("")) },
+    ),
+  );
+});
+
+describe("ForkExtensions.checkHealth (Codex sign-in)", () => {
+  it.effect("a remote Codex server that is not logged in needs authorization", () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const cells = Array.from(yield* Stream.runCollect(service.checkHealth)).filter(
+            (event) => event._tag === "cell" && event.agent === "codex",
+          );
+          expect(cells).toMatchObject([
+            { itemId: "mcp:docs", state: "working", problem: null },
+            {
+              itemId: "mcp:linear",
+              state: "needsAttention",
+              problem: { reason: "needsAuthorization" },
+            },
+            { itemId: "mcp:off", state: "disabled", problem: null },
+          ]);
+        }),
+      { codex: "listedRemote", claudeMcpList: () => Effect.succeed(output("")) },
     ),
   );
 });

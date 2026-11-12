@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { decodeClaudePluginList, decodeCodexMcpList } from "./cliJson.ts";
+import { codexNeedsLogin, decodeClaudePluginList, decodeCodexMcpList } from "./cliJson.ts";
 
 it.effect("decodeCodexMcpList keeps transport", () =>
   Effect.gen(function* () {
@@ -16,6 +16,39 @@ it.effect("decodeCodexMcpList keeps transport", () =>
         transport: { type: "stdio", command: "cmd.exe", args: ["/d"] },
       },
     ]);
+  }),
+);
+
+it.effect("decodeCodexMcpList reads auth_status; not logged in needs a login", () =>
+  Effect.gen(function* () {
+    // `unsupported` is what codex prints for stdio servers; the remote values are the ones the
+    // codex binary carries (camelCase), with the snake_case spelling accepted too.
+    const servers = yield* decodeCodexMcpList(
+      JSON.stringify([
+        { name: "a", enabled: true, auth_status: "unsupported", transport: { type: "stdio" } },
+        {
+          name: "b",
+          enabled: true,
+          auth_status: "notLoggedIn",
+          transport: { type: "streamable_http", url: "https://b" },
+        },
+        {
+          name: "c",
+          enabled: true,
+          auth_status: "not_logged_in",
+          transport: { type: "streamable_http", url: "https://c" },
+        },
+        {
+          name: "d",
+          enabled: true,
+          auth_status: "oAuth",
+          transport: { type: "streamable_http", url: "https://d" },
+        },
+        { name: "e", enabled: true, transport: { type: "stdio" } },
+      ]),
+    );
+    assert.strictEqual(servers[1]!.authStatus, "notLoggedIn");
+    assert.deepStrictEqual(servers.map(codexNeedsLogin), [false, true, true, false, false]);
   }),
 );
 

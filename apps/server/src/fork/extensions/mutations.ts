@@ -59,6 +59,11 @@ const PLUGIN_MCP_PREFIX = "plugin:";
 /** Plugin installs and marketplace adds clone repos; a skill clone does the same. */
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const LIST_TIMEOUT_MS = 30_000;
+/**
+ * `codex mcp add --url` writes config.toml, then may wait on an OAuth login that can't finish
+ * without a terminal; past this it is stopped and the list says whether the server was added.
+ */
+const CODEX_REMOTE_ADD_TIMEOUT_MS = 20_000;
 
 const isForkExtensionsError = Schema.is(ForkExtensionsError);
 
@@ -405,9 +410,10 @@ const installCodexMcp = Effect.fn("ForkExtensions.installCodexMcp")(function* (
     );
   }
   // `codex mcp add` silently replaces a server with the same name, so check first.
-  const listed = yield* runCli(agent, ["mcp", "list", "--json"], {
+  const listCodex = runCli(agent, ["mcp", "list", "--json"], {
     timeoutMs: LIST_TIMEOUT_MS,
   }).pipe(Effect.flatMap(({ stdout }) => decodeCodexMcpList(stdout)));
+  const listed = yield* listCodex;
   if (listed.some((server) => server.name === request.name)) {
     return yield* problem(
       "alreadyExists",
@@ -415,13 +421,41 @@ const installCodexMcp = Effect.fn("ForkExtensions.installCodexMcp")(function* (
       DUPLICATE_NEXT_STEP,
     );
   }
-  const target =
-    request.transport === "stdio"
-      ? [request.name, "--", request.command ?? "", ...request.args]
-      : [request.name, "--url", request.url ?? ""];
-  yield* runCli(agent, ["mcp", "add", ...target]).pipe(
+  if (request.transport === "stdio") {
+    yield* runCli(agent, [
+      "mcp",
+      "add",
+      request.name,
+      "--",
+      request.command ?? "",
+      ...request.args,
+    ]).pipe(
+      duplicateAs(`Codex already has a server named "${request.name}".`, DUPLICATE_NEXT_STEP),
+    );
+    return;
+  }
+  const added = yield* runCli(agent, ["mcp", "add", request.name, "--url", request.url ?? ""], {
+    timeoutMs: CODEX_REMOTE_ADD_TIMEOUT_MS,
+  }).pipe(
     duplicateAs(`Codex already has a server named "${request.name}".`, DUPLICATE_NEXT_STEP),
+    Effect.as(true),
+    // A failed or stopped add may still have written the server: the list decides.
+    Effect.catchIf(
+      (error) => error.problem.reason !== "alreadyExists",
+      (error) =>
+        listCodex.pipe(
+          Effect.mapError(() => error),
+          Effect.flatMap((servers) =>
+            servers.some((server) => server.name === request.name)
+              ? Effect.succeed(false)
+              : Effect.fail(error),
+          ),
+        ),
+    ),
   );
+  if (!added) {
+    return authorizeAgain(`${request.name} is installed in Codex, but it isn't signed in yet.`);
+  }
 });
 
 const installPlugin = Effect.fn("ForkExtensions.installPlugin")(function* (
@@ -736,7 +770,7 @@ export const installExtension = Effect.fn("ForkExtensions.installExtension")(fun
           Effect.gen(function* () {
             yield* validateMcp(request);
             const resolved = yield* agentOf(context, agent);
-            yield* context.withWriteLock(
+            return yield* context.withWriteLock(
               agent === "claude"
                 ? installClaudeMcp(resolved, request)
                 : installCodexMcp(resolved, request),
