@@ -59,10 +59,6 @@ const onThermalStateChange: ElectronPowerMonitor["Service"]["onThermalStateChang
 };
 
 const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] = (listener) => {
-  // Fork: on Windows this limit is estimated from per-core frequency, so idle or parked cores
-  // read as a held-back CPU (34% on a machine Windows reported at 113%). It stays unknown there.
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron's main process; the platform is fixed for its lifetime.
-  if (process.platform === "win32") return Effect.void;
   const wrapped = (
     event: Electron.Event<Electron.PowerMonitorSpeedLimitChangeEventParams>,
   ): void => {

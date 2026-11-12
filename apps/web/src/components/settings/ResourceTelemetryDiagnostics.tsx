@@ -59,6 +59,7 @@ import {
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
+import { useForkMachineCpu } from "./forkMachineCpu";
 import { SettingsSection } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
@@ -953,7 +954,8 @@ function ResourceTelemetryDiagnosticsBody({
       });
   };
 
-  const speedLimit = snapshot ? Option.getOrNull(snapshot.speedLimitPercent) : null;
+  // Fork: the machine's whole CPU replaces the shell's speed limit, which misreads Windows.
+  const machineCpu = useForkMachineCpu(environmentId);
   const collectorNeedsRetry = shouldShowResourceMonitorRetry({
     nativeStatus: snapshot?.health.native.status ?? null,
     error: telemetry.error,
@@ -1056,12 +1058,10 @@ function ResourceTelemetryDiagnosticsBody({
             />
             <IconStat
               icon={<GaugeIcon className="size-3.5" />}
-              label="CPU speed limit"
-              value={
-                snapshot ? (speedLimit === null ? "Unknown" : `${speedLimit.toFixed(0)}%`) : "..."
-              }
-              detail={snapshot ? `${snapshot.power.thermalState} thermal state` : undefined}
-              tone={speedLimit !== null && speedLimit < 80 ? "warning" : "default"}
+              label="Machine CPU"
+              value={machineCpu.value}
+              detail={machineCpu.detail}
+              tone={machineCpu.tone}
             />
           </div>
           {telemetry.error ? (
