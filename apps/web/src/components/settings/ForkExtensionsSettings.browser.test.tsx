@@ -239,7 +239,7 @@ describe("ForkExtensionsSettings", () => {
             cell("claude", {
               projects: [
                 { path: "E:/repo", title: "repo", disabled: false },
-                { path: "D:\new\site", title: "Site", disabled: false, unopened: true },
+                { path: "D:\\new\\site", title: "Site", disabled: false, unopened: true },
               ],
             }),
           ]),
