@@ -531,6 +531,26 @@ describe("page helpers", () => {
     });
   });
 
+  it("sends a claude.ai connector's switch and removal to claude.ai", () => {
+    const projects = [{ path: "E:/repo", title: "repo", disabled: false }];
+    const connector: ForkExtensionItem = {
+      ...mcp("claude.ai Gmail", [cell("claude", { scopes: ["claudeAi"], projects })]),
+      source: "claude.ai",
+      transport: "claudeAi",
+    };
+    const { columns, rows } = buildMatrix(
+      [machine(PC, "This PC", { snapshot: snapshot([connector]) })],
+      "mcp",
+    );
+    expect(forkCellAction(columns[0]!, rows[0]!.cells[0]!, rows[0]!.item)).toEqual({
+      kind: "none",
+      reason: "Turn it off in claude.ai → Settings → Connectors.",
+    });
+    expect(forkUninstallTargets(rows[0]!, columns)).toEqual([]);
+    // Its per-project switches stay.
+    expect(forkProjectToggleGroups(rows[0]!, columns)).toHaveLength(1);
+  });
+
   it("tags an item by how it runs", () => {
     expect(forkSourceTag(mcp("playwright", []))).toBe("npx");
     expect(

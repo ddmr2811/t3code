@@ -376,6 +376,8 @@ export function forkColumnLabel(column: MatrixColumn): string {
 /** Where claude.ai connectors are connected; they belong to the account, not to a machine. */
 export const CLAUDE_AI_CONNECTORS_URL = "https://claude.ai/settings/connectors";
 
+const CLAUDE_AI_TURN_OFF = "Turn it off in claude.ai → Settings → Connectors.";
+
 const readOnlyMachineReason = (column: MatrixColumn) =>
   `You can view extensions on ${column.machineLabel} but not change them.`;
 
@@ -409,6 +411,8 @@ export function forkCellAction(
   }
   if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column) };
   if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };
+  // Connectors belong to the claude.ai account: no CLI here can switch or remove them.
+  if (item.transport === "claudeAi") return { kind: "none", reason: CLAUDE_AI_TURN_OFF };
   if (item.readOnly) {
     return {
       kind: "none",
@@ -451,7 +455,8 @@ export function forkUninstallTargets(
     if (!isSnapshotCell(cell) || cell.state === "notInstalled" || cell.state === "notApplicable") {
       return [];
     }
-    if (row.itemsByMachine.get(column.environmentId)?.readOnly !== false) return [];
+    const item = row.itemsByMachine.get(column.environmentId);
+    if (item === undefined || item.readOnly || item.transport === "claudeAi") return [];
     return [
       {
         environmentId: column.environmentId,
