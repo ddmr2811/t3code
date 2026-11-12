@@ -15,13 +15,19 @@ import { useVisibleThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import {
+  type ForkWidgetBounds,
+  forkWidgetDefaultSize,
+  forkWidgetScale,
+  parseForkWidgetBounds,
+} from "./ForkResourceWidget.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { isWorkCompletedThread } from "./sidebar/forkInbox";
 
 /** Must match the frame name the desktop shell allows. */
 const WIDGET_WINDOW_NAME = "t3-fork-resource-widget";
-const WIDGET_SIZE = { width: 520, height: 170 };
 const POSITION_KEY = "t3code:fork:resource-widget-position";
+const SHIFT_KEY = "t3code:fork:resource-widget-shift";
 const REFRESH_MS = 2_000;
 const POSITION_SAVE_MS = 1_000;
 const POSITION_SETTLE_MS = 700;
@@ -103,7 +109,13 @@ let lastSavedPosition = "";
 function savePosition(popup: Window) {
   // A closing window reports 0,0, so only an open one is read.
   if (popup.closed) return;
-  const value = JSON.stringify({ left: popup.screenX, top: popup.screenY });
+  const bounds: ForkWidgetBounds = {
+    left: popup.screenX,
+    top: popup.screenY,
+    width: popup.innerWidth,
+    height: popup.innerHeight,
+  };
+  const value = JSON.stringify(bounds);
   if (value === lastSavedPosition) return;
   lastSavedPosition = value;
   try {
@@ -156,44 +168,59 @@ function subscribe(listener: () => void) {
   };
 }
 
-function readSavedPosition(): { left: number; top: number } | null {
+function readSavedBounds(): ForkWidgetBounds | null {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(POSITION_KEY) ?? "null");
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "left" in parsed &&
-      "top" in parsed &&
-      typeof parsed.left === "number" &&
-      typeof parsed.top === "number"
-    ) {
-      return { left: parsed.left, top: parsed.top };
-    }
+    return parseForkWidgetBounds(localStorage.getItem(POSITION_KEY));
   } catch {
-    // A corrupt entry only loses the remembered position.
+    // Without storage the widget opens at its default place and size.
+    return null;
   }
-  return null;
+}
+
+/**
+ * The shell puts the window's invisible resize border, not its content, at the asked position,
+ * so the window reports a place a few pixels off. Measured on each open and added to the next
+ * request, so the remembered position does not creep. Moving the window afterwards is not an
+ * option: `moveTo` also enlarges it by that border.
+ */
+function readPlacementShift(): { x: number; y: number } {
+  try {
+    const [x = 0, y = 0] = (localStorage.getItem(SHIFT_KEY) ?? "").split(",").map(Number);
+    // A window held back by the edge of the screen would give a meaningless figure.
+    const sane = (value: number) => Number.isInteger(value) && Math.abs(value) <= 64;
+    if (sane(x) && sane(y)) return { x, y };
+  } catch {
+    // Without storage the window opens those few pixels off.
+  }
+  return { x: 0, y: 0 };
 }
 
 function openWidgetWindow(): Window | null {
-  const position = readSavedPosition();
+  const position = readSavedBounds();
+  const fallback = forkWidgetDefaultSize(2);
+  const size = {
+    width: position?.width ?? fallback.width,
+    height: position?.height ?? fallback.height,
+  };
+  const shift = readPlacementShift();
+  const asked = position ? { left: position.left + shift.x, top: position.top + shift.y } : null;
   const features = [
     "popup=yes",
-    `width=${WIDGET_SIZE.width}`,
-    `height=${WIDGET_SIZE.height}`,
-    ...(position ? [`left=${position.left}`, `top=${position.top}`] : []),
+    `width=${size.width}`,
+    `height=${size.height}`,
+    ...(asked ? [`left=${asked.left}`, `top=${asked.top}`] : []),
   ].join(",");
   const child = window.open("about:blank", WIDGET_WINDOW_NAME, features);
   if (child === null) return null;
-  if (position) {
-    // The shell places the window's invisible resize border at the asked position, a few
-    // pixels off the reported one; correct it once so reopening does not creep.
+  if (asked) {
     setTimeout(() => {
       if (child.closed) return;
-      const dx = position.left - child.screenX;
-      const dy = position.top - child.screenY;
-      // Moving lands short by the same amount as opening did, so ask for that much more.
-      if (dx !== 0 || dy !== 0) child.moveTo(position.left + dx, position.top + dy);
+      const measured = `${asked.left - child.screenX},${asked.top - child.screenY}`;
+      try {
+        if (localStorage.getItem(SHIFT_KEY) !== measured) localStorage.setItem(SHIFT_KEY, measured);
+      } catch {
+        // Not remembering it only costs those few pixels again.
+      }
     }, POSITION_SETTLE_MS);
   }
   const root = document.documentElement;
@@ -313,8 +340,24 @@ function MachineRow(props: {
   );
 }
 
-function WidgetBody({ onClose }: { readonly onClose: () => void }) {
+/** The popup's viewport, re-read whenever the user resizes it. */
+function useWidgetViewport(popup: Window): { width: number; height: number } {
+  const size = useSyncExternalStore(
+    (listener) => {
+      popup.addEventListener("resize", listener);
+      return () => popup.removeEventListener("resize", listener);
+    },
+    () => `${popup.innerWidth}x${popup.innerHeight}`,
+  );
+  const [width = 0, height = 0] = size.split("x").map(Number);
+  return { width, height };
+}
+
+function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClose: () => void }) {
   const environments = useEnvironmentIdentities();
+  const viewport = useWidgetViewport(popup);
+  // The content is magnified to fill the window, so a bigger window reads from further away.
+  const scale = forkWidgetScale({ ...viewport, machineCount: environments.length });
   const threads = useVisibleThreadShells();
   const working = new Map<string, number>();
   const waiting = new Map<string, number>();
@@ -333,7 +376,10 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
     "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
 
   return (
-    <div className="flex h-screen flex-col gap-2 p-2">
+    <div
+      className="flex flex-col gap-2 p-2"
+      style={{ zoom: scale, height: viewport.height / scale }}
+    >
       {/* The window has no frame: this strip is its drag handle. */}
       <div className="flex items-center gap-2 [-webkit-app-region:drag]">
         <span className="flex-1 truncate px-1 text-xs font-medium text-muted-foreground">
@@ -361,7 +407,11 @@ function WidgetBody({ onClose }: { readonly onClose: () => void }) {
       <div
         role="table"
         aria-label="Connected machines"
-        className="grid min-h-0 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
+        className="grid min-h-0 flex-1 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
+        // A taller window gives every machine a taller row instead of leaving the bottom empty.
+        style={{
+          gridTemplateRows: `auto repeat(${environments.length}, minmax(min-content, 1fr))`,
+        }}
       >
         <div role="row" className="col-span-6 grid grid-cols-subgrid px-2.5">
           <span className={heading}>Machine</span>
@@ -396,5 +446,5 @@ export function ForkResourceWidgetHost() {
     if (widgetWindow === null) toggleForkResourceWidget();
   }, []);
   if (popup === null || popup.closed) return null;
-  return createPortal(<WidgetBody onClose={closeWidget} />, popup.document.body);
+  return createPortal(<WidgetBody popup={popup} onClose={closeWidget} />, popup.document.body);
 }
