@@ -1,13 +1,28 @@
 // Fork-only: every connected machine's T3 Code load and working threads in a small window,
 // off until the user turns it on. This renderer portals into an empty same-origin popup; the
 // desktop shell frames it and keeps the app in the tray (apps/desktop/src/window/ForkResourceWidget.ts).
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import type { ThreadPendingApproval } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { AppWindowIcon, XIcon } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ProviderApprovalDecision,
+  type ProviderApprovalOption,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import { useRouter } from "@tanstack/react-router";
+import { AppWindowIcon, ChevronDownIcon, XIcon } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { formatBytes } from "../lib/formatBytes";
 import { useResourceTelemetry } from "../lib/resourceTelemetryState";
 import { cn } from "../lib/utils";
@@ -15,10 +30,21 @@ import { useVisibleThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
+import { useEnvironmentScope } from "../state/session";
 import {
+  childThreadApprovalsAtom,
+  environmentThreadDetails,
+  threadEnvironment,
+} from "../state/threads";
+import { useAtomCommand } from "../state/use-atom-command";
+import {
+  appendCpuSample,
+  cpuSparklinePath,
   type ForkWidgetBounds,
+  forkWaitingReason,
   forkWidgetDefaultSize,
   forkWidgetScale,
+  forkWidgetTopProcesses,
   parseForkWidgetBounds,
 } from "./ForkResourceWidget.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
@@ -255,13 +281,258 @@ function shareTone(share: number | null): string {
   return "text-foreground";
 }
 
+const CHART = { width: 56, height: 16 };
+const TOP_PROCESSES = 3;
+const NO_SAMPLES: ReadonlyArray<number> = [];
+const NO_THREADS: ReadonlyArray<EnvironmentThreadShell> = [];
+
+/** Kept outside React, so the chart survives the widget being closed and opened again. */
+const cpuHistory = new Map<
+  string,
+  { readonly at: number; readonly samples: ReadonlyArray<number> }
+>();
+
+/** One sample per reading of the machine; asking again for the same reading adds nothing. */
+function recordCpuSample(
+  environmentId: string,
+  share: number | null,
+  readAt: number,
+): ReadonlyArray<number> {
+  const entry = cpuHistory.get(environmentId);
+  if (share === null || entry?.at === readAt) return entry?.samples ?? NO_SAMPLES;
+  const samples = appendCpuSample(entry?.samples ?? NO_SAMPLES, share);
+  cpuHistory.set(environmentId, { at: readAt, samples });
+  return samples;
+}
+
+const actionButton =
+  "cursor-pointer rounded-sm border border-border px-1.5 py-0.5 text-2xs text-foreground hover:bg-accent disabled:cursor-default disabled:opacity-50";
+
+/** What a provider offers when it names no choices of its own. */
+const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "decline", label: "Decline" },
+  { decision: "accept", label: "Approve" },
+];
+
+const APPROVAL_KIND_LABELS: Record<ThreadPendingApproval["requestKind"], string> = {
+  command: "Run a command",
+  "file-read": "Read a file",
+  "file-change": "Change a file",
+  "mcp-elicitation": "Answer a tool",
+  permission: "Grant a permission",
+};
+
+function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0], fallback: string) {
+  const failure = squashAtomCommandFailure(result);
+  return failure instanceof Error ? failure.message : fallback;
+}
+
+/** One approval with the provider's own choices as buttons. */
+function ApprovalCard(props: {
+  /** The thread that asked, which for a subagent is not the one listed. */
+  readonly thread: ScopedThreadRef;
+  readonly from?: string;
+  readonly approval: ThreadPendingApproval;
+}) {
+  const { thread, approval } = props;
+  const canRespond = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
+  const [responding, setResponding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const options = approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+
+  const decide = async (decision: ProviderApprovalDecision) => {
+    if (!canRespond || responding) return;
+    setResponding(true);
+    setError(null);
+    const result = await respond({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.threadId, requestId: approval.requestId, decision },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setError(failureMessage(result, "Could not send the decision."));
+    }
+    setResponding(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-2xs text-muted-foreground">
+        {APPROVAL_KIND_LABELS[approval.requestKind]}
+        {props.from ? ` · from ${props.from}` : null}
+      </p>
+      <pre className="max-h-20 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-background/60 px-1.5 py-1 font-mono text-2xs">
+        {approval.detail || approval.requestKind}
+      </pre>
+      {approval.reason ? <p className="text-2xs text-muted-foreground">{approval.reason}</p> : null}
+      {options.map((option) =>
+        option.warning ? (
+          <p key={option.decision} className="text-2xs text-warning-foreground">
+            {option.label}: {option.warning}
+          </p>
+        ) : null,
+      )}
+      {approval.responseCapability === "live" ? (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {options.map((option) => (
+            <button
+              key={option.decision}
+              type="button"
+              disabled={!canRespond || responding}
+              className={cn(
+                actionButton,
+                option.decision === "accept" &&
+                  "border-transparent bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+              onClick={() => void decide(option.decision)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="text-2xs text-warning-foreground">
+          The agent's process is gone. Open the thread to restart it.
+        </p>
+      )}
+      {error !== null ? (
+        <p role="alert" className="text-2xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a thread itself asks for: approvals to answer here, or a question's text. */
+function WaitingRequest({ thread }: { readonly thread: ScopedThreadRef }) {
+  // The thread list only says that something is pending; the request itself is in the thread.
+  const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(thread));
+  if (requests === null) return <p className="text-2xs text-muted-foreground">Loading…</p>;
+  const question = requests.userInputs[0]?.questions[0]?.question;
+  return (
+    <>
+      {requests.approvals.map((approval) => (
+        <ApprovalCard key={approval.requestId} thread={thread} approval={approval} />
+      ))}
+      {question ? <p className="line-clamp-3 text-2xs text-muted-foreground">{question}</p> : null}
+    </>
+  );
+}
+
+/** Approvals asked by a thread's subagents, the same ones the thread's own page lists. */
+function WaitingChildApprovals({ thread }: { readonly thread: ScopedThreadRef }) {
+  const approvals = useAtomValue(childThreadApprovalsAtom(thread));
+  return approvals.map((entry) => (
+    <ApprovalCard
+      key={`${entry.thread.threadId}:${entry.approval.requestId}`}
+      thread={entry.thread}
+      from={entry.title}
+      approval={entry.approval}
+    />
+  ));
+}
+
+function WaitingThread(props: {
+  readonly thread: EnvironmentThreadShell;
+  readonly onOpen: () => void;
+  readonly onSettle: () => ReturnType<ReturnType<typeof useThreadActions>["settleThread"]>;
+}) {
+  const { thread } = props;
+  const threadRef = { environmentId: thread.environmentId, threadId: thread.id };
+  const reason = forkWaitingReason(thread);
+  const [settling, setSettling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const settle = async () => {
+    if (settling) return;
+    setSettling(true);
+    setError(null);
+    const result = await props.onSettle();
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setError(failureMessage(result, "Could not mark the thread as done."));
+    }
+    setSettling(false);
+  };
+
+  return (
+    <div role="listitem" className="flex flex-col gap-1 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-medium">{thread.title}</span>
+        <span className="shrink-0 text-warning-foreground">{reason.label}</span>
+        <button type="button" className={actionButton} onClick={props.onOpen}>
+          Open
+        </button>
+        {reason.dismissible ? (
+          <button
+            type="button"
+            className={actionButton}
+            disabled={settling}
+            onClick={() => void settle()}
+          >
+            Mark done
+          </button>
+        ) : null}
+      </div>
+      {reason.detail !== null ? (
+        <p className="line-clamp-2 text-2xs text-muted-foreground">{reason.detail}</p>
+      ) : null}
+      {thread.hasPendingApprovals || thread.hasPendingUserInput ? (
+        <WaitingRequest thread={threadRef} />
+      ) : thread.pendingSubagentRequest === "approval" ? (
+        <WaitingChildApprovals thread={threadRef} />
+      ) : null}
+      {error !== null ? (
+        <p role="alert" className="text-2xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** The threads of one machine that wait on the user, each with why and what can be done here. */
+function WaitingPanel({ threads }: { readonly threads: ReadonlyArray<EnvironmentThreadShell> }) {
+  const router = useRouter();
+  const { settleThread } = useThreadActions();
+  // What can be answered right here comes first.
+  const answerable = (thread: EnvironmentThreadShell) =>
+    Number(forkWaitingReason(thread).answerable);
+  const ordered = threads.toSorted((left, right) => answerable(right) - answerable(left));
+  return (
+    <div
+      role="list"
+      aria-label="Threads waiting"
+      className="col-span-full flex flex-col gap-1.5 border-border/60 border-t pt-1.5"
+    >
+      {ordered.map((thread) => (
+        <WaitingThread
+          key={thread.id}
+          thread={thread}
+          onOpen={() => {
+            void router.navigate({
+              to: "/$environmentId/$threadId",
+              params: { environmentId: thread.environmentId, threadId: thread.id },
+            });
+            window.forkBridge?.showMain();
+          }}
+          onSettle={() =>
+            settleThread({ environmentId: thread.environmentId, threadId: thread.id })
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 function MachineRow(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly workingThreads: number;
-  readonly waitingThreads: number;
+  readonly waitingThreads: ReadonlyArray<EnvironmentThreadShell>;
 }) {
   const { environmentId } = props;
+  const [waitingOpen, setWaitingOpen] = useState(false);
   // T3 Code's own footprint: the agents and server on that machine.
   const telemetry = useResourceTelemetry(environmentId);
   // The whole machine, whatever else runs on it. The server already samples this for load balancing.
@@ -287,32 +558,52 @@ function MachineRow(props: {
       ? 1 - resources.availableMemoryBytes / resources.totalMemoryBytes
       : null;
   // Process CPU is per core; the machine's is a share of all cores.
-  const agentsCpuShare =
-    agents && resources && resources.cpuCount > 0
-      ? agents.currentCpuPercent / 100 / resources.cpuCount
-      : null;
+  const machineShare = (cpuPercent: number) =>
+    resources && resources.cpuCount > 0 ? cpuPercent / 100 / resources.cpuCount : null;
+  const agentsCpuShare = agents ? machineShare(agents.currentCpuPercent) : null;
   const unreachable = !resources && (host.error !== null || !host.isPending);
   // The minute tick lags by up to a minute, so only clearly old samples count as stale.
   const stale = resources !== null && nowMs - host.dataUpdatedAt > STALE_MS + 60_000;
   const cell = "truncate text-end font-mono font-semibold tabular-nums";
   const percent = (share: number | null) => (share === null ? "…" : `${Math.round(share * 100)}%`);
+  const cpuChart = cpuSparklinePath(
+    recordCpuSample(environmentId, cpuShare, host.dataUpdatedAt),
+    CHART.width,
+    CHART.height,
+  );
+  const processes = snapshot ? forkWidgetTopProcesses(snapshot.processes, TOP_PROCESSES) : [];
+  const waitingCount = props.waitingThreads.length;
 
   return (
     <div
       role="row"
       className={cn(
-        "col-span-6 grid grid-cols-subgrid items-center rounded-md bg-muted/30 px-2.5 py-1.5 text-sm",
+        "col-span-7 grid grid-cols-subgrid content-center items-center gap-y-1 rounded-md bg-muted/30 px-2.5 py-1.5 text-sm",
         stale && "opacity-50",
       )}
     >
       <span className="truncate font-medium">{props.label}</span>
       {unreachable ? (
-        <span className="col-span-3 truncate text-end text-muted-foreground text-xs">
+        <span className="col-span-4 truncate text-end text-muted-foreground text-xs">
           {host.error ?? "No data"}
         </span>
       ) : (
         <>
           <span className={cn(cell, shareTone(cpuShare))}>{percent(cpuShare)}</span>
+          <svg
+            aria-hidden
+            viewBox={`0 0 ${CHART.width} ${CHART.height}`}
+            preserveAspectRatio="none"
+            className="h-4 w-14 text-muted-foreground"
+          >
+            <path
+              d={cpuChart}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinejoin="round"
+            />
+          </svg>
           <span className={cn(cell, shareTone(memoryShare))}>
             {resources
               ? `${formatBytes(resources.totalMemoryBytes - resources.availableMemoryBytes)} / ${formatBytes(resources.totalMemoryBytes)}`
@@ -328,14 +619,38 @@ function MachineRow(props: {
       >
         {props.workingThreads}
       </span>
-      <span
-        className={cn(
-          cell,
-          props.waitingThreads > 0 ? "text-warning-foreground" : "text-muted-foreground",
-        )}
-      >
-        {props.waitingThreads}
-      </span>
+      {waitingCount > 0 ? (
+        <button
+          type="button"
+          aria-expanded={waitingOpen}
+          aria-label={`${waitingCount} waiting on ${props.label}`}
+          onClick={() => setWaitingOpen((open) => !open)}
+          className={cn(
+            cell,
+            "flex cursor-pointer items-center gap-0.5 justify-self-end rounded-sm bg-warning/16 py-0.5 ps-1.5 pe-1 text-warning-foreground hover:bg-warning/30",
+          )}
+        >
+          {waitingCount}
+          <ChevronDownIcon
+            className={cn("size-3 transition-transform", waitingOpen && "rotate-180")}
+          />
+        </button>
+      ) : (
+        <span className={cn(cell, "text-muted-foreground")}>0</span>
+      )}
+      {agents ? (
+        <div className="col-span-full truncate text-2xs text-muted-foreground tabular-nums">
+          {agents.processCount} {agents.processCount === 1 ? "process" : "processes"}
+          {processes.map((process) => (
+            <span key={process.pid}>
+              {" · "}
+              <span className="text-foreground/80">{process.name}</span>{" "}
+              {percent(machineShare(process.cpuPercent))} {formatBytes(process.residentBytes)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {waitingOpen && waitingCount > 0 ? <WaitingPanel threads={props.waitingThreads} /> : null}
     </div>
   );
 }
@@ -360,17 +675,16 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
   const scale = forkWidgetScale({ ...viewport, machineCount: environments.length });
   const threads = useVisibleThreadShells();
   const working = new Map<string, number>();
-  const waiting = new Map<string, number>();
+  const waiting = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of threads) {
     if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
     if (isSidebarHiddenThread(thread) || thread.settledOverride === "settled") continue;
     // Same split as the sidebar: working, finished, or waiting on the user.
-    const counts = isThreadWorking(thread)
-      ? working
-      : isWorkCompletedThread(thread)
-        ? null
-        : waiting;
-    counts?.set(thread.environmentId, (counts.get(thread.environmentId) ?? 0) + 1);
+    if (isThreadWorking(thread)) {
+      working.set(thread.environmentId, (working.get(thread.environmentId) ?? 0) + 1);
+    } else if (!isWorkCompletedThread(thread)) {
+      waiting.set(thread.environmentId, [...(waiting.get(thread.environmentId) ?? []), thread]);
+    }
   }
   const heading =
     "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
@@ -408,15 +722,16 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
       <div
         role="table"
         aria-label="Connected machines"
-        className="grid min-h-0 flex-1 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
+        className="grid min-h-0 flex-1 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
         // A taller window gives every machine a taller row instead of leaving the bottom empty.
         style={{
           gridTemplateRows: `auto repeat(${environments.length}, minmax(min-content, 1fr))`,
         }}
       >
-        <div role="row" className="col-span-6 grid grid-cols-subgrid px-2.5">
+        <div role="row" className="col-span-7 grid grid-cols-subgrid px-2.5">
           <span className={heading}>Machine</span>
           <span className={cn(heading, "text-end")}>CPU</span>
+          <span className={cn(heading, "text-end")}>5 min</span>
           <span className={cn(heading, "text-end")}>Memory</span>
           <span className={cn(heading, "text-end")}>Agents</span>
           <span className={cn(heading, "text-end")}>Working</span>
@@ -428,7 +743,7 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
             environmentId={environment.environmentId}
             label={environment.label}
             workingThreads={working.get(environment.environmentId) ?? 0}
-            waitingThreads={waiting.get(environment.environmentId) ?? 0}
+            waitingThreads={waiting.get(environment.environmentId) ?? NO_THREADS}
           />
         ))}
       </div>
