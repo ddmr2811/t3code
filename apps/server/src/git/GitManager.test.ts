@@ -4337,6 +4337,32 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
     );
 
+    it.effect("checks the target branch on the remote the branch is pushed to", () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "fork", "main", "main:dev"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/on-fork"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "feature/on-fork"]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+          serverSettings: { forkTargetBranch: "dev" },
+        });
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+        expect(result.pr.status).toBe("created");
+        expect(created(providerCalls).map((call) => call.baseRefName)).toEqual(["dev"]);
+      }),
+    );
+
     it.effect("a PR from the target branch itself targets the provider default", () =>
       Effect.gen(function* () {
         const calls = yield* prepare({ head: "dev", remoteBranches: [] });

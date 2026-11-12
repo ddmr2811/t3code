@@ -2089,8 +2089,13 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const forkBase = yield* forkPrBaseOnRemote(gitCore, { cwd, headBranch: branch, targetBranch });
-    if (forkBase) return { baseBranch: forkBase, baseRef: forkBase };
+    const forkBase = yield* forkPrBaseOnRemote(gitCore, {
+      cwd,
+      headBranch: branch,
+      targetBranch,
+      headContext,
+    });
+    if (forkBase) return forkBase;
 
     const defaultFromProvider = yield* sourceControlProvider(cwd).pipe(
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),

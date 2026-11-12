@@ -1,9 +1,12 @@
 import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@t3tools/contracts";
+import { it as effectIt } from "@effect/vitest";
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import {
   firstForkTargetBranch,
   forkAutoPullSkipReason,
   forkPrBaseCandidate,
+  forkPrBaseOnRemote,
   forkTargetBranchFor,
   isForkAutoPullBranch,
 } from "./targetBranch.ts";
@@ -133,4 +136,40 @@ describe("forkAutoPullSkipReason", () => {
     );
     expect(forkAutoPullSkipReason({ ...clean, isDefaultBranch: true }, null)).toBeNull();
   });
+});
+
+describe("forkPrBaseOnRemote", () => {
+  // origin es el repositorio original; la rama dev solo existe en el remoto "fork".
+  const gitCore = {
+    resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+    remoteBranchExists: (input: { remoteName: string; refName: string }) =>
+      Effect.succeed(input.remoteName === "fork" && input.refName === "dev"),
+  } as unknown as Parameters<typeof forkPrBaseOnRemote>[0];
+  const run = (headContext: { isCrossRepository: boolean; remoteName: string | null }) =>
+    forkPrBaseOnRemote(gitCore, {
+      cwd: "/repo",
+      headBranch: "feature/x",
+      targetBranch: "dev",
+      headContext,
+    });
+
+  effectIt.effect(
+    "busca la rama en el remoto al que se sube la cabeza si el PR no cruza repositorios",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* run({ isCrossRepository: false, remoteName: "fork" })).toEqual({
+          baseBranch: "dev",
+          baseRef: "refs/remotes/fork/dev",
+        });
+      }),
+  );
+
+  effectIt.effect(
+    "usa el remoto principal si el PR cruza repositorios o la cabeza no tiene remoto",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* run({ isCrossRepository: true, remoteName: "fork" })).toBeNull();
+        expect(yield* run({ isCrossRepository: false, remoteName: null })).toBeNull();
+      }),
+  );
 });

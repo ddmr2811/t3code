@@ -77,22 +77,40 @@ export function forkAutoPullSkipReason(
   return null;
 }
 
-/** La rama de destino como base de un PR, si no es la propia cabeza y existe en el remoto principal. */
+/**
+ * La rama de destino como base de un PR, si no es la propia cabeza y existe en el remoto del PR:
+ * el remoto al que se sube la rama cuando el PR no cruza repositorios, si no el principal.
+ */
 export const forkPrBaseOnRemote = Effect.fn("forkPrBaseOnRemote")(function* (
   gitCore: Pick<GitVcsDriver["Service"], "resolvePrimaryRemoteName" | "remoteBranchExists">,
   input: {
     readonly cwd: string;
     readonly headBranch: string;
     readonly targetBranch: string | null;
+    readonly headContext: {
+      readonly isCrossRepository: boolean;
+      readonly remoteName: string | null;
+    };
   },
 ) {
   const candidate = forkPrBaseCandidate(input);
   if (candidate === null) return null;
-  const exists = yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(
+  const headRemote = input.headContext.isCrossRepository ? null : input.headContext.remoteName;
+  // baseRef names the remote-tracking ref so the PR range reads the remote that was checked.
+  return yield* (
+    headRemote === null ? gitCore.resolvePrimaryRemoteName(input.cwd) : Effect.succeed(headRemote)
+  ).pipe(
     Effect.flatMap((remoteName) =>
-      gitCore.remoteBranchExists({ cwd: input.cwd, remoteName, refName: candidate }),
+      gitCore
+        .remoteBranchExists({ cwd: input.cwd, remoteName, refName: candidate })
+        .pipe(
+          Effect.map((exists) =>
+            exists
+              ? { baseBranch: candidate, baseRef: `refs/remotes/${remoteName}/${candidate}` }
+              : null,
+          ),
+        ),
     ),
-    Effect.orElseSucceed(() => false),
+    Effect.orElseSucceed(() => null),
   );
-  return exists ? candidate : null;
 });
