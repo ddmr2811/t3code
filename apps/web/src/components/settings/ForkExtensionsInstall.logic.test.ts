@@ -194,6 +194,16 @@ describe("drafts", () => {
       draftFromItem(item({ id: "plugin:docs@x", kind: "plugin", name: "docs@x", source: "x" })),
     ).toMatchObject({ type: "plugin", pluginRef: "docs@x" });
   });
+
+  it("splits a server's source back into the parts the server read (paths with spaces)", () => {
+    // The exact `source` snapshotModel.test.ts expects describeMcp to build for this server.
+    const source = '"C:\\Users\\Jane Doe\\bin\\srv.exe" --name "a b" ""';
+    const draft = draftFromItem(item({ name: "srv", source, transport: "stdio" }));
+    expect(splitCommandLine(draft.commandLine)).toEqual({
+      command: "C:\\Users\\Jane Doe\\bin\\srv.exe",
+      args: ["--name", "a b", ""],
+    });
+  });
 });
 
 describe("findForkItem", () => {

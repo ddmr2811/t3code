@@ -100,6 +100,13 @@ const pluginName = (pluginId: string): string => pluginId.split("@")[0] ?? plugi
 export const comparablePath = (value: string): string =>
   normalizeProjectPathForComparison(value).replaceAll("\\", "/").toLowerCase();
 
+/**
+ * Same rule as the web's `joinCommandLine`, so "Install here" splits the source back into
+ * the exact parts (a home folder like `C:\Users\Jane Doe` has a space).
+ */
+const quoteCommandPart = (part: string): string =>
+  /\s/.test(part) || part === "" ? `"${part}"` : part;
+
 const describeMcp = (
   definition: unknown,
 ): { readonly source: string; readonly transport: ForkMcpTransport } => {
@@ -116,7 +123,8 @@ const describeMcp = (
       : type === "http" || type === "streamable_http" || (type === null && url !== null)
         ? "http"
         : "stdio";
-  return { source: url ?? [command ?? "", ...args].join(" ").trim(), transport };
+  const parts = command === null ? args : [command, ...args];
+  return { source: url ?? parts.map(quoteCommandPart).join(" "), transport };
 };
 
 const fileDirectory = (filePath: string): string => filePath.replace(/[\\/]SKILL\.md$/i, "");

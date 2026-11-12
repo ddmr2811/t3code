@@ -248,6 +248,25 @@ describe("buildSnapshotItems", () => {
     ]);
   });
 
+  it("quotes command parts with spaces so the source splits back into them", () => {
+    const items = buildSnapshotItems(
+      baseInput({
+        claudeJson: readClaudeJson(
+          JSON.stringify({
+            mcpServers: {
+              srv: { command: "C:\\Users\\Jane Doe\\bin\\srv.exe", args: ["--name", "a b", ""] },
+            },
+          }),
+        ),
+      }),
+    );
+    // ForkExtensionsInstall.logic.test.ts splits this same string back (splitCommandLine).
+    expect(find(items, "mcp:srv").source).toBe(
+      '"C:\\Users\\Jane Doe\\bin\\srv.exe" --name "a b" ""',
+    );
+    expect(find(items, "mcp:context7").source).toBe("npx -y @upstash/context7-mcp");
+  });
+
   it("shows a plugin with a not-applicable Codex cell", () => {
     const item = find(
       buildSnapshotItems(baseInput()),
