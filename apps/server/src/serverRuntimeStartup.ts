@@ -46,8 +46,8 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import {
   firstForkTargetBranch,
+  forkAutoPullSkipReason,
   forkTargetBranchFor,
-  isForkAutoPullBranch,
 } from "./fork/targetBranch.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -214,31 +214,9 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
             .map((project) => forkTargetBranchFor(settings, project.id)),
         );
         const status = yield* git.statusDetails(cwd);
-        if (
-          !status.isRepo ||
-          !isForkAutoPullBranch({
-            branch: status.branch,
-            isDefaultBranch: status.isDefaultBranch,
-            targetBranch,
-          }) ||
-          !status.hasUpstream ||
-          status.hasWorkingTreeChanges ||
-          status.aheadCount > 0
-        ) {
-          yield* Effect.logDebug("Skipped automatic project pull", {
-            cwd,
-            reason: !status.isRepo
-              ? "not-a-repository"
-              : !status.isDefaultBranch
-                ? targetBranch === null
-                  ? "not-on-default-branch"
-                  : "not-on-target-branch"
-                : !status.hasUpstream
-                  ? "no-upstream"
-                  : status.hasWorkingTreeChanges
-                    ? "working-tree-changes"
-                    : "local-commits",
-          });
+        const skipReason = forkAutoPullSkipReason(status, targetBranch);
+        if (skipReason !== null) {
+          yield* Effect.logDebug("Skipped automatic project pull", { cwd, reason: skipReason });
           return;
         }
 

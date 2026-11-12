@@ -1,6 +1,12 @@
 import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { forkPrBaseCandidate, forkTargetBranchFor, isForkAutoPullBranch } from "./targetBranch.ts";
+import {
+  firstForkTargetBranch,
+  forkAutoPullSkipReason,
+  forkPrBaseCandidate,
+  forkTargetBranchFor,
+  isForkAutoPullBranch,
+} from "./targetBranch.ts";
 
 const projectId = ProjectId.make("project-a");
 
@@ -84,5 +90,47 @@ describe("forkPrBaseCandidate", () => {
 
   it("null cuando la cabeza es el propio destino", () => {
     expect(forkPrBaseCandidate({ headBranch: "dev", targetBranch: "dev" })).toBeNull();
+  });
+});
+
+describe("firstForkTargetBranch", () => {
+  it("devuelve el primer destino no nulo", () => {
+    expect(firstForkTargetBranch([null, "dev", "qa"])).toBe("dev");
+  });
+
+  it("null si no hay ninguno o la lista está vacía", () => {
+    expect(firstForkTargetBranch([null, null])).toBeNull();
+    expect(firstForkTargetBranch([])).toBeNull();
+  });
+});
+
+describe("forkAutoPullSkipReason", () => {
+  const clean = {
+    isRepo: true,
+    branch: "dev",
+    isDefaultBranch: false,
+    hasUpstream: true,
+    hasWorkingTreeChanges: false,
+    aheadCount: 0,
+  };
+
+  it("en la rama de destino con árbol sucio atribuye el motivo al árbol", () => {
+    expect(forkAutoPullSkipReason({ ...clean, hasWorkingTreeChanges: true }, "dev")).toBe(
+      "working-tree-changes",
+    );
+    expect(forkAutoPullSkipReason({ ...clean, hasUpstream: false }, "dev")).toBe("no-upstream");
+  });
+
+  it("en la principal con destino distinto dice not-on-target-branch aunque haya otros motivos", () => {
+    const main = { ...clean, branch: "main", isDefaultBranch: true, hasUpstream: false };
+    expect(forkAutoPullSkipReason(main, "dev")).toBe("not-on-target-branch");
+  });
+
+  it("sin destino conserva los motivos originales", () => {
+    expect(forkAutoPullSkipReason(clean, null)).toBe("not-on-default-branch");
+    expect(forkAutoPullSkipReason({ ...clean, isDefaultBranch: true, aheadCount: 1 }, null)).toBe(
+      "local-commits",
+    );
+    expect(forkAutoPullSkipReason({ ...clean, isDefaultBranch: true }, null)).toBeNull();
   });
 });

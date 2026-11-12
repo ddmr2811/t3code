@@ -42,3 +42,31 @@ export function forkPrBaseCandidate(input: {
 export function firstForkTargetBranch(targets: ReadonlyArray<string | null>): string | null {
   return targets.find((target): target is string => target !== null) ?? null;
 }
+
+/** Motivo por el que el auto pull no actúa sobre una carpeta; null si puede actuar. */
+export function forkAutoPullSkipReason(
+  status: {
+    readonly isRepo: boolean;
+    readonly branch: string | null;
+    readonly isDefaultBranch: boolean;
+    readonly hasUpstream: boolean;
+    readonly hasWorkingTreeChanges: boolean;
+    readonly aheadCount: number;
+  },
+  targetBranch: string | null,
+): string | null {
+  if (!status.isRepo) return "not-a-repository";
+  if (
+    !isForkAutoPullBranch({
+      branch: status.branch,
+      isDefaultBranch: status.isDefaultBranch,
+      targetBranch,
+    })
+  ) {
+    return targetBranch === null ? "not-on-default-branch" : "not-on-target-branch";
+  }
+  if (!status.hasUpstream) return "no-upstream";
+  if (status.hasWorkingTreeChanges) return "working-tree-changes";
+  if (status.aheadCount > 0) return "local-commits";
+  return null;
+}
