@@ -585,6 +585,49 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("keeps a project's forkTargetBranch when a whole-entry patch omits the key", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, forkTargetBranch: "dev" },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, newWorktreesStartFromOrigin: true },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      newWorktreesStartFromOrigin: true,
+      forkTargetBranch: "dev",
+    });
+  });
+
+  it("removes a project's forkTargetBranch when a patch entry sends an empty string", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, forkTargetBranch: "dev" },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true, forkTargetBranch: "" } },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
+    expect(
+      applyServerSettingsPatch(current, {
+        projectSettingsOverrides: { [projectId]: { forkTargetBranch: "main" } },
+      }).projectSettingsOverrides[projectId],
+    ).toEqual({ forkTargetBranch: "main" });
+  });
+
   // regression: #18334 a newer client must still see this server drop a key it does not know
   it("drops an override key this server does not know from a patch and keeps one it stored", () => {
     const projectId = ProjectId.make("project-a");

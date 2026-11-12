@@ -430,3 +430,21 @@ it("keeps project speech vocabulary on its originating project and clears it to 
   });
   expect(resolveProjectSettings(restored, projectId).settings.speechProjectCustomWords).toEqual([]);
 });
+
+it("clears a project's forkTargetBranch with an explicit empty string so the server drops it", () => {
+  const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    projectSettingsOverrides: { [projectId]: { defaultAutoPull: true, forkTargetBranch: "dev" } },
+  });
+  const cleared = clearProjectSettingsOverrides(settings, projectId, ["forkTargetBranch"]);
+  expect(cleared).toEqual({ defaultAutoPull: true, forkTargetBranch: "" });
+  const restored = applyServerSettingsPatch(settings, {
+    projectSettingsOverrides: { [projectId]: cleared },
+  });
+  expect(restored.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
+  expect(clearProjectSettingsOverrides(settings, projectId, ["defaultAutoPull"])).toEqual({
+    forkTargetBranch: "dev",
+  });
+  expect(
+    clearProjectSettingsOverrides(settings, projectId, ["defaultAutoPull", "forkTargetBranch"]),
+  ).toBeNull();
+});

@@ -493,6 +493,26 @@ describe("scoped settings writes", () => {
     ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
   });
 
+  it("does not send an empty forkTargetBranch for a project that has no override", () => {
+    const withEnvironmentBranch = environment("Server", {
+      settings: {
+        forkTargetBranch: "dev",
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(checkout, [laptop, withEnvironmentBranch], { forkTargetBranch: "" })
+        .serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
+    const withOverride = environment("Server", {
+      settings: { projectSettingsOverrides: { [projectId]: { forkTargetBranch: "dev" } } },
+    });
+    expect(
+      planScopedSettingsPatch(checkout, [laptop, withOverride], { forkTargetBranch: "" })
+        .serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { forkTargetBranch: "" } } });
+  });
+
   it("never substitutes an environment-default write for an invalid scope", () => {
     const scope = resolveSettingsScope({ machine: "removed" }, [group], environments);
     const plan = planScopedSettingsPatch(scope, environments, { enableAgentBrowserAccess: false });
