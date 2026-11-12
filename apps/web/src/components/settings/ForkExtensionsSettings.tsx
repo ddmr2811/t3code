@@ -34,6 +34,7 @@ import {
   type ForkNotice,
   type OnForkInstallHere,
 } from "./ForkExtensionsDetail";
+import { ForkExtensionsInstall, type ForkInstallHereTarget } from "./ForkExtensionsInstall";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useForkExtensions } from "./useForkExtensions";
@@ -46,15 +47,7 @@ const EMPTY_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
   skill: "No skills on these machines yet.",
 };
 
-// Until Task 14 wires the install form, "Install here" has nowhere to go (Ruling 5).
-const NO_INSTALL_FORM: OnForkInstallHere = () => {};
-
-export function ForkExtensionsSettings({
-  onInstallHere = NO_INSTALL_FORM,
-}: {
-  /** Opens the install form for that item with only that machine and agent checked. */
-  readonly onInstallHere?: OnForkInstallHere;
-}) {
+export function ForkExtensionsSettings() {
   const { machines, checkHealth } = useForkExtensions();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
@@ -63,6 +56,16 @@ export function ForkExtensionsSettings({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [notices, setNotices] = useState<ReadonlyArray<ForkNotice>>([]);
+  // Each "Install here" remounts the form (a new key) with that item and only that place checked.
+  const [installHere, setInstallHere] = useState<{
+    readonly key: number;
+    readonly target: ForkInstallHereTarget | null;
+  }>({ key: 0, target: null });
+  const onInstallHere: OnForkInstallHere = (itemId, environmentId, agent) =>
+    setInstallHere((current) => ({
+      key: current.key + 1,
+      target: { itemId, environmentId, agent },
+    }));
 
   const matrices = new Map(KINDS.map((entry) => [entry, buildMatrix(machines, entry)] as const));
   const { columns, rows } = matrices.get(kind)!;
@@ -153,8 +156,12 @@ export function ForkExtensionsSettings({
 
   return (
     <SettingsPageContainer>
-      {/* Task 14 puts the paste-and-install bar above the tabs. */}
       <SettingsSection {...searchableSetting("fork-extensions")}>
+        <ForkExtensionsInstall
+          key={installHere.key}
+          machines={machines}
+          installHere={installHere.target}
+        />
         <div className="flex flex-wrap items-center gap-2 px-3 pt-3 sm:px-4">
           <ToggleGroup
             aria-label="Extension kind"

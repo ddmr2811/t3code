@@ -208,10 +208,9 @@ describe("ForkExtensionsSettings", () => {
 
   it("asks to install in an empty cell and never toggles a plugin's server", async () => {
     setup();
-    const onInstallHere = vi.fn();
-    await using _screen = await render(<ForkExtensionsSettings onInstallHere={onInstallHere} />);
+    await using _screen = await render(<ForkExtensionsSettings />);
     await page.getByRole("button", { name: "playwright on VPS · Codex: Not installed" }).click();
-    expect(onInstallHere).toHaveBeenCalledWith("mcp:playwright", VPS, "codex");
+    await expect.element(page.getByRole("checkbox", { name: "VPS · Codex" })).toBeChecked();
     await page
       .getByRole("button", { name: "plugin:github:github on This PC · Claude: Working" })
       .click({ force: true });
@@ -266,15 +265,14 @@ describe("ForkExtensionsSettings", () => {
       ),
       machine(OLD, "Old laptop", { support: "needsForkUpdate", canOperate: false }),
     ]);
-    const onInstallHere = vi.fn();
-    await using _screen = await render(<ForkExtensionsSettings onInstallHere={onInstallHere} />);
+    await using _screen = await render(<ForkExtensionsSettings />);
     await expect
       .element(page.getByRole("columnheader", { name: /Old laptop/ }))
       .toMatchTextContent(/Needs a fork update/);
     await page
       .getByRole("button", { name: "playwright on VPS · Codex: Not installed" })
       .click({ force: true });
-    expect(onInstallHere).not.toHaveBeenCalled();
+    await expect.element(page.getByText("Where should it go?")).not.toBeInTheDocument();
   });
 
   it("checks status on every machine", async () => {
