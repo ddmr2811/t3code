@@ -1,6 +1,7 @@
 import {
   FORK_EXTENSIONS_PROTOCOL_VERSION,
   type ForkExtensionAgent,
+  type ForkExtensionProblem,
   type ForkExtensionsError,
   type ForkExtensionsSnapshot,
 } from "@t3tools/contracts";
@@ -22,7 +23,11 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { resolveAgents, runCli, type ResolvedAgent } from "./agents.ts";
 import { readClaudeJson } from "./claudeJson.ts";
-import { decodeClaudePluginList, decodeCodexMcpList } from "./cliJson.ts";
+import {
+  decodeClaudePluginList,
+  decodeCodexMcpList,
+  type ClaudePluginListEntry,
+} from "./cliJson.ts";
 import { listDisabledSkills, listStashedClaudeMcp } from "./disabledStore.ts";
 import { readWithFingerprint } from "./safeFileEdit.ts";
 import {
@@ -52,12 +57,20 @@ const McpJson = Schema.fromJsonString(
   Schema.Struct({ mcpServers: Schema.Record(Schema.String, Schema.Unknown) }),
 );
 const decodeMcpJson = Schema.decodeUnknownOption(McpJson);
+/** A plugin's `.mcp.json`: `{ mcpServers: {…} }` or the bare `{ <name>: {…} }` object. */
+const decodePluginMcpJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 type UsageByAgent = Partial<Record<ForkExtensionAgent, UsageTally>>;
 
 interface AgentRead {
   readonly agent: ForkExtensionAgent;
   readonly available: boolean;
+  readonly problem?: ForkExtensionProblem;
   readonly data: Partial<SnapshotModelInput>;
 }
 
@@ -144,6 +157,34 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * `claude plugin list --json` only lists servers declared in plugin.json; many plugins declare
+   * them in `<installPath>/.mcp.json` instead. No file is normal; an unreadable one is logged.
+   */
+  const withPluginMcpServers = Effect.fn("ForkExtensions.withPluginMcpServers")(function* (
+    plugin: ClaudePluginListEntry,
+  ) {
+    if (plugin.mcpServers !== undefined) return plugin;
+    const file = path.join(plugin.installPath, ".mcp.json");
+    if (!(yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false)))) return plugin;
+    const parsed = yield* fileSystem.readFileString(file).pipe(
+      Effect.map(decodePluginMcpJson),
+      Effect.orElseSucceed(() => Option.none<Record<string, unknown>>()),
+    );
+    if (Option.isNone(parsed)) {
+      yield* Effect.logWarning("Extensions could not read a plugin's .mcp.json", {
+        plugin: plugin.id,
+        file,
+      });
+      return plugin;
+    }
+    const servers = isRecord(parsed.value.mcpServers) ? parsed.value.mcpServers : parsed.value;
+    const mcpServers = Object.fromEntries(
+      Object.entries(servers).filter(([, definition]) => isRecord(definition)),
+    );
+    return { ...plugin, mcpServers } satisfies ClaudePluginListEntry;
+  });
+
   const readClaude = Effect.fn("ForkExtensions.readClaude")(function* (
     agent: ResolvedAgent,
     projects: ReadonlyArray<{ readonly path: string }>,
@@ -156,6 +197,9 @@ export const make = Effect.gen(function* () {
           ),
           runCli(agent, ["plugin", "list", "--json"], { timeoutMs: SNAPSHOT_CLI_TIMEOUT_MS }).pipe(
             Effect.flatMap(({ stdout }) => decodeClaudePluginList(stdout)),
+            Effect.flatMap((plugins) =>
+              Effect.forEach(plugins, withPluginMcpServers, { concurrency: 8 }),
+            ),
           ),
           discoverClaudeSkills({ homePath: agent.home }, undefined, agent.env),
           listDisabledSkills("claude"),
@@ -194,19 +238,29 @@ export const make = Effect.gen(function* () {
     } satisfies Partial<SnapshotModelInput>;
   });
 
-  /** A missing binary marks the agent unavailable; any other failure fails the snapshot. */
+  /** Any read failure marks only that agent unavailable, with the problem; the other stays. */
   const readAgent = Effect.fn("ForkExtensions.readAgent")(
     function* (agent: ResolvedAgent, projects: ReadonlyArray<{ readonly path: string }>) {
       const data: Partial<SnapshotModelInput> =
         agent.agent === "claude" ? yield* readClaude(agent, projects) : yield* readCodex(agent);
-      return { agent: agent.agent, available: true, data } satisfies AgentRead;
+      const read: AgentRead = { agent: agent.agent, available: true, data };
+      return read;
     },
     (effect, agent) =>
       effect.pipe(
-        Effect.catchIf(
-          (error) => error.problem.reason === "binaryNotFound",
-          (): Effect.Effect<AgentRead> =>
-            Effect.succeed({ agent: agent.agent, available: false, data: {} }),
+        Effect.catch((error) =>
+          Effect.logWarning("Extensions could not read an agent", {
+            agent: agent.agent,
+            reason: error.problem.reason,
+            summary: error.problem.summary,
+          }).pipe(
+            Effect.as<AgentRead>({
+              agent: agent.agent,
+              available: false,
+              problem: error.problem,
+              data: {},
+            }),
+          ),
         ),
         Effect.provide(context),
       ),
@@ -266,7 +320,11 @@ export const make = Effect.gen(function* () {
     });
     return {
       protocolVersion: FORK_EXTENSIONS_PROTOCOL_VERSION,
-      agents: reads.map((read) => ({ agent: read.agent, available: read.available })),
+      agents: reads.map((read) =>
+        read.problem === undefined
+          ? { agent: read.agent, available: read.available }
+          : { agent: read.agent, available: read.available, problem: read.problem },
+      ),
       projects,
       items,
       healthCheckedAt: health.checkedAt,

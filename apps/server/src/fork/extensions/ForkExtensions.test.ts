@@ -26,14 +26,24 @@ import * as ForkExtensions from "./ForkExtensions.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(ForkExtensionsSnapshot);
 
-const PLUGINS = JSON.stringify([
-  {
-    id: "superpowers@claude-plugins-official",
-    scope: "user",
-    enabled: true,
-    installPath: "/nowhere/superpowers",
-  },
-]);
+/** Plugins as `claude plugin list --json` prints them: only some carry `mcpServers`. */
+const pluginList = (pluginsDir: string, join: (...parts: Array<string>) => string) =>
+  JSON.stringify([
+    {
+      id: "superpowers@claude-plugins-official",
+      scope: "user",
+      enabled: true,
+      installPath: join(pluginsDir, "superpowers"),
+    },
+    // Declares its servers only in <installPath>/.mcp.json (bare object form).
+    { id: "design@synced", scope: "user", enabled: true, installPath: join(pluginsDir, "design") },
+    // Same, in the { mcpServers } form.
+    { id: "ops@synced", scope: "user", enabled: true, installPath: join(pluginsDir, "ops") },
+    // Unparsable .mcp.json: no servers, no failure.
+    { id: "broken@synced", scope: "user", enabled: true, installPath: join(pluginsDir, "broken") },
+  ]);
+
+type CodexBehavior = "missing" | "failing";
 
 const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
   stdout,
@@ -46,14 +56,25 @@ const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
   stderrInvalidUtf8: false,
 });
 
-/** ProcessRunner that records every call; `codex` is not installed. */
-const recordingRunner = (calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>) =>
+/** ProcessRunner that records every call; `codex` is missing or exits 1. */
+const recordingRunner = (
+  calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>,
+  plugins: string,
+  codex: CodexBehavior,
+) =>
   Layer.succeed(
     ProcessRunner.ProcessRunner,
     ProcessRunner.ProcessRunner.of({
       run: (input) =>
         Ref.update(calls, (all) => [...all, [input.command, ...input.args]]).pipe(
           Effect.andThen(() => {
+            if (input.command === "codex" && codex === "failing") {
+              return Effect.succeed({
+                ...output(""),
+                stderr: "Error: invalid config.toml",
+                code: ChildProcessSpawner.ExitCode(1),
+              });
+            }
             if (input.command === "codex") {
               return Effect.fail(
                 new ProcessRunner.ProcessSpawnError({
@@ -68,7 +89,7 @@ const recordingRunner = (calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>) =
               );
             }
             return Effect.succeed(
-              input.args.join(" ") === "plugin list --json" ? output(PLUGINS) : output(""),
+              input.args.join(" ") === "plugin list --json" ? output(plugins) : output(""),
             );
           }),
         ),
@@ -80,6 +101,7 @@ const withService = <A, E>(
     readonly service: ForkExtensions.ForkExtensions["Service"];
     readonly calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>;
   }) => Effect.Effect<A, E>,
+  options: { readonly codex?: CodexBehavior } = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -95,11 +117,24 @@ const withService = <A, E>(
         claudeAiMcpEverConnected: ["claude.ai Supabase"],
       }),
     );
+    const pluginsDir = path.join(root, "plugins");
+    for (const [name, mcpJson] of [
+      ["design", JSON.stringify({ figma: { type: "http", url: "https://mcp.figma.com/mcp" } })],
+      ["ops", JSON.stringify({ mcpServers: { slack: { command: "npx", args: ["slack-mcp"] } } })],
+      ["broken", "{ not json"],
+    ] as const) {
+      yield* fs.makeDirectory(path.join(pluginsDir, name), { recursive: true });
+      yield* fs.writeFileString(path.join(pluginsDir, name, ".mcp.json"), mcpJson);
+    }
     const calls = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
     const layer = Layer.effect(ForkExtensions.ForkExtensions, ForkExtensions.make).pipe(
       Layer.provide(
         Layer.mergeAll(
-          recordingRunner(calls),
+          recordingRunner(
+            calls,
+            pluginList(pluginsDir, (...parts) => path.join(...parts)),
+            options.codex ?? "missing",
+          ),
           ServerSettings.layerTest({
             providerInstances: {
               [ProviderInstanceId.make("claudeAgent")]: {
@@ -153,8 +188,20 @@ describe("ForkExtensions.snapshot", () => {
         expect(snapshot.items.map((item) => item.id)).toEqual([
           "mcp:claude.ai Supabase",
           "mcp:context7",
+          "mcp:plugin:design:figma",
+          "mcp:plugin:ops:slack",
+          "plugin:broken@synced",
+          "plugin:design@synced",
+          "plugin:ops@synced",
           "plugin:superpowers@claude-plugins-official",
         ]);
+        // Servers declared only in the plugin's .mcp.json still get plugin rows.
+        expect(snapshot.items.find((item) => item.id === "mcp:plugin:design:figma")).toMatchObject({
+          transport: "plugin",
+          pluginId: "design@synced",
+          readOnly: true,
+          source: "https://mcp.figma.com/mcp",
+        });
         expect(snapshot.projects).toEqual([{ path: expect.stringMatching(/app$/), title: "App" }]);
         expect(snapshot.healthCheckedAt).toBeNull();
       }),
@@ -165,9 +212,9 @@ describe("ForkExtensions.snapshot", () => {
     withService(({ service }) =>
       Effect.gen(function* () {
         const snapshot = yield* service.snapshot;
-        expect(snapshot.agents).toEqual([
+        expect(snapshot.agents).toMatchObject([
           { agent: "claude", available: true },
-          { agent: "codex", available: false },
+          { agent: "codex", available: false, problem: { reason: "binaryNotFound" } },
         ]);
         for (const item of snapshot.items) {
           expect(item.cells.map((cell) => cell.agent)).toEqual(["claude"]);
@@ -178,6 +225,28 @@ describe("ForkExtensions.snapshot", () => {
           usageCount: 0,
         });
       }),
+    ),
+  );
+});
+
+describe("ForkExtensions.snapshot with a failing agent", () => {
+  it.effect("keeps the other agent when one agent's read fails", () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const snapshot = decodeSnapshot(yield* service.snapshot);
+          expect(snapshot.agents[0]).toEqual({ agent: "claude", available: true });
+          expect(snapshot.agents[1]).toMatchObject({
+            agent: "codex",
+            available: false,
+            problem: { reason: "commandFailed", rawOutput: "Error: invalid config.toml" },
+          });
+          expect(snapshot.items.map((item) => item.id)).toContain("mcp:context7");
+          for (const item of snapshot.items) {
+            expect(item.cells.map((cell) => cell.agent)).toEqual(["claude"]);
+          }
+        }),
+      { codex: "failing" },
     ),
   );
 });

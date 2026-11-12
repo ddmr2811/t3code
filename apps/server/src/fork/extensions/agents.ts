@@ -182,9 +182,30 @@ const rawOutputOf = (output: { readonly stdout: string; readonly stderr: string 
   return `${decoder.decode(bytes.subarray(0, RAW_OUTPUT_LIMIT_BYTES)).replace(/�$/, "")}\n…`;
 };
 
-// JSON arguments (`mcp add-json`) can carry secrets, so they never reach a summary.
-const commandLabel = (agent: ResolvedAgent, args: ReadonlyArray<string>): string =>
-  [agent.agent, ...args.filter((arg) => !arg.startsWith("{")).slice(0, 4)].join(" ");
+const SUBCOMMAND_WORDS = new Set([
+  "mcp",
+  "plugin",
+  "marketplace",
+  "add",
+  "add-json",
+  "remove",
+  "get",
+  "list",
+  "login",
+  "logout",
+  "install",
+  "uninstall",
+  "enable",
+  "disable",
+  "update",
+]);
+
+// Argument values (`-e KEY=…`, `--header "Authorization: …"`, JSON) can carry secrets, so a
+// summary names only the leading subcommand words, e.g. "claude mcp add".
+const commandLabel = (agent: ResolvedAgent, args: ReadonlyArray<string>): string => {
+  const end = args.findIndex((arg) => !SUBCOMMAND_WORDS.has(arg));
+  return [agent.agent, ...args.slice(0, end === -1 ? args.length : end)].join(" ");
+};
 
 const binaryNotFound = (agent: ResolvedAgent, cause: unknown = null) =>
   new ForkExtensionsError({

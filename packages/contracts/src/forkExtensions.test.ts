@@ -16,7 +16,19 @@ describe("Fork Extensions contracts", () => {
   it("decodes a snapshot with a needsAttention cell and its problem", () => {
     const snapshot = decodeSnapshot({
       protocolVersion: FORK_EXTENSIONS_PROTOCOL_VERSION,
-      agents: [{ agent: "claude", available: true }],
+      agents: [
+        { agent: "claude", available: true },
+        {
+          agent: "codex",
+          available: false,
+          problem: {
+            reason: "commandFailed",
+            summary: "`codex mcp list` failed",
+            nextStep: "Fix config.toml",
+            rawOutput: "bad toml",
+          },
+        },
+      ],
       projects: [{ path: "/repo", title: "repo" }],
       items: [
         {
@@ -49,6 +61,7 @@ describe("Fork Extensions contracts", () => {
       healthCheckedAt: null,
     });
     expect(snapshot.items[0]?.cells[0]?.problem?.reason).toBe("timeout");
+    expect(snapshot.agents[1]?.problem?.reason).toBe("commandFailed");
   });
 
   it("rejects an install request with an empty agents list", () => {

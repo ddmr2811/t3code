@@ -363,9 +363,14 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     return { count, lastUsedAt };
   };
 
+  // Claude namespaces plugin skills as `<plugin>:<skill>`; even when the plugin can't be
+  // identified, such a skill can never be installed in Codex.
   const notApplicable = (draft: ItemDraft, agent: ForkExtensionAgent): boolean =>
     agent === "codex" &&
-    (draft.kind === "plugin" || draft.pluginId !== null || draft.transport === "claudeAi");
+    (draft.kind === "plugin" ||
+      draft.pluginId !== null ||
+      draft.transport === "claudeAi" ||
+      (draft.kind === "skill" && draft.name.includes(":")));
 
   const finishCell = (
     id: string,

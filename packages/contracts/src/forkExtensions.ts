@@ -90,7 +90,14 @@ export type ForkExtensionItem = typeof ForkExtensionItem.Type;
 
 export const ForkExtensionsSnapshot = Schema.Struct({
   protocolVersion: Schema.Literal(FORK_EXTENSIONS_PROTOCOL_VERSION),
-  agents: Schema.Array(Schema.Struct({ agent: ForkExtensionAgent, available: Schema.Boolean })),
+  agents: Schema.Array(
+    Schema.Struct({
+      agent: ForkExtensionAgent,
+      available: Schema.Boolean,
+      /** Why an unavailable agent could not be read (missing binary, failing CLI…). */
+      problem: Schema.optional(ForkExtensionProblem),
+    }),
+  ),
   projects: Schema.Array(Schema.Struct({ path: TrimmedNonEmptyString, title: Schema.String })),
   items: Schema.Array(ForkExtensionItem),
   healthCheckedAt: Schema.NullOr(IsoDateTime),

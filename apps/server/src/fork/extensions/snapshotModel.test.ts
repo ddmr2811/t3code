@@ -233,6 +233,19 @@ describe("buildSnapshotItems", () => {
     expect(loose.readOnly).toBe(false);
     expect(cell(loose, "claude").state).toBe("working");
     expect(cell(loose, "codex").state).toBe("working");
+    // A namespaced skill whose plugin can't be identified is still a Claude plugin skill.
+    const orphan = find(
+      buildSnapshotItems(
+        baseInput({
+          claudeSkills: [
+            { name: "gone:thing", path: "/elsewhere/thing/SKILL.md", enabled: true, scope: "user" },
+          ],
+        }),
+      ),
+      "skill:gone:thing",
+    );
+    expect(orphan).toMatchObject({ readOnly: true, pluginId: null });
+    expect(cell(orphan, "codex").state).toBe("notApplicable");
     const old = find(items, "skill:old-skill");
     expect(cell(old, "claude").state).toBe("disabled");
     expect(cell(old, "codex").state).toBe("notInstalled");

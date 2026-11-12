@@ -170,11 +170,45 @@ describe("runCli", () => {
         Effect.flip,
       );
       expect(error.problem.reason).toBe("commandFailed");
-      expect(error.problem.summary).toBe("`claude mcp remove x` failed (exit code 1).");
+      expect(error.problem.summary).toBe("`claude mcp remove` failed (exit code 1).");
       expect(error.problem.rawOutput?.startsWith("boom\nxxx")).toBe(true);
       expect(
         new TextEncoder().encode(error.problem.rawOutput ?? "").byteLength,
       ).toBeLessThanOrEqual(8 * 1024 + 4);
+    }),
+  );
+
+  it.effect("never puts argument values in summaries or next steps", () =>
+    Effect.gen(function* () {
+      const args = [
+        "mcp",
+        "add",
+        "-e",
+        "API_KEY=secret-value",
+        "--header",
+        "Authorization: Bearer secret-token",
+        "srv",
+        "--",
+        "npx",
+      ];
+      const failures = [
+        Effect.succeed(failedOutput("", "nope")),
+        Effect.fail(
+          new ProcessRunner.ProcessTimeoutError({
+            command: "claude",
+            argumentCount: 9,
+            timeoutMs: 1,
+          }),
+        ),
+      ] as const;
+      for (const failure of failures) {
+        const error = yield* runCli(claudeAgent, args).pipe(
+          Effect.provide(runnerReturning(failure)),
+          Effect.flip,
+        );
+        expect(error.problem.summary).toContain("`claude mcp add`");
+        expect(`${error.problem.summary} ${error.problem.nextStep}`).not.toMatch(/secret|srv|npx/);
+      }
     }),
   );
 
