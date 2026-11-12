@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -261,7 +262,13 @@ const withHarness = <A, E>(
           }),
           Layer.succeed(HostProcess.HomeDirectory, root),
           Layer.succeed(HostProcess.Environment, {}),
+          // @effect-diagnostics-next-line layerMergeAllWithDependencies:off -- only ForkExtensions gets the wrapped fs; the other layers keep the real one.
           Layer.succeed(FileSystem.FileSystem, fs),
+          // Mutations never start a login terminal.
+          Layer.succeed(
+            PtyAdapter.PtyAdapter,
+            PtyAdapter.PtyAdapter.of({ spawn: () => Effect.die("unexpected login terminal") }),
+          ),
           // Hermetic spawn resolution: no real binary is looked up on this machine.
           Layer.succeed(SpawnExecutableResolution, (command: string) =>
             options.claudeScriptShim === true && command === "claude"

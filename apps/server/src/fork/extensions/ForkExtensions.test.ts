@@ -7,6 +7,8 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -55,6 +57,40 @@ const pluginList = (pluginsDir: string, join: (...parts: Array<string>) => strin
   ]);
 
 type CodexBehavior = "missing" | "failing" | "listed";
+
+/**
+ * Login terminal of `claude mcp login --no-browser`: prints its link, exits 0 once a line is
+ * typed. Records each spawn's argv and what was typed.
+ */
+const loginPty = (logins: Array<{ argv: Array<string>; typed: Array<string> }>) =>
+  Layer.succeed(
+    PtyAdapter.PtyAdapter,
+    PtyAdapter.PtyAdapter.of({
+      spawn: (input) =>
+        Effect.sync(() => {
+          const record = { argv: [input.shell, ...(input.args ?? [])], typed: [] as string[] };
+          logins.push(record);
+          const exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
+          return {
+            pid: 1,
+            write: (data) => {
+              record.typed.push(data);
+              for (const listener of exitListeners) listener({ exitCode: 0, signal: null });
+            },
+            resize: () => {},
+            kill: () => {},
+            onData: (callback) => {
+              callback("Open this URL: https://example.com/oauth?x=1\r\n");
+              return () => {};
+            },
+            onExit: (callback) => {
+              exitListeners.add(callback);
+              return () => exitListeners.delete(callback);
+            },
+          } satisfies PtyAdapter.PtyProcess;
+        }),
+    }),
+  );
 
 type RunnerResult = Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>;
 /** Replaces the answer to `claude mcp list` (the 10 s health command). */
@@ -140,6 +176,8 @@ const withService = <A, E>(
     readonly claudeMcpList?: ClaudeMcpList;
     /** Text written to the health cache file before the service starts. */
     readonly seedCache?: string;
+    /** Records the login terminals Authorize starts. */
+    readonly logins?: Array<{ argv: Array<string>; typed: Array<string> }>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -209,6 +247,9 @@ const withService = <A, E>(
           }),
           Layer.succeed(HostProcess.HomeDirectory, root),
           Layer.succeed(HostProcess.Environment, {}),
+          loginPty(options.logins ?? []),
+          // Hermetic spawn resolution: no real binary is looked up on this machine.
+          Layer.succeed(SpawnExecutableResolution, () => undefined),
         ),
       ),
     );
@@ -498,4 +539,57 @@ describe("ForkExtensions.checkHealth", () => {
       { codex: "listed", claudeMcpList: () => Effect.succeed(output("")) },
     ),
   );
+});
+
+describe("ForkExtensions.authorize", () => {
+  it.effect("logs in through the agent's CLI and marks the cached cell for a re-check", () => {
+    const logins: Array<{ argv: Array<string>; typed: Array<string> }> = [];
+    return withService(
+      ({ service, cacheFile }) =>
+        Effect.gen(function* () {
+          const events = yield* service.authorize({ itemId: "mcp:context7", agent: "claude" }).pipe(
+            Stream.tap((event) =>
+              event._tag === "authUrl"
+                ? service.authorizeComplete({
+                    sessionId: event.sessionId,
+                    redirectUrl: "http://localhost:5000/callback?code=abc&state=s",
+                  })
+                : Effect.void,
+            ),
+            Stream.runCollect,
+          );
+          expect(events.map((event) => event._tag)).toEqual(["authUrl", "done"]);
+          expect(events[0]).toMatchObject({ url: "https://example.com/oauth?x=1" });
+          expect(logins.map((login) => login.argv.slice(1))).toEqual([
+            ["mcp", "login", "--no-browser", "context7"],
+          ]);
+          expect(logins[0]?.typed).toEqual(["http://localhost:5000/callback?code=abc&state=s\r"]);
+
+          const snapshot = yield* service.snapshot;
+          const cell = snapshot.items.find((item) => item.id === "mcp:context7")?.cells[0];
+          expect(cell).toMatchObject({ agent: "claude", state: "unknown", problem: null });
+          const fs = yield* FileSystem.FileSystem;
+          expect(JSON.parse(yield* fs.readFileString(cacheFile)).cells).toEqual({
+            "mcp:context7|claude": { state: "unknown", problem: null },
+          });
+        }),
+      {
+        logins,
+        seedCache: JSON.stringify({
+          checkedAt: "2026-11-12T10:00:00.000Z",
+          cells: {
+            "mcp:context7|claude": {
+              state: "needsAttention",
+              problem: {
+                reason: "needsAuthorization",
+                summary: "Needs authentication",
+                nextStep: "Authorize it.",
+                rawOutput: null,
+              },
+            },
+          },
+        }),
+      },
+    );
+  });
 });

@@ -2,10 +2,12 @@ import {
   FORK_EXTENSIONS_PROTOCOL_VERSION,
   ForkCellState,
   ForkExtensionProblem,
+  ForkExtensionsError,
+  type ForkAuthorizeCompleteInput,
+  type ForkAuthorizeEvent,
   type ForkExtensionAgent,
   type ForkExtensionItem,
   type ForkHealthEvent,
-  type ForkExtensionsError,
   type ForkExtensionsSnapshot,
   type ForkInstallRequest,
   type ForkInstallResult,
@@ -32,6 +34,7 @@ import * as ProcessRunner from "../../processRunner.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { resolveAgents, runCli, type ResolvedAgent } from "./agents.ts";
+import { makeAuthorizer } from "./authorize.ts";
 import { readClaudeJson } from "./claudeJson.ts";
 import { parseClaudeMcpList, type ClaudeMcpListEntry } from "./claudeMcpList.ts";
 import {
@@ -81,6 +84,19 @@ export class ForkExtensions extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ForkInstallResult>>;
     /** Switches the item on/off for one agent, globally (`projectPath` null) or per project. */
     readonly setEnabled: (input: ForkSetEnabledInput) => Effect.Effect<ForkInstallResult>;
+    /**
+     * Runs `<agent> mcp login --no-browser <name>` on this machine: `authUrl` once the login
+     * prints its link, then `done` or `failed`. One login per (item, agent); closing the stream
+     * stops it. Remote machines work the same: the approval happens in the user's browser.
+     */
+    readonly authorize: (input: {
+      readonly itemId: string;
+      readonly agent: ForkExtensionAgent;
+    }) => Stream.Stream<ForkAuthorizeEvent, ForkExtensionsError>;
+    /** Hands the pasted redirect address to that session's login; unknown/expired → notFound. */
+    readonly authorizeComplete: (
+      input: ForkAuthorizeCompleteInput,
+    ) => Effect.Effect<void, ForkExtensionsError>;
     /** Runs `effect` in this server's single queue for Extensions writes (CLI and files). */
     readonly withWriteLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -628,12 +644,59 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("ForkExtensions.setEnabled"),
     );
 
+  /** A finished login makes the cached cell stale: it shows unknown until the next check. */
+  const forgetHealthCell = Effect.fn("ForkExtensions.forgetHealthCell")(function* (target: {
+    readonly itemId: string;
+    readonly agent: ForkExtensionAgent;
+  }) {
+    const key = healthCellKey(target.itemId, target.agent);
+    const cache = yield* Ref.modify(healthRef, (current): readonly [HealthCache, HealthCache] => {
+      const cells = new Map(current.cells);
+      cells.set(key, { state: "unknown", problem: null });
+      const next: HealthCache = { checkedAt: current.checkedAt, cells };
+      return [next, next];
+    });
+    yield* persistHealth(cache).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Extensions could not save the health cache", {
+          reason: error.problem.reason,
+        }),
+      ),
+      Effect.provide(context),
+    );
+  });
+
+  const authorizer = yield* makeAuthorizer({ onDone: forgetHealthCell });
+
+  const authorize: ForkExtensions["Service"]["authorize"] = (input) =>
+    Stream.unwrap(
+      resolveAgents().pipe(
+        Effect.flatMap((agents) => {
+          const agent = agents.find((candidate) => candidate.agent === input.agent);
+          if (agent !== undefined) return Effect.succeed(authorizer.authorize(agent, input));
+          return Effect.fail(
+            new ForkExtensionsError({
+              problem: {
+                reason: "notFound",
+                summary: `${input.agent === "claude" ? "Claude Code" : "Codex"} isn't set up on this machine.`,
+                nextStep: "Enable it in Settings → Providers on that machine.",
+                rawOutput: null,
+              },
+            }),
+          );
+        }),
+        Effect.provide(context),
+      ),
+    );
+
   return ForkExtensions.of({
     snapshot,
     checkHealth,
     install,
     uninstall,
     setEnabled,
+    authorize,
+    authorizeComplete: authorizer.authorizeComplete,
     withWriteLock,
   });
 });
