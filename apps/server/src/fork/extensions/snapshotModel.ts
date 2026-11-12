@@ -240,14 +240,16 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     );
     for (const [server, definition] of Object.entries(plugin.mcpServers ?? {})) {
       const name = `${PLUGIN_MCP_PREFIX}${pluginName(plugin.id)}:${server}`;
+      pluginDraft.members.push({ mcp: name });
+      // A switched-off plugin's servers get no MCP rows: its row in Plugins stands for them.
+      if (!plugin.enabled) continue;
       const draft = item("mcp", name, {
         source: describeMcp(definition).source,
         transport: "plugin",
       });
       draft.pluginId = plugin.id;
       draft.readOnly = true;
-      install(draft, "claude", "plugin", plugin.enabled);
-      pluginDraft.members.push({ mcp: name });
+      install(draft, "claude", "plugin", true);
     }
   }
 
@@ -319,6 +321,10 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     // A cached cell of a server the config no longer has must not bring its row back; only
     // connectors and plugin servers, which no config file lists, may exist through health alone.
     if (!isClaudeAi && !isPlugin) continue;
+    const plugin = isPlugin
+      ? input.claudePlugins.find((candidate) => pluginName(candidate.id) === name.split(":")[1])
+      : undefined;
+    if (plugin?.enabled === false) continue;
     const draft = item(
       "mcp",
       name,
@@ -326,9 +332,7 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     );
     if (isPlugin) {
       draft.readOnly = true;
-      const plugin = name.split(":")[1];
-      draft.pluginId ??=
-        input.claudePlugins.find((candidate) => pluginName(candidate.id) === plugin)?.id ?? null;
+      draft.pluginId ??= plugin?.id ?? null;
     }
     install(draft, agent, isClaudeAi ? "claudeAi" : "plugin", true);
   }

@@ -112,7 +112,6 @@ describe("buildSnapshotItems", () => {
       "mcp:claude.ai Supabase",
       "mcp:context7",
       "mcp:local-db",
-      "mcp:plugin:playwright:playwright",
       "plugin:playwright@claude-plugins-official",
       "plugin:superpowers@claude-plugins-official",
       "skill:my-skill",
@@ -269,16 +268,40 @@ describe("buildSnapshotItems", () => {
     expect(cell(disabled, "claude").state).toBe("disabled");
   });
 
-  it("shows plugin MCP servers read-only, disabled with their plugin", () => {
-    const item = find(buildSnapshotItems(baseInput()), "mcp:plugin:playwright:playwright");
+  it("shows plugin MCP servers read-only with their plugin", () => {
+    const enabled = baseInput().claudePlugins.map((plugin) => ({ ...plugin, enabled: true }));
+    const item = find(
+      buildSnapshotItems(baseInput({ claudePlugins: enabled })),
+      "mcp:plugin:playwright:playwright",
+    );
     expect(item).toMatchObject({
       transport: "plugin",
       pluginId: "playwright@claude-plugins-official",
       readOnly: true,
       source: "npx @playwright/mcp@latest",
     });
-    expect(cell(item, "claude")).toMatchObject({ state: "disabled", scopes: ["plugin"] });
+    expect(cell(item, "claude")).toMatchObject({ state: "unknown", scopes: ["plugin"] });
     expect(cell(item, "codex").state).toBe("notApplicable");
+  });
+
+  it("leaves out the MCP servers of a switched-off plugin; its plugin row stands for them", () => {
+    const items = buildSnapshotItems(
+      baseInput({
+        health: {
+          checkedAt: "2026-11-12T10:00:00.000Z",
+          cells: new Map([
+            [
+              healthCellKey("mcp:plugin:playwright:playwright", "claude"),
+              { state: "working", problem: null },
+            ],
+          ]),
+        },
+      }),
+    );
+    expect(items.map((item) => item.id)).not.toContain("mcp:plugin:playwright:playwright");
+    expect(cell(find(items, "plugin:playwright@claude-plugins-official"), "claude").state).toBe(
+      "disabled",
+    );
   });
 
   it("marks plugin skills read-only with their plugin and loose skills per agent", () => {
