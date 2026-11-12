@@ -102,9 +102,12 @@ export const tallyCodexSessionLine = (line: string, into: MutableTally): void =>
 };
 
 /** The key `scanUsage(agent)` uses for a configured MCP server of this agent. */
-export const usageKeyForMcp = (_agent: ForkExtensionAgent, serverName: string): string =>
-  // Codex's tool namespace is `mcp__<server>` with the same character normalisation as Claude.
-  mcpToolPrefix(serverName);
+export const usageKeyForMcp = (agent: ForkExtensionAgent, serverName: string): string =>
+  // Claude keeps "-" in tool names; Codex turns every character outside [A-Za-z0-9_] (including "-")
+  // into "_" in its `mcp__<server>` namespace (server `t3-code` -> `mcp__t3_code`).
+  agent === "claude"
+    ? mcpToolPrefix(serverName)
+    : "mcp__" + serverName.replace(/[^A-Za-z0-9_]/g, "_") + "__";
 
 interface FileEntry {
   readonly size: number;

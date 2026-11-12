@@ -105,8 +105,14 @@ describe("tallyCodexSessionLine", () => {
       count: 1,
       lastUsedAt: "2026-11-03T00:00:00.000Z",
     });
-    expect(usageKeyForMcp("codex", "t3-code")).toBe("mcp__t3-code__");
+    // Codex names the namespace `mcp__t3_code` for server `t3-code`; the lookup key must match the tally key.
+    expect(usageKeyForMcp("codex", "t3-code")).toBe("mcp__t3_code__");
+    expect(tally.mcp.get(usageKeyForMcp("codex", "t3-code"))?.count).toBe(1);
     expect(usageKeyForMcp("codex", "t3 code")).toBe("mcp__t3_code__");
+    expect(usageKeyForMcp("claude", "t3-code")).toBe("mcp__t3-code__");
+    expect(usageKeyForMcp("claude", "plugin:playwright:playwright")).toBe(
+      "mcp__plugin_playwright_playwright__",
+    );
   });
 
   it("ignores non-MCP function calls and malformed lines", () => {
