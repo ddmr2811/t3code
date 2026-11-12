@@ -1,3 +1,5 @@
+import { ForkExtensionsError } from "@t3tools/contracts";
+
 export interface ClaudeJsonProject {
   readonly path: string;
   readonly servers: Record<string, unknown>;
@@ -51,14 +53,38 @@ export const readClaudeJson = (text: string): ClaudeJsonView => {
   };
 };
 
-/** Changes only `projects[projectPath][CLAUDE_PROJECT_DISABLED_KEY]`; keeps the rest, 2-space indent. */
+const invalidConfig = () =>
+  new ForkExtensionsError({
+    problem: {
+      reason: "invalidInput",
+      summary: "~/.claude.json is not a valid JSON object, so it was left untouched.",
+      nextStep: "Fix or restore ~/.claude.json, then try again.",
+      rawOutput: null,
+    },
+  });
+
+/** Strict root parse for writes: empty text is a fresh object, anything else must be a JSON object. */
+const parseRootStrict = (text: string): Record<string, unknown> => {
+  if (text.trim().length === 0) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw invalidConfig();
+  }
+  if (!isRecord(parsed)) throw invalidConfig();
+  return parsed;
+};
+
+/**
+ * Changes only `projects[projectPath][CLAUDE_PROJECT_DISABLED_KEY]`; keeps the rest, 2-space indent. */
 export const setClaudeProjectDisabled = (
   text: string,
   projectPath: string,
   serverName: string,
   disabled: boolean,
 ): string => {
-  const root = parseRoot(text);
+  const root = parseRootStrict(text);
   const projects = isRecord(root.projects) ? root.projects : {};
   const project = isRecord(projects[projectPath]) ? projects[projectPath] : {};
   const current = stringArray(project[CLAUDE_PROJECT_DISABLED_KEY]);
@@ -69,7 +95,8 @@ export const setClaudeProjectDisabled = (
       ? current
       : [...current, serverName]
     : current.filter((name) => name !== serverName);
-  return JSON.stringify(
+  // Known limit: JSON.parse/stringify loses precision for integers beyond 2^53.
+  const output = JSON.stringify(
     {
       ...root,
       projects: {
@@ -80,4 +107,5 @@ export const setClaudeProjectDisabled = (
     null,
     2,
   );
+  return text.endsWith("\n") ? `${output}\n` : output;
 };

@@ -64,3 +64,15 @@ it("setClaudeProjectDisabled is idempotent and creates missing projects", () => 
   const created = JSON.parse(setClaudeProjectDisabled(SAMPLE, "C:/new", "z", true));
   assert.deepStrictEqual(created.projects["C:/new"][CLAUDE_PROJECT_DISABLED_KEY], ["z"]);
 });
+
+it("setClaudeProjectDisabled refuses unparsable or non-object input", () => {
+  for (const text of ["{ garbage", "[]", "42"]) {
+    assert.throws(() => setClaudeProjectDisabled(text, "C:/repo", "a", true), /not a valid JSON/);
+  }
+});
+
+it("setClaudeProjectDisabled preserves the trailing newline", () => {
+  const withNewline = setClaudeProjectDisabled(`${SAMPLE}\n`, "C:/repo", "b", true);
+  assert.isTrue(withNewline.endsWith("}\n"));
+  assert.isFalse(setClaudeProjectDisabled(SAMPLE, "C:/repo", "b", true).endsWith("\n"));
+});
