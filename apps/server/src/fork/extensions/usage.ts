@@ -164,10 +164,12 @@ const merge = (target: MutableTally, entry: FileEntry) => {
  * Counts MCP and skill usage in the agent's transcripts, re-reading only files whose
  * size or mtime changed since the last scan (cache: `<baseDir>/fork-extensions/usage-cache.json`).
  * Unreadable folders, files and cache contents degrade to "no usage"; the scan never fails.
+ * `agentHome` (Claude config dir / Codex home) overrides `<home>/.claude` / `<home>/.codex`.
  */
 export const scanUsage = Effect.fn("ForkExtensions.scanUsage")(function* (
   agent: ForkExtensionAgent,
   home: string,
+  agentHome?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -175,10 +177,10 @@ export const scanUsage = Effect.fn("ForkExtensions.scanUsage")(function* (
   const cachePath = path.join(baseDir, "fork-extensions", "usage-cache.json");
   const tallyLine = agent === "claude" ? tallyClaudeTranscriptLine : tallyCodexSessionLine;
 
-  const root =
-    agent === "claude"
-      ? path.join(home, ".claude", "projects")
-      : path.join(home, ".codex", "sessions");
+  const root = path.join(
+    agentHome ?? path.join(home, agent === "claude" ? ".claude" : ".codex"),
+    agent === "claude" ? "projects" : "sessions",
+  );
   const relative = yield* fs
     .readDirectory(root, { recursive: true })
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));

@@ -32,10 +32,18 @@ it.effect("decodeCodexMcpList fails with ForkExtensionsError on bad output", () 
 it.effect("decodeClaudePluginList decodes the plugin list", () =>
   Effect.gen(function* () {
     const plugins = yield* decodeClaudePluginList(
-      '[{"id":"cloudflare@claude-plugins","version":"1.0.0","scope":"user","enabled":true,"installPath":"C:/p"}]',
+      '[{"id":"cloudflare@claude-plugins","version":"1.0.0","scope":"user","enabled":true,"installPath":"C:/p","mcpServers":{"cloudflare":{"type":"http","url":"https://mcp.cloudflare.com/mcp"}}},' +
+        '{"id":"superpowers@claude-plugins","scope":"user","enabled":false,"installPath":"C:/s"}]',
     );
     assert.deepStrictEqual(plugins, [
-      { id: "cloudflare@claude-plugins", enabled: true, scope: "user", installPath: "C:/p" },
+      {
+        id: "cloudflare@claude-plugins",
+        enabled: true,
+        scope: "user",
+        installPath: "C:/p",
+        mcpServers: { cloudflare: { type: "http", url: "https://mcp.cloudflare.com/mcp" } },
+      },
+      { id: "superpowers@claude-plugins", enabled: false, scope: "user", installPath: "C:/s" },
     ]);
   }),
 );

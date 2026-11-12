@@ -250,6 +250,15 @@ describe("scanUsage", () => {
           );
           const tally = yield* scanUsage("codex", home);
           expect(tally.mcp.get(usageKeyForMcp("codex", "t3_code"))?.count).toBe(1);
+          // A custom CODEX_HOME is scanned instead of <home>/.codex.
+          const customHome = path.join(home, "custom-codex");
+          expect((yield* scanUsage("codex", home, customHome)).mcp.size).toBe(0);
+          yield* fs.copy(path.join(home, ".codex"), customHome);
+          expect(
+            (yield* scanUsage("codex", home, customHome)).mcp.get(
+              usageKeyForMcp("codex", "t3_code"),
+            )?.count,
+          ).toBe(1);
           const cache = yield* fs.readFileString(
             path.join(baseDir, "fork-extensions", "usage-cache.json"),
           );

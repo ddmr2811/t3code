@@ -7,6 +7,8 @@ export interface ClaudePluginListEntry {
   readonly enabled: boolean;
   readonly scope: string;
   readonly installPath: string;
+  /** Servers the plugin bundles; Claude names them `plugin:<plugin>:<server>`. */
+  readonly mcpServers?: { readonly [name: string]: unknown } | undefined;
 }
 
 export interface CodexMcpListEntry {
@@ -27,6 +29,7 @@ const ClaudePluginList = Schema.fromJsonString(
       enabled: Schema.Boolean,
       scope: Schema.String,
       installPath: Schema.String,
+      mcpServers: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     }),
   ),
 );
