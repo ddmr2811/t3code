@@ -2308,7 +2308,6 @@ export const make = Effect.gen(function* () {
     cwd: string,
     status: { branch: string; upstreamRef: string | null; hasUpstream: boolean },
     changeRequestLabel: string,
-    targetBranch: string | null,
   ) {
     const target = yield* gitCore.resolvePushTarget(cwd, status);
     if (!target) return;
@@ -2323,7 +2322,8 @@ export const make = Effect.gen(function* () {
       status.branch,
       status.upstreamRef,
       headContext,
-      targetBranch,
+      // Fork: the target branch never names the head, so the default base still guards it.
+      null,
     );
     if (baseBranch !== target.branchName) return;
     if (yield* findOpenPr(cwd, headContext)) return;
@@ -3314,7 +3314,6 @@ export const make = Effect.gen(function* () {
             input.cwd,
             { ...initialStatus, branch: initialStatus.branch },
             changeRequestTerms.shortLabelWithArticle,
-            yield* forkTargetBranchOf(input),
           );
         }
 

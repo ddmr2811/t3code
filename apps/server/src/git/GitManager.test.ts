@@ -4363,6 +4363,37 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
     );
 
+    it.effect("commit_push_pr still refuses the default branch when a target branch is set", () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "origin", "main:dev"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        const readRemoteMain = runGit(repoDir, ["ls-remote", "origin", "refs/heads/main"]).pipe(
+          Effect.map((output) => output.stdout),
+        );
+        const remoteBefore = yield* readRemoteMain;
+        const localBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+        const { manager } = yield* makeManager({
+          providerScenario: { defaultBranch: "main", prListSequence: [[], []] },
+          serverSettings: { forkTargetBranch: "dev" },
+        });
+
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        }).pipe(Effect.flip);
+
+        expect(yield* readRemoteMain).toBe(remoteBefore);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(localBefore);
+        expect(error.message).toContain("main is the base branch");
+      }),
+    );
+
     it.effect("a PR from the target branch itself targets the provider default", () =>
       Effect.gen(function* () {
         const calls = yield* prepare({ head: "dev", remoteBranches: [] });
