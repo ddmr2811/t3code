@@ -1,5 +1,8 @@
 import type { ProjectId, ServerSettings } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { Effect } from "effect";
+
+import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 
 const REF_PREFIX = "refs/heads/";
 
@@ -70,3 +73,23 @@ export function forkAutoPullSkipReason(
   if (status.aheadCount > 0) return "local-commits";
   return null;
 }
+
+/** La rama de destino como base de un PR, si no es la propia cabeza y existe en el remoto principal. */
+export const forkPrBaseOnRemote = Effect.fn("forkPrBaseOnRemote")(function* (
+  gitCore: Pick<GitVcsDriver["Service"], "resolvePrimaryRemoteName" | "remoteBranchExists">,
+  input: {
+    readonly cwd: string;
+    readonly headBranch: string;
+    readonly targetBranch: string | null;
+  },
+) {
+  const candidate = forkPrBaseCandidate(input);
+  if (candidate === null) return null;
+  const exists = yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(
+    Effect.flatMap((remoteName) =>
+      gitCore.remoteBranchExists({ cwd: input.cwd, remoteName, refName: candidate }),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+  return exists ? candidate : null;
+});
