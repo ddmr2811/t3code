@@ -5,6 +5,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
+import { ForkHome } from "../components/ForkHome";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
@@ -30,7 +31,13 @@ function ChatIndexRouteView() {
     if (environments.length === 0) return <HostedEmptyState />;
   }
 
-  return <IndexDraftLanding />;
+  return <ForkIndex />;
+}
+
+// Fork: with projects the index is a home page; the upstream landing only handles the empty workspace.
+function ForkIndex() {
+  const hasProject = useProjects().some((project) => project.archivedAt == null);
+  return hasProject ? <ForkHome /> : <IndexDraftLanding />;
 }
 
 function IndexDraftLanding() {

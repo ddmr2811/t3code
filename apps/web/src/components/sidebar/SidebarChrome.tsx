@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  HouseIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -254,6 +260,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigateToMainApp();
   };
+  // Fork: the home page lists what waits on the user, projects and recent threads.
+  const handleHomeClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/" });
+  };
 
   return (
     <SidebarMenu className="flex-row items-center">
@@ -266,6 +277,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarUtilityItem icon={<HouseIcon />} label="Home" onClick={handleHomeClick} />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"
