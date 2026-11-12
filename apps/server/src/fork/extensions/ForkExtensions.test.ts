@@ -15,6 +15,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -23,6 +25,15 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkExtensions from "./ForkExtensions.ts";
+
+const MCP_LIST = `Checking MCP server health…
+
+claude.ai MCP Gestion/Patricia: https://n8n.example.com/mcp/MCPPatricia/sse - ✔ Connected
+claude.ai Stripe: https://mcp.stripe.com - ! Needs authentication
+plugin:cloudflare:cloudflare: https://mcp.cloudflare.com/mcp (HTTP) - ! Needs authentication
+plugin:playwright:playwright: npx @playwright/mcp@latest - ✔ Connected
+ghost: npx ghost - ✗ Failed to connect
+`;
 
 const decodeSnapshot = Schema.decodeUnknownSync(ForkExtensionsSnapshot);
 
@@ -43,7 +54,11 @@ const pluginList = (pluginsDir: string, join: (...parts: Array<string>) => strin
     { id: "broken@synced", scope: "user", enabled: true, installPath: join(pluginsDir, "broken") },
   ]);
 
-type CodexBehavior = "missing" | "failing";
+type CodexBehavior = "missing" | "failing" | "listed";
+
+type RunnerResult = Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>;
+/** Replaces the answer to `claude mcp list` (the 10 s health command). */
+type ClaudeMcpList = (input: ProcessRunner.ProcessRunInput) => RunnerResult;
 
 const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
   stdout,
@@ -61,6 +76,7 @@ const recordingRunner = (
   calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>,
   plugins: string,
   codex: CodexBehavior,
+  claudeMcpList: ClaudeMcpList | undefined,
 ) =>
   Layer.succeed(
     ProcessRunner.ProcessRunner,
@@ -68,6 +84,23 @@ const recordingRunner = (
       run: (input) =>
         Ref.update(calls, (all) => [...all, [input.command, ...input.args]]).pipe(
           Effect.andThen(() => {
+            if (
+              claudeMcpList !== undefined &&
+              input.command === "claude" &&
+              input.args.join(" ") === "mcp list"
+            ) {
+              return claudeMcpList(input);
+            }
+            if (input.command === "codex" && codex === "listed") {
+              return Effect.succeed(
+                output(
+                  JSON.stringify([
+                    { name: "docs", enabled: true, transport: { type: "stdio", command: "docs" } },
+                    { name: "off", enabled: false, transport: { type: "stdio", command: "off" } },
+                  ]),
+                ),
+              );
+            }
             if (input.command === "codex" && codex === "failing") {
               return Effect.succeed({
                 ...output(""),
@@ -100,8 +133,14 @@ const withService = <A, E>(
   body: (input: {
     readonly service: ForkExtensions.ForkExtensions["Service"];
     readonly calls: Ref.Ref<ReadonlyArray<ReadonlyArray<string>>>;
-  }) => Effect.Effect<A, E>,
-  options: { readonly codex?: CodexBehavior } = {},
+    readonly cacheFile: string;
+  }) => Effect.Effect<A, E, FileSystem.FileSystem>,
+  options: {
+    readonly codex?: CodexBehavior;
+    readonly claudeMcpList?: ClaudeMcpList;
+    /** Text written to the health cache file before the service starts. */
+    readonly seedCache?: string;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -126,6 +165,11 @@ const withService = <A, E>(
       yield* fs.makeDirectory(path.join(pluginsDir, name), { recursive: true });
       yield* fs.writeFileString(path.join(pluginsDir, name, ".mcp.json"), mcpJson);
     }
+    const cacheFile = path.join(root, "base", "fork-extensions", "health-cache.json");
+    if (options.seedCache !== undefined) {
+      yield* fs.makeDirectory(path.dirname(cacheFile), { recursive: true });
+      yield* fs.writeFileString(cacheFile, options.seedCache);
+    }
     const calls = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
     const layer = Layer.effect(ForkExtensions.ForkExtensions, ForkExtensions.make).pipe(
       Layer.provide(
@@ -134,6 +178,7 @@ const withService = <A, E>(
             calls,
             pluginList(pluginsDir, (...parts) => path.join(...parts)),
             options.codex ?? "missing",
+            options.claudeMcpList,
           ),
           ServerSettings.layerTest({
             providerInstances: {
@@ -169,7 +214,7 @@ const withService = <A, E>(
     );
     return yield* Effect.gen(function* () {
       const service = yield* ForkExtensions.ForkExtensions;
-      return yield* body({ service, calls });
+      return yield* body({ service, calls, cacheFile });
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -277,6 +322,180 @@ describe("ForkExtensions.withWriteLock", () => {
         yield* Fiber.join(second);
         expect(yield* Ref.get(order)).toEqual(["first", "second"]);
       }),
+    ),
+  );
+});
+
+describe("ForkExtensions.checkHealth", () => {
+  it.effect("streams a cell per `claude mcp list` line, then done, and caches them", () =>
+    withService(
+      ({ service, cacheFile }) =>
+        Effect.gen(function* () {
+          const events = Array.from(yield* Stream.runCollect(service.checkHealth));
+          const cells = events.filter((event) => event._tag === "cell");
+          expect(cells).toHaveLength(5);
+          expect(events.at(-1)?._tag).toBe("done");
+          expect(cells.find((cell) => cell.itemId === "mcp:claude.ai Stripe")).toMatchObject({
+            agent: "claude",
+            state: "needsAttention",
+            problem: { reason: "needsAuthorization", nextStep: "Authorize it." },
+          });
+          expect(cells.find((cell) => cell.itemId === "mcp:ghost")).toMatchObject({
+            state: "needsAttention",
+            problem: {
+              reason: "commandFailed",
+              summary: "Failed to connect",
+              nextStep: "Check the server's command or URL, then check status again.",
+            },
+          });
+          expect(
+            cells.find((cell) => cell.itemId === "mcp:plugin:playwright:playwright"),
+          ).toMatchObject({ state: "working", problem: null });
+
+          const snapshot = decodeSnapshot(yield* service.snapshot);
+          const done = events.at(-1);
+          expect(snapshot.healthCheckedAt).toBe(done?._tag === "done" ? done.checkedAt : null);
+          // Only claude.ai connectors and plugin servers may come from health alone.
+          const ids = snapshot.items.map((item) => item.id);
+          expect(ids).toContain("mcp:claude.ai Stripe");
+          expect(ids).toContain("mcp:plugin:cloudflare:cloudflare");
+          expect(ids).not.toContain("mcp:ghost");
+          expect(
+            snapshot.items.find((item) => item.id === "mcp:claude.ai Stripe")?.cells[0],
+          ).toMatchObject({ state: "needsAttention" });
+
+          const fs = yield* FileSystem.FileSystem;
+          expect(JSON.parse(yield* fs.readFileString(cacheFile)).checkedAt).toBe(
+            snapshot.healthCheckedAt,
+          );
+        }),
+      { claudeMcpList: () => Effect.succeed(output(MCP_LIST)) },
+    ),
+  );
+
+  it.effect("loads the persisted cache at start", () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const snapshot = yield* service.snapshot;
+          expect(snapshot.healthCheckedAt).toBe("2026-11-12T10:00:00.000Z");
+          expect(snapshot.items.find((item) => item.id === "mcp:context7")?.cells[0]).toMatchObject(
+            { state: "needsAttention", problem: { reason: "timeout" } },
+          );
+        }),
+      {
+        seedCache: JSON.stringify({
+          checkedAt: "2026-11-12T10:00:00.000Z",
+          cells: {
+            "mcp:context7|claude": {
+              state: "needsAttention",
+              problem: { reason: "timeout", summary: "s", nextStep: "n", rawOutput: null },
+            },
+          },
+        }),
+      },
+    ),
+  );
+
+  it.effect("reads a corrupt cache file as empty", () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          expect((yield* service.snapshot).healthCheckedAt).toBeNull();
+        }),
+      { seedCache: "{ not json" },
+    ),
+  );
+
+  it.effect("two simultaneous subscriptions share one `claude mcp list`", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* withService(
+        ({ service, calls }) =>
+          Effect.gen(function* () {
+            const first = yield* Stream.runCollect(service.checkHealth).pipe(Effect.forkChild);
+            const second = yield* Stream.runCollect(service.checkHealth).pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(release, undefined);
+            const one = Array.from(yield* Fiber.join(first));
+            const two = Array.from(yield* Fiber.join(second));
+            expect(one).toHaveLength(6);
+            expect(two).toEqual(one);
+            const recorded = yield* Ref.get(calls);
+            expect(
+              recorded.filter((call) => call[0] === "claude" && call[1] === "mcp"),
+            ).toHaveLength(1);
+          }),
+        {
+          claudeMcpList: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(output(MCP_LIST)),
+            ),
+        },
+      );
+    }),
+  );
+
+  it.effect("turns a timeout into needsAttention/timeout cells for the installed servers", () =>
+    Effect.gen(function* () {
+      // The health command is "running" (sleeping on TestClock) once this fires.
+      const started = yield* Deferred.make<void>();
+      yield* withService(
+        ({ service }) =>
+          Effect.gen(function* () {
+            const fiber = yield* Stream.runCollect(service.checkHealth).pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            yield* TestClock.adjust("61 seconds");
+            const events = Array.from(yield* Fiber.join(fiber));
+            const cells = events.filter((event) => event._tag === "cell");
+            expect(cells.map((cell) => cell.itemId)).toEqual([
+              "mcp:claude.ai Supabase",
+              "mcp:context7",
+              "mcp:plugin:design:figma",
+              "mcp:plugin:ops:slack",
+            ]);
+            expect(cells[0]).toMatchObject({
+              agent: "claude",
+              state: "needsAttention",
+              problem: { reason: "timeout" },
+            });
+            expect(events.at(-1)?._tag).toBe("done");
+          }),
+        {
+          claudeMcpList: (input) =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.sleep("60 seconds")),
+              Effect.andThen(
+                Effect.fail(
+                  new ProcessRunner.ProcessTimeoutError({
+                    command: input.command,
+                    argumentCount: input.args.length,
+                    timeoutMs: 60_000,
+                  }),
+                ),
+              ),
+            ),
+        },
+      );
+    }),
+  );
+
+  it.effect("Codex: enabled false is disabled, anything else working (no probe)", () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const cells = Array.from(yield* Stream.runCollect(service.checkHealth)).filter(
+            (event) => event._tag === "cell" && event.agent === "codex",
+          );
+          expect(cells).toMatchObject([
+            { itemId: "mcp:docs", state: "working", problem: null },
+            { itemId: "mcp:off", state: "disabled", problem: null },
+          ]);
+        }),
+      { codex: "listed", claudeMcpList: () => Effect.succeed(output("")) },
     ),
   );
 });

@@ -1,12 +1,16 @@
 import {
   FORK_EXTENSIONS_PROTOCOL_VERSION,
+  ForkCellState,
+  ForkExtensionProblem,
   type ForkExtensionAgent,
-  type ForkExtensionProblem,
+  type ForkHealthEvent,
   type ForkExtensionsError,
   type ForkExtensionsSnapshot,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +19,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
@@ -23,18 +28,21 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { resolveAgents, runCli, type ResolvedAgent } from "./agents.ts";
 import { readClaudeJson } from "./claudeJson.ts";
+import { parseClaudeMcpList, type ClaudeMcpListEntry } from "./claudeMcpList.ts";
 import {
   decodeClaudePluginList,
   decodeCodexMcpList,
   type ClaudePluginListEntry,
 } from "./cliJson.ts";
 import { listDisabledSkills, listStashedClaudeMcp } from "./disabledStore.ts";
-import { readWithFingerprint } from "./safeFileEdit.ts";
+import { readWithFingerprint, writeIfUnchanged } from "./safeFileEdit.ts";
 import {
   buildSnapshotItems,
   emptyHealthCache,
+  healthCellKey,
   type ClaudeProjectMcp,
   type HealthCache,
+  type HealthCell,
   type SkillFolder,
   type SnapshotModelInput,
 } from "./snapshotModel.ts";
@@ -45,6 +53,11 @@ export class ForkExtensions extends Context.Service<
   {
     /** Fast matrix read from config and list commands; never runs a health check. */
     readonly snapshot: Effect.Effect<ForkExtensionsSnapshot, ForkExtensionsError>;
+    /**
+     * Fresh per-cell health: one `cell` per checked cell, then `done`. Concurrent subscribers
+     * share one run (single flight); the result is cached in memory and on disk.
+     */
+    readonly checkHealth: Stream.Stream<ForkHealthEvent, ForkExtensionsError>;
     /** Runs `effect` in this server's single queue for Extensions writes (CLI and files). */
     readonly withWriteLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -52,6 +65,53 @@ export class ForkExtensions extends Context.Service<
 
 /** `plugin list` / `mcp list` answer in a few seconds; past this the machine is stuck. */
 const SNAPSHOT_CLI_TIMEOUT_MS = 30_000;
+
+/** `claude mcp list` connects to every server; it takes ~10 s, so it gets a long leash. */
+const HEALTH_CLI_TIMEOUT_MS = 60_000;
+
+const PersistedHealth = Schema.fromJsonString(
+  Schema.Struct({
+    checkedAt: Schema.NullOr(Schema.String),
+    cells: Schema.Record(
+      Schema.String,
+      Schema.Struct({ state: ForkCellState, problem: Schema.NullOr(ForkExtensionProblem) }),
+    ),
+  }),
+);
+const decodePersistedHealth = Schema.decodeUnknownOption(PersistedHealth);
+const encodePersistedHealth = Schema.encodeSync(PersistedHealth);
+
+type HealthRun = Deferred.Deferred<ReadonlyArray<ForkHealthEvent>, ForkExtensionsError>;
+
+type HealthCellEvent = Extract<ForkHealthEvent, { readonly _tag: "cell" }>;
+
+/** States whose cell exists on this machine and may be probed. */
+const isCheckable = (state: ForkCellState): boolean =>
+  state !== "notInstalled" && state !== "notApplicable";
+
+const claudeHealthCell = (entry: ClaudeMcpListEntry): HealthCell => {
+  if (entry.state === "working") return { state: "working", problem: null };
+  if (entry.state === "needsAttention" && /needs authentication/i.test(entry.detail)) {
+    return {
+      state: "needsAttention",
+      problem: {
+        reason: "needsAuthorization",
+        summary: entry.detail,
+        nextStep: "Authorize it.",
+        rawOutput: null,
+      },
+    };
+  }
+  return {
+    state: "needsAttention",
+    problem: {
+      reason: "commandFailed",
+      summary: entry.detail,
+      nextStep: "Check the server's command or URL, then check status again.",
+      rawOutput: null,
+    },
+  };
+};
 
 const McpJson = Schema.fromJsonString(
   Schema.Struct({ mcpServers: Schema.Record(Schema.String, Schema.Unknown) }),
@@ -94,8 +154,26 @@ export const make = Effect.gen(function* () {
   const withWriteLock: ForkExtensions["Service"]["withWriteLock"] = (effect) =>
     writeLock.withPermits(1)(effect);
 
+  const config = yield* ServerConfig.ServerConfig;
+  const healthCacheFile = path.join(config.baseDir, "fork-extensions", "health-cache.json");
+
+  // Persisted across restarts; a missing or corrupt file reads as empty.
+  const initialHealth = yield* readWithFingerprint(healthCacheFile).pipe(
+    Effect.map(({ text }): HealthCache => {
+      const decoded = decodePersistedHealth(text);
+      return Option.isNone(decoded)
+        ? emptyHealthCache
+        : {
+            checkedAt: decoded.value.checkedAt,
+            cells: new Map(Object.entries(decoded.value.cells)),
+          };
+    }),
+    Effect.orElseSucceed(() => emptyHealthCache),
+    Effect.provide(context),
+  );
   // Filled by the health check; the snapshot only reads it.
-  const healthRef = yield* Ref.make<HealthCache>(emptyHealthCache);
+  const healthRef = yield* Ref.make<HealthCache>(initialHealth);
+  const healthInFlight = yield* Ref.make<Option.Option<HealthRun>>(Option.none());
   const usageRef = yield* Ref.make<UsageByAgent | null>(null);
   const usageScanRunning = yield* Ref.make(false);
 
@@ -331,7 +409,119 @@ export const make = Effect.gen(function* () {
     } satisfies ForkExtensionsSnapshot;
   }).pipe(Effect.withSpan("ForkExtensions.snapshot"));
 
-  return ForkExtensions.of({ snapshot, withWriteLock });
+  /** Another check (or the terminal) may have touched the file; the cache is best effort. */
+  const persistHealth = Effect.fn("ForkExtensions.persistHealth")(function* (cache: HealthCache) {
+    const text = encodePersistedHealth({
+      checkedAt: cache.checkedAt,
+      cells: Object.fromEntries(cache.cells),
+    });
+    const { fingerprint } = yield* readWithFingerprint(healthCacheFile);
+    yield* writeIfUnchanged(healthCacheFile, fingerprint, text, (next) =>
+      Option.isSome(decodePersistedHealth(next)),
+    );
+  });
+
+  const runHealthCheck = Effect.fn("ForkExtensions.runHealthCheck")(function* () {
+    const [current, agents] = yield* Effect.all([
+      snapshot,
+      resolveAgents().pipe(Effect.provide(context)),
+    ]);
+    const available = new Set(current.agents.filter((a) => a.available).map((a) => a.agent));
+    const cells: Array<HealthCellEvent> = [];
+    const push = (itemId: string, agent: ForkExtensionAgent, cell: HealthCell) =>
+      cells.push({ _tag: "cell", itemId, agent, state: cell.state, problem: cell.problem });
+
+    // Codex has no connection probe in v1: switched off is disabled, otherwise working.
+    if (available.has("codex")) {
+      for (const item of current.items) {
+        const cell = item.cells.find((candidate) => candidate.agent === "codex");
+        if (item.kind !== "mcp" || cell === undefined || !isCheckable(cell.state)) continue;
+        push(item.id, "codex", {
+          state: cell.state === "disabled" ? "disabled" : "working",
+          problem: null,
+        });
+      }
+    }
+
+    const claude = agents.find((agent) => agent.agent === "claude");
+    if (available.has("claude") && claude !== undefined) {
+      const listed = yield* runCli(claude, ["mcp", "list"], {
+        timeoutMs: HEALTH_CLI_TIMEOUT_MS,
+      }).pipe(
+        Effect.map(({ stdout }) => ({ entries: parseClaudeMcpList(stdout), problem: null })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            entries: [] as ReadonlyArray<ClaudeMcpListEntry>,
+            problem: error.problem,
+          }),
+        ),
+        Effect.provide(context),
+      );
+      if (listed.problem === null) {
+        for (const entry of listed.entries) {
+          push(`mcp:${entry.name}`, "claude", claudeHealthCell(entry));
+        }
+      } else {
+        // The command timed out or failed: every installed, switched-on server is unverified.
+        const problem = listed.problem;
+        for (const item of current.items) {
+          const cell = item.cells.find((candidate) => candidate.agent === "claude");
+          if (item.kind !== "mcp" || cell === undefined) continue;
+          if (!isCheckable(cell.state) || cell.state === "disabled") continue;
+          push(item.id, "claude", { state: "needsAttention", problem });
+        }
+      }
+    }
+
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const cache: HealthCache = {
+      checkedAt,
+      cells: new Map(cells.map((cell) => [healthCellKey(cell.itemId, cell.agent), cell])),
+    };
+    yield* Ref.set(healthRef, cache);
+    yield* persistHealth(cache).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Extensions could not save the health cache", {
+          reason: error.problem.reason,
+        }),
+      ),
+      Effect.provide(context),
+    );
+    return [...cells, { _tag: "done", checkedAt }] satisfies ReadonlyArray<ForkHealthEvent>;
+  });
+
+  /** Joins the run in progress, or starts one in a fiber owned by the service. */
+  const sharedHealthCheck = Effect.gen(function* () {
+    const fresh: HealthRun = yield* Deferred.make<
+      ReadonlyArray<ForkHealthEvent>,
+      ForkExtensionsError
+    >();
+    const { deferred, owner } = yield* Ref.modify(
+      healthInFlight,
+      (
+        inFlight: Option.Option<HealthRun>,
+      ): readonly [{ deferred: HealthRun; owner: boolean }, Option.Option<HealthRun>] =>
+        Option.isSome(inFlight)
+          ? [{ deferred: inFlight.value, owner: false }, inFlight]
+          : [{ deferred: fresh, owner: true }, Option.some(fresh)],
+    );
+    if (owner) {
+      yield* runHealthCheck().pipe(
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Ref.set(healthInFlight, Option.none()).pipe(
+            Effect.andThen(Deferred.done(deferred, exit)),
+          ),
+        ),
+        Effect.forkIn(scope),
+      );
+    }
+    return yield* Deferred.await(deferred);
+  });
+
+  const checkHealth = Stream.fromIterableEffect(sharedHealthCheck);
+
+  return ForkExtensions.of({ snapshot, checkHealth, withWriteLock });
 });
 
 /** @public Wired into the server runtime by the Extensions RPC methods. */

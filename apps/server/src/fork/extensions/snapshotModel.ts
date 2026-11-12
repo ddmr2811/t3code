@@ -306,20 +306,19 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     const separator = key.lastIndexOf("|");
     const itemId = key.slice(0, separator);
     const agent = key.slice(separator + 1);
-    if (!itemId.startsWith("mcp:") || (agent !== "claude" && agent !== "codex")) continue;
+    if (!itemId.startsWith("mcp:") || agent !== "claude") continue;
     if (health.state === "notInstalled" || health.state === "notApplicable") continue;
     const name = itemId.slice("mcp:".length);
     if (drafts.has(itemId) && drafts.get(itemId)!.cells.has(agent)) continue;
     const isClaudeAi = name.startsWith(CLAUDE_AI_PREFIX);
     const isPlugin = name.startsWith(PLUGIN_MCP_PREFIX);
+    // A cached cell of a server the config no longer has must not bring its row back; only
+    // connectors and plugin servers, which no config file lists, may exist through health alone.
+    if (!isClaudeAi && !isPlugin) continue;
     const draft = item(
       "mcp",
       name,
-      isClaudeAi
-        ? { source: "claude.ai", transport: "claudeAi" }
-        : isPlugin
-          ? { transport: "plugin" }
-          : {},
+      isClaudeAi ? { source: "claude.ai", transport: "claudeAi" } : { transport: "plugin" },
     );
     if (isPlugin) {
       draft.readOnly = true;
@@ -327,7 +326,7 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
       draft.pluginId ??=
         input.claudePlugins.find((candidate) => pluginName(candidate.id) === plugin)?.id ?? null;
     }
-    install(draft, agent, isClaudeAi ? "claudeAi" : isPlugin ? "plugin" : "user", true);
+    install(draft, agent, isClaudeAi ? "claudeAi" : "plugin", true);
   }
 
   // Per-project "off" switches for servers that are not defined per project.
