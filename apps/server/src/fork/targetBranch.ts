@@ -4,6 +4,9 @@ import { Effect } from "effect";
 
 import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 
+/** Version of the target-branch capability announced to clients. */
+export const FORK_TARGET_BRANCH_PROTOCOL_VERSION = 1;
+
 const REF_PREFIX = "refs/heads/";
 
 function normalizeTargetBranch(value: string): string | null {
