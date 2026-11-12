@@ -11,6 +11,7 @@ import {
   DEFAULT_INSTALL_SELECTION,
   draftFromItem,
   draftFromPasted,
+  findForkItem,
   forkInstallInspectMachine,
   forkInstallPlan,
   forkInstallStatus,
@@ -146,11 +147,13 @@ describe("drafts", () => {
       draftFromPasted({
         _tag: "marketplace",
         source: "anthropics/skills",
+        name: "team-tools",
         plugins: ["docs", "pdf"],
       }),
     ).toMatchObject({
       type: "marketplace",
       marketplaceSource: "anthropics/skills",
+      marketplaceName: "team-tools",
       marketplacePlugins: ["docs", "pdf"],
       pluginRef: "docs",
     });
@@ -190,6 +193,23 @@ describe("drafts", () => {
     expect(
       draftFromItem(item({ id: "plugin:docs@x", kind: "plugin", name: "docs@x", source: "x" })),
     ).toMatchObject({ type: "plugin", pluginRef: "docs@x" });
+  });
+});
+
+describe("findForkItem", () => {
+  it("takes the target machine's own copy, else the first machine's", () => {
+    const skillOn = (source: string) =>
+      snapshot({ items: [item({ id: "skill:pdf", kind: "skill", name: "pdf", source })] });
+    const machines = [
+      machine(PC, "This PC", { snapshot: skillOn("C:/Users/dani/.claude/skills/pdf") }),
+      machine(VPS, "VPS", { snapshot: skillOn("/home/dani/.codex/skills/pdf") }),
+      machine(OLD, "Old", { snapshot: snapshot() }),
+    ];
+    expect(findForkItem(machines, "skill:pdf", VPS)?.source).toBe("/home/dani/.codex/skills/pdf");
+    expect(findForkItem(machines, "skill:pdf", OLD)?.source).toBe(
+      "C:/Users/dani/.claude/skills/pdf",
+    );
+    expect(findForkItem(machines, "skill:none", VPS)).toBeNull();
   });
 });
 
@@ -321,17 +341,25 @@ describe("forkInstallTargets", () => {
       [`${PC}\nclaude`, "Already installed on This PC.", false],
       [`${PC}\ncodex`, null, false],
     ]);
-    const plugins = forkInstallTargets(
-      [
-        machine(PC, "This PC", {
-          snapshot: snapshot({
-            items: [item({ id: "plugin:docs@official", kind: "plugin", name: "docs@official" })],
-          }),
+    // Plugins match on the full `plugin@marketplace`: the same name elsewhere is another plugin.
+    const withDocs = [
+      machine(PC, "This PC", {
+        snapshot: snapshot({
+          items: [item({ id: "plugin:docs@official", kind: "plugin", name: "docs@official" })],
         }),
-      ],
-      { ...retypeDraft(null, "marketplace", "anthropics/skills"), pluginRef: "docs" },
+      }),
+    ];
+    const marketplace = {
+      ...retypeDraft(null, "marketplace", "anthropics/skills"),
+      pluginRef: "docs",
+    };
+    const claudeOf = (draft: ForkInstallDraft) =>
+      forkInstallTargets(withDocs, draft)[0]!.targets[0]!.blocked;
+    expect(claudeOf({ ...marketplace, marketplaceName: "official" })).toBe(
+      "Already installed on This PC.",
     );
-    expect(plugins[0]!.targets[0]!.blocked).toBe("Already installed on This PC.");
+    expect(claudeOf(marketplace)).toBeNull();
+    expect(claudeOf(retypeDraft(null, "plugin", "docs"))).toBeNull();
   });
 });
 
@@ -407,8 +435,23 @@ describe("forkInstallPlan", () => {
       marketplaceSource: null,
     });
     expect(
-      requestOf({ ...retypeDraft(null, "marketplace", "anthropics/skills"), pluginRef: "pdf" }),
-    ).toEqual({ _tag: "plugin", pluginRef: "pdf", marketplaceSource: "anthropics/skills" });
+      requestOf({
+        ...retypeDraft(null, "marketplace", "anthropics/skills"),
+        marketplaceName: "team-tools",
+        pluginRef: "pdf",
+      }),
+    ).toEqual({
+      _tag: "plugin",
+      pluginRef: "pdf@team-tools",
+      marketplaceSource: "anthropics/skills",
+    });
+    // Typed by hand, with no manifest name: the repo name stands in, as on the server.
+    expect(
+      requestOf({
+        ...retypeDraft(null, "marketplace", "https://github.com/anthropics/skills"),
+        pluginRef: "pdf",
+      }),
+    ).toMatchObject({ pluginRef: "pdf@skills" });
     expect(requestOf({ ...retypeDraft(null, "skill", "owner/repo"), name: "pdf" })).toEqual({
       _tag: "skill",
       name: "pdf",

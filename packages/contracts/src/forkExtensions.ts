@@ -175,6 +175,8 @@ export const ForkPastedSource = Schema.Union([
   Schema.TaggedStruct("plugin", { pluginRef: Schema.String }),
   Schema.TaggedStruct("marketplace", {
     source: Schema.String,
+    /** The manifest's `name`, which installs address as `plugin@name` (the repo name if absent). */
+    name: Schema.String,
     plugins: Schema.Array(Schema.String),
   }),
   Schema.TaggedStruct("skill", { source: Schema.String, suggestedName: Schema.String }),

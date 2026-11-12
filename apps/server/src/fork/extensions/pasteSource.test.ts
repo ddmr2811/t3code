@@ -140,10 +140,18 @@ describe("resolveGithubRepo", () => {
     Effect.gen(function* () {
       const result = yield* run(
         clientFor({
-          ".claude-plugin/marketplace.json": { plugins: [{ name: "a" }, { name: "b" }] },
+          ".claude-plugin/marketplace.json": {
+            name: "team-tools",
+            plugins: [{ name: "a" }, { name: "b" }],
+          },
         }),
       );
-      expect(result).toEqual({ _tag: "marketplace", source: "o/r", plugins: ["a", "b"] });
+      expect(result).toEqual({
+        _tag: "marketplace",
+        source: "o/r",
+        name: "team-tools",
+        plugins: ["a", "b"],
+      });
     }),
   );
   it.effect("detects a plugin", () =>
@@ -178,7 +186,13 @@ describe("resolveGithubRepo", () => {
       const result = yield* run(
         clientFor({ ".claude-plugin/marketplace.json": {} }, () => wrapped),
       );
-      expect(result).toEqual({ _tag: "marketplace", source: "o/r", plugins: ["wrapped"] });
+      // No `name` in the manifest: the repo name stands in.
+      expect(result).toEqual({
+        _tag: "marketplace",
+        source: "o/r",
+        name: "r",
+        plugins: ["wrapped"],
+      });
     }),
   );
   it.effect("treats an unparseable manifest as a marketplace without plugins", () =>
@@ -188,7 +202,7 @@ describe("resolveGithubRepo", () => {
           Buffer.from("not json").toString("base64"),
         ),
       );
-      expect(result).toEqual({ _tag: "marketplace", source: "o/r", plugins: [] });
+      expect(result).toEqual({ _tag: "marketplace", source: "o/r", name: "r", plugins: [] });
     }),
   );
   it.effect("returns unknown when nothing matches", () =>

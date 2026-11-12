@@ -259,6 +259,7 @@ const fetchGithubFile = Effect.fn("ForkExtensions.fetchGithubFile")(function* (
 
 const ManifestJson = Schema.fromJsonString(
   Schema.Struct({
+    name: Schema.optional(Schema.Unknown),
     plugins: Schema.optional(
       Schema.Array(Schema.Struct({ name: Schema.optional(Schema.Unknown) })),
     ),
@@ -280,12 +281,21 @@ export const resolveGithubRepo = Effect.fn("ForkExtensions.resolveGithubRepo")(f
   const marketplace = yield* fetchGithubFile(client, repo, ".claude-plugin/marketplace.json");
   if (marketplace !== null) {
     const manifest = yield* decodeManifest(marketplace).pipe(
-      Effect.orElseSucceed(() => ({ plugins: [] as ReadonlyArray<{ name?: unknown }> })),
+      Effect.orElseSucceed(() => ({
+        name: undefined,
+        plugins: [] as ReadonlyArray<{ name?: unknown }>,
+      })),
     );
     const plugins = (manifest.plugins ?? []).flatMap((p) =>
       typeof p.name === "string" ? [p.name] : [],
     );
-    return { _tag: "marketplace", source: repoSource(repo), plugins } as const;
+    // `claude plugin install` addresses a plugin as `plugin@<marketplace name>`. A manifest
+    // without a usable name is a guess: Claude Code names such a marketplace after its repo.
+    const name =
+      typeof manifest.name === "string" && manifest.name.trim() !== ""
+        ? manifest.name.trim()
+        : repo.repo;
+    return { _tag: "marketplace", source: repoSource(repo), name, plugins } as const;
   }
 
   if ((yield* fetchGithubFile(client, repo, ".claude-plugin/plugin.json")) !== null) {

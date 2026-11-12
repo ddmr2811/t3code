@@ -216,6 +216,47 @@ describe("ForkExtensionsInstall", () => {
     await expect.element(page.getByLabelText("Installed on This PC · Claude")).toBeVisible();
   });
 
+  it("never shows a closed install's late answers in the next form", async () => {
+    setup();
+    answer(forkExtensionsInspectSource.label, () => AsyncResult.success(notion));
+    let answerVps: (results: ReadonlyArray<ForkInstallResult>) => void = () => {};
+    answer(forkExtensionsInstall.label, (value) =>
+      environmentOf(value) === PC
+        ? AsyncResult.success([
+            { agent: "claude", ok: true, problem: null },
+            { agent: "codex", ok: true, problem: null },
+          ])
+        : new Promise((resolve) => {
+            answerVps = (results) => resolve(AsyncResult.success(results));
+          }),
+    );
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await paste("https://mcp.notion.com/mcp");
+    await page.getByRole("button", { name: "Install in 4 places" }).click();
+    await expect.element(page.getByLabelText("Installing on VPS · Claude")).toBeVisible();
+    // While it runs, the paste and its type cannot change under it.
+    await expect
+      .element(page.getByRole("textbox", { name: "Paste something to install" }))
+      .toBeDisabled();
+    await expect
+      .element(page.getByRole("combobox", { name: "Type" }))
+      .toHaveAttribute("data-disabled");
+
+    await page.getByRole("button", { name: "Close" }).click();
+    await paste("https://mcp.notion.com/mcp");
+    await expect.element(page.getByRole("button", { name: "Install in 4 places" })).toBeEnabled();
+    answerVps([
+      { agent: "claude", ok: false, problem: claudeMissing },
+      { agent: "codex", ok: true, problem: null },
+    ]);
+    // A full round trip through the form, so VPS's late answer has been handled by now.
+    await page.getByRole("checkbox", { name: "This PC · Claude" }).click();
+    await expect.element(page.getByRole("button", { name: "Install in 3 places" })).toBeEnabled();
+    expect(page.getByLabelText(/^(Installed|Failed|Installing) on /).elements()).toHaveLength(0);
+    expect(page.getByText("claude not found on VPS").elements()).toHaveLength(0);
+    expect(installCalls()).toHaveLength(2);
+  });
+
   it("marks every place on a machine that did not answer as failed", async () => {
     setup();
     answer(forkExtensionsInspectSource.label, () => AsyncResult.success(notion));
@@ -315,6 +356,29 @@ describe("ForkExtensionsInstall", () => {
     await expect
       .element(page.getByRole("textbox", { name: "Command" }))
       .toHaveValue("my-server --stdio");
+  });
+
+  it("fills a skill's source from the machine it is installed on", async () => {
+    const skill = (source: string): ForkExtensionItem => ({
+      id: "skill:pdf",
+      kind: "skill",
+      name: "pdf",
+      source,
+      transport: null,
+      pluginId: null,
+      readOnly: false,
+      cells: [cell("claude")],
+    });
+    setup([
+      machine(PC, "This PC", { snapshot: snapshot([skill("C:/Users/dani/.claude/skills/pdf")]) }),
+      machine(VPS, "VPS", { snapshot: snapshot([skill("/home/dani/.claude/skills/pdf")]) }),
+    ]);
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await page.getByRole("button", { name: /^Skills/ }).click();
+    await page.getByRole("button", { name: "pdf on VPS · Codex: Not installed" }).click();
+    await expect
+      .element(page.getByRole("textbox", { name: "Source" }))
+      .toHaveValue("/home/dani/.claude/skills/pdf");
   });
 
   it("opens the form from an empty cell with only that place checked", async () => {

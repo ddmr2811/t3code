@@ -52,6 +52,8 @@ export interface ForkInstallDraft {
   /** The plugin to install; for a marketplace, the one picked from its list. */
   readonly pluginRef: string;
   readonly marketplaceSource: string;
+  /** The manifest's `name`; empty when typed by hand (the repo name stands in). */
+  readonly marketplaceName: string;
   readonly marketplacePlugins: ReadonlyArray<string>;
   readonly skillSource: string;
   /** Claude MCP only; Codex takes the User scope alone. */
@@ -64,6 +66,7 @@ const EMPTY_DRAFT: Omit<ForkInstallDraft, "type"> = {
   commandLine: "",
   pluginRef: "",
   marketplaceSource: "",
+  marketplaceName: "",
   marketplacePlugins: [],
   skillSource: "",
   scope: "user",
@@ -117,6 +120,7 @@ export function draftFromPasted(source: ForkPastedSource): ForkInstallDraft | nu
         ...EMPTY_DRAFT,
         type: "marketplace",
         marketplaceSource: source.source,
+        marketplaceName: source.name,
         marketplacePlugins: source.plugins,
         pluginRef: source.plugins[0] ?? "",
       };
@@ -187,12 +191,20 @@ export function draftFromItem(item: ForkExtensionItem): ForkInstallDraft {
   }
 }
 
-/** The machine's own copy, from the first machine that has it. */
+/**
+ * The item as `preferred` reports it (its own path or source), else as the first machine that
+ * has it reports it.
+ */
 export function findForkItem(
   machines: ReadonlyArray<MachineState>,
   itemId: string,
+  preferred: EnvironmentId | null = null,
 ): ForkExtensionItem | null {
-  for (const machine of machines) {
+  const ordered = [
+    ...machines.filter((machine) => machine.environmentId === preferred),
+    ...machines.filter((machine) => machine.environmentId !== preferred),
+  ];
+  for (const machine of ordered) {
     const found = machine.snapshot?.items.find((candidate) => candidate.id === itemId);
     if (found !== undefined) return found;
   }
@@ -245,16 +257,34 @@ const AGENTS: ReadonlyArray<ForkExtensionAgent> = ["claude", "codex"];
 const isPluginRepo = (ref: string) => !ref.includes("@") && ref.includes("/");
 const PLUGIN_REPO_NEXT_STEP = "Add its marketplace instead (paste the marketplace repo).";
 
-/** The item ids this draft would create, to spot a place that already has it. */
-function installedMatcher(draft: ForkInstallDraft): (itemId: string) => boolean {
+/** The repo part of `owner/repo[/path]` or a GitHub URL. */
+function repoName(source: string): string {
+  const parts = source
+    .trim()
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
+    .replace(/\.git$/, "")
+    .split("/")
+    .filter((part) => part.length > 0);
+  return parts[1] ?? parts[0] ?? "";
+}
+
+/**
+ * The `plugin@marketplace` that is installed. A marketplace typed by hand has no manifest name,
+ * so its repo name stands in, as on the server.
+ */
+function forkPluginRef(draft: ForkInstallDraft): string {
+  const plugin = draft.pluginRef.trim();
+  if (draft.type !== "marketplace" || plugin === "" || plugin.includes("@")) return plugin;
+  const marketplace = draft.marketplaceName.trim() || repoName(draft.marketplaceSource);
+  return marketplace === "" ? plugin : `${plugin}@${marketplace}`;
+}
+
+/** The item id this draft would create, to spot a place that already has it. */
+function installedItemId(draft: ForkInstallDraft): string {
   if (draft.type === "plugin" || draft.type === "marketplace") {
-    const ref = draft.pluginRef.trim();
-    return ref.includes("@")
-      ? (itemId) => itemId === `plugin:${ref}`
-      : (itemId) => itemId.startsWith(`plugin:${ref}@`);
+    return `plugin:${forkPluginRef(draft)}`;
   }
-  const id = `${draft.type === "skill" ? "skill" : "mcp"}:${draft.name.trim()}`;
-  return (itemId) => itemId === id;
+  return `${draft.type === "skill" ? "skill" : "mcp"}:${draft.name.trim()}`;
 }
 
 /** What the server would refuse, shown up front as a disabled checkbox (spec §6.2, §6.5). */
@@ -302,7 +332,7 @@ export function forkInstallTargets(
   machines: ReadonlyArray<MachineState>,
   draft: ForkInstallDraft,
 ): ReadonlyArray<ForkInstallTargetRow> {
-  const isInstalled = installedMatcher(draft);
+  const installedId = installedItemId(draft);
   return machines.map((machine): ForkInstallTargetRow => {
     const snapshot = machine.support === "supported" ? machine.snapshot : null;
     const machineReason = machineBlock(machine);
@@ -338,7 +368,7 @@ export function forkInstallTargets(
       }
       const installed = snapshot.items.some(
         (candidate) =>
-          isInstalled(candidate.id) &&
+          candidate.id === installedId &&
           candidate.cells.some(
             (own) =>
               own.agent === agent && own.state !== "notInstalled" && own.state !== "notApplicable",
@@ -419,7 +449,7 @@ function requestFor(
     case "marketplace":
       return {
         _tag: "plugin",
-        pluginRef: draft.pluginRef.trim(),
+        pluginRef: forkPluginRef(draft),
         marketplaceSource: draft.type === "marketplace" ? draft.marketplaceSource.trim() : null,
       };
     case "skill":

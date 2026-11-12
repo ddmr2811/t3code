@@ -83,7 +83,10 @@ function initialForm(
   machines: ReadonlyArray<MachineState>,
   installHere: ForkInstallHereTarget | null,
 ): FormState {
-  const item = installHere === null ? null : findForkItem(machines, installHere.itemId);
+  const item =
+    installHere === null
+      ? null
+      : findForkItem(machines, installHere.itemId, installHere.environmentId);
   if (item === null) return EMPTY_FORM;
   return { phase: "ready", origin: "item", title: item.name, draft: draftFromItem(item) };
 }
@@ -122,12 +125,20 @@ export function ForkExtensionsInstall({
   const [statuses, setStatuses] = useState<ReadonlyMap<string, ForkInstallStatus>>(new Map());
   /** Only the latest paste's answer is shown. */
   const inspectRun = useRef(0);
+  /** Only the latest install's answers are shown: closing or changing the form abandons it. */
+  const installRun = useRef(0);
   const fieldId = useId();
+
+  /** The running install keeps going on its machines; its answers are no longer shown. */
+  const abandonInstall = () => {
+    installRun.current += 1;
+    setStatuses(new Map());
+  };
 
   const resetChoices = () => {
     setSelection(DEFAULT_INSTALL_SELECTION);
     setProjectByMachine(new Map());
-    setStatuses(new Map());
+    abandonInstall();
   };
 
   const inspect = async (value: string) => {
@@ -187,7 +198,7 @@ export function ForkExtensionsInstall({
   const running = [...statuses.values()].some((status) => status.phase === "running");
   // Results describe what was sent; an edit makes the next install a new one.
   const updateDraft = (patch: Partial<ForkInstallDraft>) => {
-    setStatuses(new Map());
+    abandonInstall();
     setForm((current) =>
       current.phase === "ready" && current.draft !== null
         ? { ...current, draft: { ...current.draft, ...patch } }
@@ -197,7 +208,7 @@ export function ForkExtensionsInstall({
   const changeType = (value: unknown) => {
     const type = FORK_INSTALL_TYPES.find((candidate) => candidate === value);
     if (type === undefined) return;
-    setStatuses(new Map());
+    abandonInstall();
     setForm((current) =>
       current.phase === "ready"
         ? { ...current, draft: retypeDraft(current.draft, type, text) }
@@ -208,6 +219,8 @@ export function ForkExtensionsInstall({
   const runInstall = async () => {
     if (plan === null || plan.blocker !== null || running) return;
     const { calls } = plan;
+    debouncedInspect.cancel();
+    const run = ++installRun.current;
     setStatuses((current) => {
       const next = new Map(current);
       for (const call of calls) {
@@ -223,6 +236,7 @@ export function ForkExtensionsInstall({
     await Promise.all(
       calls.map(async (call) => {
         const result = await install({ environmentId: call.environmentId, input: call.request });
+        if (run !== installRun.current) return;
         const failure = result._tag === "Failure" ? commandFailureProblem(result) : null;
         setStatuses((current) => {
           const next = new Map(current);
@@ -252,7 +266,7 @@ export function ForkExtensionsInstall({
         className="flex items-center gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          if (text.trim() === "") return;
+          if (running || text.trim() === "") return;
           debouncedInspect.cancel();
           void inspect(text);
         }}
@@ -262,6 +276,7 @@ export function ForkExtensionsInstall({
           placeholder="Paste a URL, a command, a GitHub repo or a plugin name…"
           font={text === "" ? "default" : "mono"}
           value={text}
+          disabled={running}
           onChange={(event) =>
             changeText(
               event.currentTarget.value,
@@ -269,7 +284,7 @@ export function ForkExtensionsInstall({
             )
           }
         />
-        <Button type="submit" size="sm" disabled={text.trim() === ""}>
+        <Button type="submit" size="sm" disabled={running || text.trim() === ""}>
           Install
         </Button>
       </form>
@@ -305,7 +320,7 @@ export function ForkExtensionsInstall({
             {form.origin === "pasted" ? (
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                 {draft === null ? "Pick its type:" : "Not this?"}
-                <Select value={draft?.type ?? null} onValueChange={changeType}>
+                <Select value={draft?.type ?? null} disabled={running} onValueChange={changeType}>
                   <SelectTrigger size="xs" aria-label="Type" className="min-w-0">
                     <SelectValue>{draft === null ? "Pick a type" : "Change type"}</SelectValue>
                   </SelectTrigger>
@@ -407,7 +422,8 @@ export function ForkExtensionsInstall({
             {plan?.blocker != null && draft?.type !== "claudeAiConnector" ? (
               <span className="text-muted-foreground">{plan.blocker}</span>
             ) : null}
-            <Button size="xs" variant="outline" disabled={running} onClick={close}>
+            {/* Closing mid-install leaves the machines to finish; the matrix refreshes. */}
+            <Button size="xs" variant="outline" onClick={close}>
               {statuses.size > 0 ? "Close" : "Cancel"}
             </Button>
             {plan !== null && draft?.type !== "claudeAiConnector" ? (

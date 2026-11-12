@@ -6,11 +6,13 @@ import {
   FORK_EXTENSIONS_PROTOCOL_VERSION,
   ForkExtensionsSnapshot,
   ForkInstallRequest,
+  ForkPastedSource,
 } from "./forkExtensions.ts";
 
 const decodeSnapshot = Schema.decodeSync(ForkExtensionsSnapshot);
 const decodeInstallRequest = Schema.decodeUnknownSync(ForkInstallRequest);
 const decodeCapabilities = Schema.decodeSync(ExecutionEnvironmentCapabilities);
+const decodePastedSource = Schema.decodeUnknownSync(ForkPastedSource);
 
 describe("Fork Extensions contracts", () => {
   it("decodes a snapshot with a needsAttention cell and its problem", () => {
@@ -73,6 +75,18 @@ describe("Fork Extensions contracts", () => {
         source: "/tmp/x",
       }),
     ).toThrow();
+  });
+
+  it("decodes a pasted marketplace with its manifest name and requires it", () => {
+    expect(
+      decodePastedSource({
+        _tag: "marketplace",
+        source: "o/r",
+        name: "team-tools",
+        plugins: ["a"],
+      }),
+    ).toEqual({ _tag: "marketplace", source: "o/r", name: "team-tools", plugins: ["a"] });
+    expect(() => decodePastedSource({ _tag: "marketplace", source: "o/r", plugins: [] })).toThrow();
   });
 
   it("ExecutionEnvironmentCapabilities decodes without forkExtensions", () => {
