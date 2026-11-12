@@ -73,13 +73,16 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
   | typeof WS_METHODS.terminalAttach
-  | typeof WS_METHODS.terminalObserve;
+  | typeof WS_METHODS.terminalObserve
+  | typeof WS_METHODS.forkExtensionsCheckHealth;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
-  | typeof WS_METHODS.gitRunStackedAction;
+  | typeof WS_METHODS.gitRunStackedAction
+  // Fork: a one-shot login, client-guarded; resubscribing on reconnect would start another.
+  | typeof WS_METHODS.forkExtensionsAuthorize;
 
 export type EnvironmentStreamRpcTag =
   | EnvironmentSubscriptionRpcTag

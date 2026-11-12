@@ -74,6 +74,25 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets readers see extensions and keeps changing them behind provider management", () => {
+    for (const method of [
+      WS_METHODS.forkExtensionsSnapshot,
+      WS_METHODS.forkExtensionsCheckHealth,
+      WS_METHODS.forkExtensionsInspectSource,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.forkExtensionsInstall,
+      WS_METHODS.forkExtensionsUninstall,
+      WS_METHODS.forkExtensionsSetEnabled,
+      WS_METHODS.forkExtensionsAuthorize,
+      WS_METHODS.forkExtensionsAuthorizeComplete,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthProvidersManageScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

@@ -11,6 +11,7 @@ import {
   type ForkExtensionsSnapshot,
   type ForkInstallRequest,
   type ForkInstallResult,
+  type ForkPastedSource,
   type ForkSetEnabledInput,
   type ForkUninstallInput,
 } from "@t3tools/contracts";
@@ -27,6 +28,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { FetchHttpClient } from "effect/http";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
@@ -51,6 +53,7 @@ import {
   uninstallExtension,
   type MutationContext,
 } from "./mutations.ts";
+import { inspectPastedSource } from "./pasteSource.ts";
 import { readWithFingerprint, writeIfUnchanged } from "./safeFileEdit.ts";
 import {
   buildSnapshotItems,
@@ -74,6 +77,8 @@ export class ForkExtensions extends Context.Service<
      * share one run (single flight); the result is cached in memory and on disk.
      */
     readonly checkHealth: Stream.Stream<ForkHealthEvent, ForkExtensionsError>;
+    /** What a pasted text would install; a GitHub repo is looked up on GitHub. */
+    readonly inspectSource: (text: string) => Effect.Effect<ForkPastedSource, ForkExtensionsError>;
     /** Installs in each requested agent; one result per agent, never a failure as a whole. */
     readonly install: (
       request: ForkInstallRequest,
@@ -689,9 +694,13 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const inspectSource: ForkExtensions["Service"]["inspectSource"] = (text) =>
+    inspectPastedSource(text).pipe(Effect.provide(FetchHttpClient.layer));
+
   return ForkExtensions.of({
     snapshot,
     checkHealth,
+    inspectSource,
     install,
     uninstall,
     setEnabled,
@@ -701,5 +710,5 @@ export const make = Effect.gen(function* () {
   });
 });
 
-/** @public Wired into the server runtime by the Extensions RPC methods. */
+/** One per server (server.ts); the Extensions RPC methods in ws.ts call it. */
 export const layer = Layer.effect(ForkExtensions, make).pipe(Layer.provide(ProcessRunner.layer));

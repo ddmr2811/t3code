@@ -301,3 +301,14 @@ export const resolveGithubRepo = Effect.fn("ForkExtensions.resolveGithubRepo")(f
 }) satisfies (
   repo: GithubRepoRef,
 ) => Effect.Effect<ForkPastedSource, ForkExtensionsError, HttpClient.HttpClient>;
+
+/** What a pasted text installs; only a GitHub repo needs a look at its files. */
+export const inspectPastedSource = Effect.fn("ForkExtensions.inspectSource")(function* (
+  text: string,
+) {
+  const classified = classifyPastedText(text);
+  if (classified._tag !== "githubRepo") return classified;
+  return yield* resolveGithubRepo(classified);
+}) satisfies (
+  text: string,
+) => Effect.Effect<ForkPastedSource, ForkExtensionsError, HttpClient.HttpClient>;

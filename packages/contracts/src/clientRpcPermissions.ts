@@ -18,6 +18,12 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
+  // Fork: changing an agent's extensions changes what its provider can run.
+  [WS_METHODS.forkExtensionsInstall]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsUninstall]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsSetEnabled]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsAuthorize]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,

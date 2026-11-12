@@ -275,6 +275,7 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
@@ -1483,6 +1484,7 @@ export const layerWsRpc = (
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const forkExtensions = yield* ForkExtensions.ForkExtensions;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
@@ -3060,6 +3062,17 @@ export const layerWsRpc = (
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
         [WS_METHODS.agentSessionsImport]: (input) =>
           agentSessionImporter.importRecentAgentThreads(input),
+        // Fork: Extensions settings page.
+        [WS_METHODS.forkExtensionsSnapshot]: () => forkExtensions.snapshot,
+        [WS_METHODS.forkExtensionsCheckHealth]: () => forkExtensions.checkHealth,
+        [WS_METHODS.forkExtensionsInspectSource]: (input) =>
+          forkExtensions.inspectSource(input.text),
+        [WS_METHODS.forkExtensionsInstall]: (input) => forkExtensions.install(input),
+        [WS_METHODS.forkExtensionsUninstall]: (input) => forkExtensions.uninstall(input),
+        [WS_METHODS.forkExtensionsSetEnabled]: (input) => forkExtensions.setEnabled(input),
+        [WS_METHODS.forkExtensionsAuthorize]: (input) => forkExtensions.authorize(input),
+        [WS_METHODS.forkExtensionsAuthorizeComplete]: (input) =>
+          forkExtensions.authorizeComplete(input).pipe(Effect.as({})),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

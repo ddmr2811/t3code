@@ -4,7 +4,7 @@ import * as Fiber from "effect/Fiber";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 
-import { classifyPastedText, resolveGithubRepo } from "./pasteSource.ts";
+import { classifyPastedText, inspectPastedSource, resolveGithubRepo } from "./pasteSource.ts";
 
 const winExe = String.raw`C:\Program Files\x\server.exe`;
 const repo = (
@@ -246,6 +246,35 @@ describe("resolveGithubRepo", () => {
       expect(error.problem.reason).toBe("timeout");
       expect(error.problem.summary).toBe("GitHub didn't answer in time.");
       expect(error.problem.nextStep).toBe("Check your connection and try again.");
+    }),
+  );
+});
+
+describe("inspectPastedSource", () => {
+  const inspect = (text: string, client: HttpClient.HttpClient) =>
+    inspectPastedSource(text).pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+  it.effect("answers from the text alone when it is not a GitHub repo", () =>
+    Effect.gen(function* () {
+      const result = yield* inspect(
+        "https://mcp.notion.com/mcp",
+        HttpClient.make(() => Effect.die("GitHub must not be asked")),
+      );
+      expect(result).toEqual({
+        _tag: "mcpRemote",
+        url: "https://mcp.notion.com/mcp",
+        transport: "http",
+        suggestedName: "notion",
+      });
+    }),
+  );
+  it.effect("asks GitHub what a pasted repo holds", () =>
+    Effect.gen(function* () {
+      const result = yield* inspect(
+        "https://github.com/o/r",
+        clientFor({ ".claude-plugin/plugin.json": { name: "p" } }),
+      );
+      expect(result).toEqual({ _tag: "plugin", pluginRef: "o/r" });
     }),
   );
 });
