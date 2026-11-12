@@ -231,6 +231,39 @@ describe("ForkExtensionsSettings", () => {
     await expect.element(detail.getByText("spawn npx ENOENT")).toBeVisible();
   });
 
+  it("lists a project Claude never opened with its switch disabled", async () => {
+    setup([
+      machine(PC, "This PC", {
+        snapshot: snapshot([
+          mcp("playwright", [
+            cell("claude", {
+              projects: [
+                { path: "E:/repo", title: "repo", disabled: false },
+                { path: "D:\new\site", title: "Site", disabled: false, unopened: true },
+              ],
+            }),
+          ]),
+        ]),
+      }),
+    ]);
+    await using _screen = await render(<ForkExtensionsSettings />);
+    await page.getByRole("button", { name: "playwright", exact: true }).click();
+    const detail = page.getByRole("region", { name: "playwright details" });
+    await expect
+      .element(detail.getByRole("switch", { name: "repo on This PC · Claude" }))
+      .toBeEnabled();
+    await expect
+      .element(detail.getByRole("switch", { name: "Site on This PC · Claude" }))
+      .toBeDisabled();
+    await expect
+      .element(
+        detail.getByText(
+          "Claude Code has no settings for this project yet. Open it in Claude Code once.",
+        ),
+      )
+      .toBeVisible();
+  });
+
   it("uninstalls with one call per machine after confirming", async () => {
     setup();
     state.results.set(forkExtensionsUninstall.label, [

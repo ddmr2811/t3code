@@ -188,6 +188,67 @@ describe("buildSnapshotItems", () => {
     });
   });
 
+  it("offers a per-project switch in every T3 project for user, connector and plugin servers", () => {
+    const items = buildSnapshotItems(
+      baseInput({
+        claudePlugins: [
+          {
+            id: "github@claude-plugins-official",
+            enabled: true,
+            scope: "user",
+            installPath: "C:/Users/me/.claude/plugins/cache/claude-plugins-official/github/1",
+            mcpServers: { github: { type: "http", url: "https://api.githubcopilot.com/mcp/" } },
+          },
+        ],
+        projects: [
+          { path: "C:\\work\\app", title: "App" },
+          { path: "D:\\new\\site", title: "Site" },
+        ],
+      }),
+    );
+    const unopened = {
+      path: "D:\\new\\site",
+      title: "Site",
+      disabled: false,
+      unopened: true,
+    };
+    // The exact ~/.claude.json key where Claude has one; a project it never opened is listed,
+    // marked, and keeps its T3 path (no key is ever invented).
+    expect(cell(find(items, "mcp:context7"), "claude").projects).toEqual([
+      { path: "C:/work/app", title: "App", disabled: true },
+      unopened,
+    ]);
+    expect(cell(find(items, "mcp:claude.ai Supabase"), "claude").projects).toEqual([
+      { path: "C:/work/app", title: "App", disabled: false },
+      unopened,
+    ]);
+    expect(cell(find(items, "mcp:plugin:github:github"), "claude").projects).toEqual([
+      { path: "C:/work/app", title: "App", disabled: false },
+      unopened,
+    ]);
+    // A server defined only in one project lists just that project.
+    expect(cell(find(items, "mcp:local-db"), "claude").projects).toEqual([
+      { path: "C:/work/app", title: "App", disabled: false },
+    ]);
+    // Codex has no per-project switches.
+    expect(cell(find(items, "mcp:context7"), "codex").projects).toEqual([]);
+    expect(decodeItems(items)).toEqual(items);
+  });
+
+  it("marks a repo's .mcp.json server in a project Claude never opened", () => {
+    const items = buildSnapshotItems(
+      baseInput({
+        claudeProjectMcp: [
+          { path: "D:\\new\\site", servers: { github: { type: "http", url: "https://gh/mcp" } } },
+        ],
+        projects: [{ path: "D:\\new\\site", title: "Site" }],
+      }),
+    );
+    expect(cell(find(items, "mcp:github"), "claude").projects).toEqual([
+      { path: "D:\\new\\site", title: "Site", disabled: false, unopened: true },
+    ]);
+  });
+
   it("shows a plugin with a not-applicable Codex cell", () => {
     const item = find(
       buildSnapshotItems(baseInput()),

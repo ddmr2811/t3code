@@ -141,11 +141,14 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
   );
   const projectToggle = (projectPath: string, serverName: string): ForkProjectToggle => {
     const key = comparablePath(projectPath);
-    const path = claudeKeyByPath.get(key) ?? projectPath;
+    const claudeKey = claudeKeyByPath.get(key);
+    const path = claudeKey ?? projectPath;
     return {
       path,
       title: titleByPath.get(key) ?? path.split(/[\\/]/).findLast((part) => part !== "") ?? path,
       disabled: disabledByProject.get(key)?.has(serverName) ?? false,
+      // No key is ever invented: the switch waits until Claude has opened the project.
+      ...(claudeKey === undefined ? { unopened: true } : {}),
     };
   };
 
@@ -330,11 +333,19 @@ export const buildSnapshotItems = (input: SnapshotModelInput): ReadonlyArray<For
     install(draft, agent, isClaudeAi ? "claudeAi" : "plugin", true);
   }
 
-  // Per-project "off" switches for servers that are not defined per project.
+  // Per-project "off" switches for servers that are not defined per project. User, connector
+  // and plugin servers reach every project, so every T3 project gets one (spec §6.4, §7.3).
   for (const draft of drafts.values()) {
     if (draft.kind !== "mcp") continue;
     const cell = draft.cells.get("claude");
     if (cell === undefined) continue;
+    if (cell.scopes.has("user") || cell.scopes.has("claudeAi") || cell.scopes.has("plugin")) {
+      for (const project of input.projects) {
+        const key = comparablePath(project.path);
+        if (!cell.projects.has(key))
+          cell.projects.set(key, projectToggle(project.path, draft.name));
+      }
+    }
     for (const project of claudeProjects) {
       if (!project.disabled.includes(draft.name)) continue;
       const key = comparablePath(project.path);

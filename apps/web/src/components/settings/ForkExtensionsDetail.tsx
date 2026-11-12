@@ -418,6 +418,9 @@ function UninstallButton({
   );
 }
 
+const UNOPENED_PROJECT_REASON =
+  "Claude Code has no settings for this project yet. Open it in Claude Code once.";
+
 /** A switch's requested value, shown until the snapshot that answers it replaces `cell`. */
 interface ProjectToggleRequest {
   readonly enabled: boolean;
@@ -510,20 +513,27 @@ export function ForkPerProjectSection({
                     ? request.enabled
                     : !project.disabled;
                 const name = project.title || project.path;
+                // Claude has no `~/.claude.json` entry for it yet, and T3 never invents one.
+                const unopened = project.unopened === true;
                 return (
-                  <li key={project.path} className="flex min-w-0 items-center gap-2">
-                    <Switch
-                      size="sm"
-                      aria-label={`${name} on ${place}`}
-                      checked={checked}
-                      disabled={blockedReason !== null || pending.has(key)}
-                      onCheckedChange={(next) => void toggle(column, cell, project, next)}
-                    />
-                    <span className="min-w-0 truncate text-foreground">{name}</span>
-                    {project.title && project.title !== project.path ? (
-                      <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
-                        {project.path}
-                      </span>
+                  <li key={project.path} className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Switch
+                        size="sm"
+                        aria-label={`${name} on ${place}`}
+                        checked={checked}
+                        disabled={blockedReason !== null || unopened || pending.has(key)}
+                        onCheckedChange={(next) => void toggle(column, cell, project, next)}
+                      />
+                      <span className="min-w-0 truncate text-foreground">{name}</span>
+                      {project.title && project.title !== project.path ? (
+                        <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
+                          {project.path}
+                        </span>
+                      ) : null}
+                    </div>
+                    {unopened ? (
+                      <p className="pl-9 text-muted-foreground">{UNOPENED_PROJECT_REASON}</p>
                     ) : null}
                   </li>
                 );

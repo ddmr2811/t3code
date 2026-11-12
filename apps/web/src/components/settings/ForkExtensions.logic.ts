@@ -514,16 +514,13 @@ export function forkProjectToggleGroups(
     const cell = row.cells[index];
     if (column.agent !== "claude" || cell === undefined || !isSnapshotCell(cell)) return [];
     if (cell.projects.length === 0) return [];
-    const item = row.itemsByMachine.get(column.environmentId) ?? row.item;
+    // A plugin's server is read-only only for its main switch: Claude's per-project list
+    // (`disabledMcpServers`) takes it like any other server.
     const blockedReason = !column.canOperate
       ? readOnlyMachineReason(column)
-      : item.readOnly
-        ? item.pluginId === null
-          ? "This one can't be changed from here."
-          : `Comes with the ${item.pluginId} plugin. Turn the plugin on or off instead.`
-        : cell.state === "disabled"
-          ? "Turned off in every project on this machine. Turn it on first."
-          : null;
+      : cell.state === "disabled"
+        ? "Turned off in every project on this machine. Turn it on first."
+        : null;
     return [{ column, cell, blockedReason }];
   });
 }

@@ -60,6 +60,11 @@ export const ForkProjectToggle = Schema.Struct({
   path: TrimmedNonEmptyString,
   title: Schema.String,
   disabled: Schema.Boolean,
+  /**
+   * A T3 project Claude Code has no `~/.claude.json` entry for yet: `path` is the T3 path and
+   * the switch can't be used until Claude has opened it once.
+   */
+  unopened: Schema.optional(Schema.Boolean),
 });
 export type ForkProjectToggle = typeof ForkProjectToggle.Type;
 

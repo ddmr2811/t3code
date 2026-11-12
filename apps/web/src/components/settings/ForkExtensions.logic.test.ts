@@ -665,4 +665,24 @@ describe("authorize and per-project helpers", () => {
     ]);
     expect(groups("mcp:plain")).toEqual([]);
   });
+
+  it("lets a plugin's server be switched per project, though its main switch is the plugin's", () => {
+    const projects = [{ path: "E:/repo", title: "repo", disabled: false }];
+    const fromPlugin: ForkExtensionItem = {
+      ...mcp("plugin:github:github", [cell("claude", { scopes: ["plugin"], projects })]),
+      transport: "plugin",
+      readOnly: true,
+      pluginId: "github@official",
+    };
+    const { columns, rows } = buildMatrix(
+      [machine(PC, "This PC", { snapshot: snapshot([fromPlugin]) })],
+      "mcp",
+    );
+    expect(
+      forkProjectToggleGroups(rows[0]!, columns).map((group) => [
+        group.column.key,
+        group.blockedReason,
+      ]),
+    ).toEqual([[`${PC}:claude`, null]]);
+  });
 });
