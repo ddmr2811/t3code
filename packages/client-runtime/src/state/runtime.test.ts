@@ -1587,6 +1587,7 @@ describe("persisted environment queries", () => {
 describe("takeUntilAborted", () => {
   it.effect("ends the stream and interrupts its source when the signal aborts", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The test aborts the signal itself, as the dialog's Cancel does.
       const controller = new AbortController();
       const waiting = yield* Deferred.make<void>();
       const interrupted = yield* Deferred.make<void>();
@@ -1616,6 +1617,7 @@ describe("takeUntilAborted", () => {
 
   it.effect("ends at once for a signal that is already aborted, and leaves others alone", () =>
     Effect.gen(function* () {
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The test aborts the signal itself, as the dialog's Cancel does.
       const aborted = new AbortController();
       aborted.abort();
       expect(yield* Stream.runCollect(Stream.never.pipe(takeUntilAborted(aborted.signal)))).toEqual(
