@@ -5,35 +5,59 @@ import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 /** The widget's layout at scale 1, in CSS pixels: its width, its fixed parts, and one machine row. */
 const NATURAL_WIDTH = 620;
 const NATURAL_CHROME_HEIGHT = 60;
-/** A machine's figures plus the line with its processes. */
-const NATURAL_ROW_HEIGHT = 58;
+const NATURAL_ROW_HEIGHT = 38;
+/** A machine's opened details: its figures, the split by group and its heaviest processes. */
+const NATURAL_DETAILS_HEIGHT = 262;
 const MIN_SCALE = 0.6;
 const MAX_SCALE = 3;
 
 const FORK_WIDGET_MIN_SIZE = { width: 240, height: 110 };
 
-/** The window opens at this size until the user resizes it. */
+/** How many processes a machine's details list. */
+export const FORK_WIDGET_PROCESS_COUNT = 10;
+
+/** The window opens at this size until the user resizes it: every machine with its details. */
 export function forkWidgetDefaultSize(machineCount: number): { width: number; height: number } {
   return {
     width: NATURAL_WIDTH,
-    height: NATURAL_CHROME_HEIGHT + NATURAL_ROW_HEIGHT * Math.max(2, machineCount),
+    height:
+      NATURAL_CHROME_HEIGHT +
+      (NATURAL_ROW_HEIGHT + NATURAL_DETAILS_HEIGHT) * Math.max(2, machineCount),
   };
 }
 
 /**
  * How much to magnify the widget so its content fills the window: the largest scale at which
- * every machine row still fits both ways.
+ * every machine row, with the details that are open, still fits both ways. Open details never
+ * shrink the widget below its natural size: past that point they scroll instead.
  */
 export function forkWidgetScale(input: {
   readonly width: number;
   readonly height: number;
   readonly machineCount: number;
+  /** Machines whose details are open. */
+  readonly detailCount?: number;
 }): number {
-  const naturalHeight =
-    NATURAL_CHROME_HEIGHT + NATURAL_ROW_HEIGHT * Math.max(1, input.machineCount);
-  const fit = Math.min(input.width / NATURAL_WIDTH, input.height / naturalHeight);
+  const rowsHeight = NATURAL_CHROME_HEIGHT + NATURAL_ROW_HEIGHT * Math.max(1, input.machineCount);
+  const widthFit = input.width / NATURAL_WIDTH;
+  const rowsFit = Math.min(widthFit, input.height / rowsHeight);
+  const everythingFit = Math.min(
+    widthFit,
+    input.height / (rowsHeight + NATURAL_DETAILS_HEIGHT * (input.detailCount ?? 0)),
+  );
+  const fit = Math.max(everythingFit, Math.min(1, rowsFit));
   if (!Number.isFinite(fit) || fit <= 0) return 1;
   return Math.round(Math.min(MAX_SCALE, Math.max(MIN_SCALE, fit)) * 100) / 100;
+}
+
+/** The machines whose details the user closed; anything malformed means none. */
+export function parseForkWidgetCollapsed(raw: string | null): ReadonlyArray<string> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface ForkWidgetBounds {
@@ -101,7 +125,14 @@ export function cpuSparklinePath(
 
 type ProcessInput = Pick<
   ResourceTelemetryProcess,
-  "identity" | "name" | "command" | "category" | "cpuPercent" | "residentBytes"
+  | "identity"
+  | "name"
+  | "command"
+  | "category"
+  | "cpuPercent"
+  | "residentBytes"
+  | "ioReadBytesPerSecond"
+  | "ioWriteBytesPerSecond"
 >;
 
 export interface ForkWidgetProcess {
@@ -110,29 +141,34 @@ export interface ForkWidgetProcess {
   /** Per core, as the monitor reports it: 100 is one core kept busy. */
   readonly cpuPercent: number;
   readonly residentBytes: number;
+  readonly readBytesPerSecond: number;
+  readonly writeBytesPerSecond: number;
 }
 
+/** The app's own processes all carry the app's name, which tells them apart from nothing. */
+const CATEGORY_NAMES: Partial<Record<ProcessInput["category"], string>> = {
+  server: "T3 server",
+  "electron-main": "App",
+  "electron-renderer": "App window",
+  "electron-gpu": "App graphics",
+  "electron-utility": "App helper",
+  "resource-monitor": "Resource monitor",
+};
+
 function processName(process: Pick<ProcessInput, "name" | "command" | "category">): string {
-  // The server runs inside the desktop app's own executable, whose name says nothing here.
-  if (process.category === "server") return "T3 server";
+  const byCategory = CATEGORY_NAMES[process.category];
+  if (byCategory !== undefined) return byCategory;
   const first = (process.command.trim().split(/\s+/)[0] ?? "").replace(/^['"]|['"]$/g, "");
   const fromCommand = first.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? first;
   return (process.name.trim() || fromCommand || "process").replace(/\.exe$/i, "");
 }
 
-/**
- * The server-side processes that weigh most on a machine: its agents, their tools and the
- * server. The desktop app's own processes are left out, as in the widget's Agents figures.
- */
+/** The T3 Code processes that weigh most on a machine: busiest first, then largest. */
 export function forkWidgetTopProcesses(
   processes: ReadonlyArray<ProcessInput>,
   count: number,
 ): ReadonlyArray<ForkWidgetProcess> {
   return processes
-    .filter(
-      (process) =>
-        !process.category.startsWith("electron-") && process.category !== "resource-monitor",
-    )
     .toSorted(
       (left, right) =>
         right.cpuPercent - left.cpuPercent || right.residentBytes - left.residentBytes,
@@ -143,6 +179,8 @@ export function forkWidgetTopProcesses(
       name: processName(process),
       cpuPercent: process.cpuPercent,
       residentBytes: process.residentBytes,
+      readBytesPerSecond: process.ioReadBytesPerSecond,
+      writeBytesPerSecond: process.ioWriteBytesPerSecond,
     }));
 }
 

@@ -14,10 +14,11 @@ import {
   type EnvironmentId,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
+  type ResourceTelemetrySnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { AppWindowIcon, ChevronDownIcon, XIcon } from "lucide-react";
+import { AppWindowIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
@@ -40,12 +41,14 @@ import { useAtomCommand } from "../state/use-atom-command";
 import {
   appendCpuSample,
   cpuSparklinePath,
+  FORK_WIDGET_PROCESS_COUNT,
   type ForkWidgetBounds,
   forkWaitingReason,
   forkWidgetDefaultSize,
   forkWidgetScale,
   forkWidgetTopProcesses,
   parseForkWidgetBounds,
+  parseForkWidgetCollapsed,
 } from "./ForkResourceWidget.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { isWorkCompletedThread } from "./sidebar/forkInbox";
@@ -59,6 +62,7 @@ const POSITION_SAVE_MS = 1_000;
 const POSITION_SETTLE_MS = 700;
 const ENABLED_KEY = "t3code:fork:resource-widget-enabled";
 const AUTOSTART_KEY = "t3code:fork:autostart";
+const COLLAPSED_KEY = "t3code:fork:resource-widget-collapsed";
 
 interface ForkBridge {
   readonly showMain: () => void;
@@ -122,6 +126,32 @@ export function setForkAutostart(enabled: boolean) {
 
 const listeners = new Set<() => void>();
 let widgetWindow: Window | null = null;
+
+/** The machines whose details are closed, as stored; read once, then kept here. */
+let collapsedMachines: string | null = null;
+
+function collapsedMachinesSnapshot(): string {
+  if (collapsedMachines === null) {
+    try {
+      collapsedMachines = localStorage.getItem(COLLAPSED_KEY) ?? "[]";
+    } catch {
+      collapsedMachines = "[]";
+    }
+  }
+  return collapsedMachines;
+}
+
+function toggleMachineDetails(environmentId: string) {
+  const closed = new Set(parseForkWidgetCollapsed(collapsedMachinesSnapshot()));
+  if (!closed.delete(environmentId)) closed.add(environmentId);
+  collapsedMachines = JSON.stringify([...closed]);
+  try {
+    localStorage.setItem(COLLAPSED_KEY, collapsedMachines);
+  } catch {
+    // Without storage the choice lasts until the app closes.
+  }
+  for (const listener of listeners) listener();
+}
 
 function setWidgetWindow(next: Window | null) {
   if (widgetWindow === next) return;
@@ -282,7 +312,6 @@ function shareTone(share: number | null): string {
 }
 
 const CHART = { width: 56, height: 16 };
-const TOP_PROCESSES = 3;
 const NO_SAMPLES: ReadonlyArray<number> = [];
 const NO_THREADS: ReadonlyArray<EnvironmentThreadShell> = [];
 
@@ -525,11 +554,99 @@ function WaitingPanel({ threads }: { readonly threads: ReadonlyArray<Environment
   );
 }
 
+function Figure({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div className="flex min-w-0 flex-col rounded-sm bg-background/50 px-2 py-1">
+      <span className="truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
+        {label}
+      </span>
+      <span className="truncate font-mono text-xs font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+const rate = (bytesPerSecond: number) => `${formatBytes(Math.max(0, bytesPerSecond))}/s`;
+
+/**
+ * What Settings > Diagnostics shows for a machine, cut down to what reads at a glance: T3 Code's
+ * footprint, how it splits between agents and app, and the processes that weigh most.
+ */
+function MachineDetails(props: {
+  readonly snapshot: ResourceTelemetrySnapshot;
+  readonly machineCpu: string;
+  readonly cores: number | null;
+  /** A per-core CPU figure as a share of the whole machine, already formatted. */
+  readonly share: (cpuPercent: number) => string;
+}) {
+  const { snapshot, share } = props;
+  const all = snapshot.groups.allT3;
+  const groups = [
+    { label: "Agents + server", aggregate: snapshot.groups.backend },
+    { label: "App", aggregate: snapshot.groups.electron },
+    { label: "Monitor", aggregate: snapshot.groups.monitor },
+  ].filter((group) => group.aggregate.processCount > 0);
+  const processes = forkWidgetTopProcesses(snapshot.processes, FORK_WIDGET_PROCESS_COUNT);
+  const heading =
+    "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
+  const figure = "truncate text-end font-mono";
+
+  return (
+    <div className="col-span-full flex flex-col gap-1.5 border-border/60 border-t pt-1.5">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-1.5">
+        <Figure label="T3 CPU" value={share(all.currentCpuPercent)} />
+        <Figure label="T3 memory" value={formatBytes(all.currentRssBytes)} />
+        <Figure label="Processes" value={String(all.processCount)} />
+        <Figure label="Read" value={rate(all.ioReadBytesPerSecond)} />
+        <Figure label="Write" value={rate(all.ioWriteBytesPerSecond)} />
+        <Figure label="Machine" value={props.machineCpu} />
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-0.5 text-2xs text-muted-foreground tabular-nums">
+        {groups.map((group) => (
+          <span key={group.label}>
+            <span className="text-foreground/80">
+              {group.label} ({group.aggregate.processCount})
+            </span>{" "}
+            {share(group.aggregate.currentCpuPercent)} ·{" "}
+            {formatBytes(group.aggregate.currentRssBytes)}
+          </span>
+        ))}
+        {props.cores !== null ? <span className="ms-auto">{props.cores} cores</span> : null}
+      </div>
+      <div
+        role="list"
+        aria-label="Heaviest processes"
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] gap-x-3 px-0.5 text-2xs tabular-nums"
+      >
+        <span className={heading}>Process</span>
+        <span className={cn(heading, "text-end")}>CPU</span>
+        <span className={cn(heading, "text-end")}>Memory</span>
+        <span className={cn(heading, "text-end")}>Read</span>
+        <span className={cn(heading, "text-end")}>Write</span>
+        {processes.map((process) => (
+          <div key={process.pid} role="listitem" className="contents">
+            <span className="truncate">{process.name}</span>
+            <span className={figure}>{share(process.cpuPercent)}</span>
+            <span className={figure}>{formatBytes(process.residentBytes)}</span>
+            <span className={cn(figure, "text-muted-foreground")}>
+              {rate(process.readBytesPerSecond)}
+            </span>
+            <span className={cn(figure, "text-muted-foreground")}>
+              {rate(process.writeBytesPerSecond)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MachineRow(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly workingThreads: number;
   readonly waitingThreads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly detailsOpen: boolean;
+  readonly onToggleDetails: () => void;
 }) {
   const { environmentId } = props;
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -566,12 +683,14 @@ function MachineRow(props: {
   const stale = resources !== null && nowMs - host.dataUpdatedAt > STALE_MS + 60_000;
   const cell = "truncate text-end font-mono font-semibold tabular-nums";
   const percent = (share: number | null) => (share === null ? "…" : `${Math.round(share * 100)}%`);
+  // One process is a sliver of a many-core machine, so small shares keep a decimal.
+  const finePercent = (share: number | null) =>
+    share === null ? "…" : `${(share * 100).toFixed(share < 0.1 ? 1 : 0)}%`;
   const cpuChart = cpuSparklinePath(
     recordCpuSample(environmentId, cpuShare, host.dataUpdatedAt),
     CHART.width,
     CHART.height,
   );
-  const processes = snapshot ? forkWidgetTopProcesses(snapshot.processes, TOP_PROCESSES) : [];
   const waitingCount = props.waitingThreads.length;
 
   return (
@@ -582,7 +701,21 @@ function MachineRow(props: {
         stale && "opacity-50",
       )}
     >
-      <span className="truncate font-medium">{props.label}</span>
+      <button
+        type="button"
+        aria-expanded={props.detailsOpen}
+        aria-label={`${props.label} details`}
+        onClick={props.onToggleDetails}
+        className="flex min-w-0 cursor-pointer items-center gap-1 text-start font-medium"
+      >
+        <ChevronRightIcon
+          className={cn(
+            "size-3 shrink-0 text-muted-foreground transition-transform",
+            props.detailsOpen && "rotate-90",
+          )}
+        />
+        <span className="truncate">{props.label}</span>
+      </button>
       {unreachable ? (
         <span className="col-span-4 truncate text-end text-muted-foreground text-xs">
           {host.error ?? "No data"}
@@ -638,19 +771,15 @@ function MachineRow(props: {
       ) : (
         <span className={cn(cell, "text-muted-foreground")}>0</span>
       )}
-      {agents ? (
-        <div className="col-span-full truncate text-2xs text-muted-foreground tabular-nums">
-          {agents.processCount} {agents.processCount === 1 ? "process" : "processes"}
-          {processes.map((process) => (
-            <span key={process.pid}>
-              {" · "}
-              <span className="text-foreground/80">{process.name}</span>{" "}
-              {percent(machineShare(process.cpuPercent))} {formatBytes(process.residentBytes)}
-            </span>
-          ))}
-        </div>
-      ) : null}
       {waitingOpen && waitingCount > 0 ? <WaitingPanel threads={props.waitingThreads} /> : null}
+      {props.detailsOpen && snapshot ? (
+        <MachineDetails
+          snapshot={snapshot}
+          machineCpu={percent(cpuShare)}
+          cores={resources ? resources.cpuCount : null}
+          share={(cpuPercent) => finePercent(machineShare(cpuPercent))}
+        />
+      ) : null}
     </div>
   );
 }
@@ -672,7 +801,14 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
   const environments = useEnvironmentIdentities();
   const viewport = useWidgetViewport(popup);
   // The content is magnified to fill the window, so a bigger window reads from further away.
-  const scale = forkWidgetScale({ ...viewport, machineCount: environments.length });
+  const collapsed = new Set(
+    parseForkWidgetCollapsed(useSyncExternalStore(subscribe, collapsedMachinesSnapshot)),
+  );
+  const scale = forkWidgetScale({
+    ...viewport,
+    machineCount: environments.length,
+    detailCount: environments.filter((machine) => !collapsed.has(machine.environmentId)).length,
+  });
   const threads = useVisibleThreadShells();
   const working = new Map<string, number>();
   const waiting = new Map<string, EnvironmentThreadShell[]>();
@@ -744,6 +880,8 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
             label={environment.label}
             workingThreads={working.get(environment.environmentId) ?? 0}
             waitingThreads={waiting.get(environment.environmentId) ?? NO_THREADS}
+            detailsOpen={!collapsed.has(environment.environmentId)}
+            onToggleDetails={() => toggleMachineDetails(environment.environmentId)}
           />
         ))}
       </div>

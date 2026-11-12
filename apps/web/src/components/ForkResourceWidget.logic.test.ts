@@ -9,28 +9,30 @@ import {
   forkWidgetScale,
   forkWidgetTopProcesses,
   parseForkWidgetBounds,
+  parseForkWidgetCollapsed,
 } from "./ForkResourceWidget.logic";
 
 describe("forkWidgetScale", () => {
-  const natural = forkWidgetDefaultSize(2);
+  // Two machines with their details closed, at natural size.
+  const rows = { width: 620, height: 136 };
 
-  it("leaves the default window at its natural size", () => {
-    expect(forkWidgetScale({ ...natural, machineCount: 2 })).toBe(1);
+  it("leaves the rows at their natural size in a window that just holds them", () => {
+    expect(forkWidgetScale({ ...rows, machineCount: 2 })).toBe(1);
   });
 
   it("grows the content with the window", () => {
     expect(
-      forkWidgetScale({ width: natural.width * 2, height: natural.height * 2, machineCount: 2 }),
+      forkWidgetScale({ width: rows.width * 2, height: rows.height * 2, machineCount: 2 }),
     ).toBe(2);
   });
 
   it("is held back by whichever side has less room", () => {
-    expect(forkWidgetScale({ width: 4000, height: natural.height, machineCount: 2 })).toBe(1);
-    expect(forkWidgetScale({ width: natural.width, height: 4000, machineCount: 2 })).toBe(1);
+    expect(forkWidgetScale({ width: 4000, height: rows.height, machineCount: 2 })).toBe(1);
+    expect(forkWidgetScale({ width: rows.width, height: 4000, machineCount: 2 })).toBe(1);
   });
 
   it("shrinks so that more machines still fit", () => {
-    expect(forkWidgetScale({ ...natural, machineCount: 4 })).toBeLessThan(1);
+    expect(forkWidgetScale({ ...rows, machineCount: 4 })).toBeLessThan(1);
   });
 
   it("stays within sane limits", () => {
@@ -38,12 +40,50 @@ describe("forkWidgetScale", () => {
     expect(forkWidgetScale({ width: 9000, height: 9000, machineCount: 1 })).toBe(3);
     expect(forkWidgetScale({ width: 0, height: 0, machineCount: 0 })).toBe(1);
   });
+
+  it("fits open details when the window has room for them", () => {
+    const open = forkWidgetDefaultSize(2);
+    expect(forkWidgetScale({ ...open, machineCount: 2, detailCount: 2 })).toBe(1);
+    expect(
+      forkWidgetScale({
+        width: open.width * 2,
+        height: open.height * 2,
+        machineCount: 2,
+        detailCount: 2,
+      }),
+    ).toBe(2);
+  });
+
+  it("lets open details scroll rather than shrink the widget below natural size", () => {
+    expect(forkWidgetScale({ width: 980, height: 430, machineCount: 2, detailCount: 2 })).toBe(1);
+  });
+
+  it("still shrinks when the rows themselves do not fit", () => {
+    expect(
+      forkWidgetScale({ width: 400, height: 136, machineCount: 2, detailCount: 2 }),
+    ).toBeLessThan(1);
+  });
 });
 
 describe("forkWidgetDefaultSize", () => {
-  it("makes room for every machine", () => {
+  it("makes room for every machine and its details", () => {
     expect(forkWidgetDefaultSize(5).height).toBeGreaterThan(forkWidgetDefaultSize(2).height);
-    expect(forkWidgetScale({ ...forkWidgetDefaultSize(5), machineCount: 5 })).toBe(1);
+    expect(forkWidgetScale({ ...forkWidgetDefaultSize(5), machineCount: 5, detailCount: 5 })).toBe(
+      1,
+    );
+  });
+});
+
+describe("parseForkWidgetCollapsed", () => {
+  it("reads the machines whose details were closed", () => {
+    expect(parseForkWidgetCollapsed('["a","b"]')).toEqual(["a", "b"]);
+  });
+
+  it("treats anything malformed as none closed", () => {
+    expect(parseForkWidgetCollapsed(null)).toEqual([]);
+    expect(parseForkWidgetCollapsed("{")).toEqual([]);
+    expect(parseForkWidgetCollapsed('{"a":1}')).toEqual([]);
+    expect(parseForkWidgetCollapsed('["a",3,null]')).toEqual(["a"]);
   });
 });
 
@@ -122,32 +162,47 @@ describe("forkWidgetTopProcesses", () => {
     category,
     cpuPercent,
     residentBytes,
+    ioReadBytesPerSecond: pid * 10,
+    ioWriteBytesPerSecond: pid * 100,
   });
 
-  it("lists the heaviest server-side processes first", () => {
+  it("lists the busiest processes first, then the largest", () => {
     const top = forkWidgetTopProcesses(
       [
-        process(1, "node.exe", "server", 2, 300),
+        process(1, "bash", "terminal-root", 0, 10),
         process(2, "claude.exe", "provider-root", 40, 900),
         process(3, "pytest", "server-child", 2, 500),
-        process(4, "bash", "terminal-root", 0, 10),
+        process(4, "node.exe", "server-child", 2, 300),
       ],
       3,
     );
-    expect(top.map((entry) => entry.name)).toEqual(["claude", "pytest", "T3 server"]);
-    expect(top[0]).toMatchObject({ pid: 2, cpuPercent: 40, residentBytes: 900 });
+    expect(top.map((entry) => entry.name)).toEqual(["claude", "pytest", "node"]);
+    expect(top[0]).toEqual({
+      pid: 2,
+      name: "claude",
+      cpuPercent: 40,
+      residentBytes: 900,
+      readBytesPerSecond: 20,
+      writeBytesPerSecond: 200,
+    });
   });
 
-  it("leaves out the desktop app and the monitor", () => {
+  it("names the app's own processes by what they are", () => {
     const top = forkWidgetTopProcesses(
       [
-        process(1, "T3 Code", "electron-renderer", 90, 900),
-        process(2, "t3-resource-monitor", "resource-monitor", 50, 900),
-        process(3, "node", "server", 1, 100),
+        process(1, "T3 Code Fork (Beta).exe", "server", 5, 1),
+        process(2, "T3 Code Fork (Beta).exe", "electron-renderer", 4, 1),
+        process(3, "T3 Code Fork (Beta).exe", "electron-main", 3, 1),
+        process(4, "t3-resource-monitor.exe", "resource-monitor", 2, 1),
       ],
-      3,
+      10,
     );
-    expect(top.map((entry) => entry.pid)).toEqual([3]);
+    expect(top.map((entry) => entry.name)).toEqual([
+      "T3 server",
+      "App window",
+      "App",
+      "Resource monitor",
+    ]);
   });
 
   it("names a process by its command when it has no name", () => {
