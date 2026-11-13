@@ -87,6 +87,7 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { MarkdownBlockEditor } from "./MarkdownBlockEditor";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -116,11 +117,9 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
-  getOptimisticProjectFileQueryData,
   getProjectFileContents,
   getProjectFileQueryAtom,
   setProjectFileQueryData,
@@ -949,29 +948,44 @@ function RenderedMarkdownSurface({
 }) {
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
+  // Echoed edits keep the editor mounted; a change from outside remounts it on the new text.
+  const [editorSource, setEditorSource] = useState({ contents, revision: 0 });
+  const [seenContents, setSeenContents] = useState(contents);
+  const [editedContents, setEditedContents] = useState<string | null>(null);
+  if (contents !== seenContents) {
+    setSeenContents(contents);
+    if (contents !== (editedContents ?? editorSource.contents)) {
+      setEditorSource({ contents, revision: editorSource.revision + 1 });
+      setEditedContents(null);
+    }
+  }
+  const renderMarkdown = (text: string, className?: string) => (
+    <FileMarkdownPreview
+      text={text}
+      cwd={cwd}
+      relativePath={relativePath}
+      threadRef={threadRef}
+      workspaceMutationId={workspaceMutationId}
+      {...(className === undefined ? {} : { className })}
+    />
+  );
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        workspaceMutationId={workspaceMutationId}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                changeFileSaveSession(saveTarget, nextContents);
-              }
-        }
-      />
+      {readOnly ? (
+        renderMarkdown(contents)
+      ) : (
+        <MarkdownBlockEditor
+          key={editorSource.revision}
+          markdown={editorSource.contents}
+          renderRawBlock={(source) => renderMarkdown(source, "")}
+          onChange={(nextContents) => {
+            setEditedContents(nextContents);
+            setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+            changeFileSaveSession(saveTarget, nextContents);
+          }}
+        />
+      )}
     </ScrollArea>
   );
 }
@@ -1087,7 +1101,7 @@ export default function FilePreviewPanel({
   });
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    false,
+    true,
     Schema.Boolean,
   );
   const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(

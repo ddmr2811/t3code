@@ -10,9 +10,7 @@ export function FileMarkdownPreview(props: {
   readonly text: string;
   readonly threadRef: ScopedThreadRef;
   readonly workspaceMutationId: string | null;
-  readonly onTaskListChange?:
-    | ((input: { readonly markerOffset: number; readonly checked: boolean }) => void)
-    | undefined;
+  readonly className?: string;
 }) {
   const lastSeparator = Math.max(
     props.relativePath.lastIndexOf("/"),
@@ -30,8 +28,7 @@ export function FileMarkdownPreview(props: {
       imageBaseDir={imageBaseDir}
       threadRef={props.threadRef}
       workspaceMutationId={props.workspaceMutationId}
-      className="mx-auto max-w-4xl px-6 py-5"
-      onTaskListChange={props.onTaskListChange}
+      className={props.className ?? "mx-auto max-w-4xl px-6 py-5"}
     />
   );
 }

@@ -423,3 +423,12 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Markdown files in the file viewer
+
+On web and desktop, workspace Markdown files open rendered, and you can edit them in place as
+blocks. Type `/` at the start of an empty line to turn it into a heading, list, to-do, code
+block, quote, or divider; Markdown shortcuts such as `# `, `- `, `[ ] ` and ` ``` ` work too.
+Edits save to the file automatically, and only the blocks you change are rewritten. Tables,
+images, and HTML show rendered but are edited from source view, which the eye/code toggle in
+the file header switches to. Connections without write access show the rendered file only.

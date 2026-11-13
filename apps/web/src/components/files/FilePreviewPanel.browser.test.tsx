@@ -159,4 +159,30 @@ describe("rendered Markdown task saves", () => {
       },
     });
   });
+
+  it("turns a slash command into a block and saves the file as Markdown", async () => {
+    using _settings = setup();
+    state.file = {
+      relativePath: "notes.md",
+      contents: "# Notes\n\n| a |\n|---|\n| 1 |\n",
+      byteLength: 32,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("notes.md"));
+    await userEvent.click(screen.getByRole("heading", { name: "Notes" }));
+    await userEvent.keyboard("{End}{Enter}/todo");
+    await expect.element(screen.getByRole("option", { name: "To-do list" })).toBeVisible();
+    await userEvent.keyboard("{Enter}Ship it");
+    await expect.element(screen.getByRole("checkbox")).toBeVisible();
+    await vi.waitFor(() =>
+      expect(state.writeFile).toHaveBeenLastCalledWith({
+        environmentId,
+        input: {
+          cwd: "/workspace",
+          relativePath: "notes.md",
+          contents: "# Notes\n\n- [ ] Ship it\n\n| a |\n|---|\n| 1 |\n",
+        },
+      }),
+    );
+  });
 });

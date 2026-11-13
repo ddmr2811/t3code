@@ -2543,6 +2543,98 @@ code {
   margin: 0;
 }
 
+/* Markdown files edited as blocks in the file panel. It shares the rendered
+   preview's .chat-markdown typography, with document-sized headings. */
+.markdown-block-editor {
+  min-height: 12rem;
+  line-height: 1.6;
+  font-variant-ligatures: normal;
+  font-feature-settings: normal;
+}
+
+.markdown-block-editor:focus {
+  outline: none;
+}
+
+.markdown-block-editor h1 {
+  font-size: 1.875rem;
+  margin-top: 1.75rem;
+}
+
+.markdown-block-editor h2 {
+  font-size: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.markdown-block-editor h3 {
+  font-size: 1.25rem;
+}
+
+.markdown-block-editor :is(p, h1, h2, h3, h4, h5, h6).is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.markdown-block-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-inline-start: 0.25rem;
+}
+
+.markdown-block-editor ul[data-type="taskList"] ul[data-type="taskList"] {
+  margin: 0;
+  padding-inline-start: 1.5rem;
+}
+
+.markdown-block-editor li[data-checked] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.markdown-block-editor li[data-checked] > label {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 1lh;
+  cursor: pointer;
+}
+
+.markdown-block-editor li[data-checked] > label input[type="checkbox"] {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.markdown-block-editor li[data-checked] > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.markdown-block-editor li[data-checked] > div > p {
+  margin: 0;
+}
+
+.markdown-block-editor li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+.markdown-block-editor-raw {
+  margin: 0.65rem 0;
+  border-radius: 0.375rem;
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+}
+
+.markdown-block-editor-raw.is-selected {
+  outline-color: var(--ring);
+}
+
 @layer components {
   .chat-composer-lane {
     padding-inline-start: calc(
