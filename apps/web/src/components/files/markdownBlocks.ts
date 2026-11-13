@@ -1,13 +1,20 @@
 import { type AnyExtension, type JSONContent, mergeAttributes, Node } from "@tiptap/core";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
+import {
+  renderTableToMarkdown,
+  Table,
+  TableCell,
+  TableHeader,
+  TableRow,
+} from "@tiptap/extension-table";
 import { MarkdownManager } from "@tiptap/markdown";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 
 /**
- * A top-level Markdown construct the block editor cannot represent, such as a
- * table, an image or raw HTML. It shows rendered and saves its source verbatim.
+ * A top-level Markdown construct the block editor cannot represent, such as an
+ * image or raw HTML. It shows rendered and saves its source verbatim.
  */
 export const MarkdownRawBlock = Node.create({
   name: "markdownRawBlock",
@@ -32,11 +39,32 @@ export const MarkdownRawBlock = Node.create({
   renderMarkdown: (node) => String(node.attrs?.source ?? ""),
 });
 
+// Two private-use characters, as wide as the escaped pipe that replaces them, keep columns aligned.
+const PIPE_PLACEHOLDER = String.fromCharCode(0xe000, 0xe001);
+
+function withPipePlaceholders(node: JSONContent): JSONContent {
+  return {
+    ...node,
+    ...(node.text === undefined ? {} : { text: node.text.replaceAll("|", PIPE_PLACEHOLDER) }),
+    ...(node.content === undefined ? {} : { content: node.content.map(withPipePlaceholders) }),
+  };
+}
+
+/** GFM needs every `|` in a cell escaped, even in code spans; Tiptap's renderer leaves them bare. */
+const MarkdownTable = Table.extend({
+  renderMarkdown: (node, helpers) =>
+    renderTableToMarkdown(withPipePlaceholders(node), helpers).replaceAll(PIPE_PLACEHOLDER, "\\|"),
+}).configure({ resizable: false });
+
 /** Underline has no Markdown syntax, so Mod-U must not invent one. */
 export const markdownBlockExtensions = (rawBlock: AnyExtension = MarkdownRawBlock) => [
   StarterKit.configure({ underline: false, link: { openOnClick: false } }),
   TaskList,
   TaskItem.configure({ nested: true }),
+  MarkdownTable,
+  TableRow,
+  TableHeader,
+  TableCell,
   rawBlock,
 ];
 
@@ -64,6 +92,7 @@ const EDITABLE_TOKEN_TYPES = new Set([
   "paragraph",
   "space",
   "strong",
+  "table",
   "taskItem",
   "taskList",
   "text",
@@ -74,11 +103,20 @@ interface LexedToken {
   readonly raw: string;
   readonly tokens?: readonly LexedToken[] | undefined;
   readonly items?: readonly LexedToken[] | undefined;
+  readonly header?: readonly { readonly tokens: readonly LexedToken[] }[] | undefined;
+  readonly rows?: readonly (readonly { readonly tokens: readonly LexedToken[] }[])[] | undefined;
 }
 
-function tokenIsEditable(token: LexedToken): boolean {
+function tokenIsEditable(token: LexedToken, inTableCell = false): boolean {
+  // Table cells keep line breaks as `<br>`, which the table parser reads back as hard breaks.
+  if (inTableCell && token.type === "html" && /^<br\s*\/?>$/i.test(token.raw)) return true;
   if (!EDITABLE_TOKEN_TYPES.has(token.type)) return false;
-  return [...(token.tokens ?? []), ...(token.items ?? [])].every(tokenIsEditable);
+  const cells = [...(token.header ?? []), ...(token.rows ?? []).flat()];
+  return (
+    [...(token.tokens ?? []), ...(token.items ?? [])].every((child) =>
+      tokenIsEditable(child, inTableCell),
+    ) && cells.every((cell) => cell.tokens.every((child) => tokenIsEditable(child, true)))
+  );
 }
 
 interface MarkdownBlockUnit {
@@ -195,7 +233,9 @@ export function serializeMarkdownBlocks(
   const middle =
     middleNodes.length === 0
       ? ""
-      : manager.serialize({ type: "doc", content: middleNodes.map((node) => node.toJSON()) });
+      : manager
+          .serialize({ type: "doc", content: middleNodes.map((node) => node.toJSON()) })
+          .replace(/^\n+|\n+$/g, "");
 
   const parts: string[] = [];
   let previous: number | "middle" | null = null;

@@ -47,7 +47,7 @@ describe("markdown block editing", () => {
 
   it("keeps constructs the editor cannot represent as verbatim blocks", () => {
     const markdown =
-      "| a | b |\n|:--|--:|\n| 1 | 2 |\n\n![logo](./logo.png) badge\n\n[ref]: https://example.com\n";
+      "| a | ![i](i.png) |\n|:--|--:|\n| 1 | 2 |\n\n![logo](./logo.png) badge\n\n[ref]: https://example.com\n";
     const { doc } = parseMarkdownBlocks(markdown);
     expect(doc.content?.map((node) => node.type)).toEqual([
       "markdownRawBlock",
@@ -61,7 +61,21 @@ describe("markdown block editing", () => {
       ...content.slice(2),
     ]);
     expect(result).toBe(
-      "Before\n\n| a | b |\n|:--|--:|\n| 1 | 2 |\n\n![logo](./logo.png) badge\n\nBetween\n\n[ref]: https://example.com\n",
+      "Before\n\n| a | ![i](i.png) |\n|:--|--:|\n| 1 | 2 |\n\n![logo](./logo.png) badge\n\nBetween\n\n[ref]: https://example.com\n",
+    );
+  });
+
+  it("edits table cells as a GFM table that keeps alignment and escapes pipes", () => {
+    const markdown = "Intro\n\n| Task | Done |\n|:--|--:|\n| Docs | no |\n\nOutro\n";
+    const { doc } = parseMarkdownBlocks(markdown);
+    expect(doc.content?.map((node) => node.type)).toEqual(["paragraph", "table", "paragraph"]);
+    const result = edit(markdown, (content) => {
+      const cell = content[1]!.content![1]!.content![1]!;
+      cell.content = [paragraph("a | b")];
+      return content;
+    });
+    expect(result).toBe(
+      "Intro\n\n| Task | Done   |\n| :---- | ------: |\n| Docs | a \\| b |\n\nOutro\n",
     );
   });
 

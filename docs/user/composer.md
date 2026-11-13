@@ -428,7 +428,10 @@ Android opens a compatible installed file viewer.
 
 On web and desktop, workspace Markdown files open rendered, and you can edit them in place as
 blocks. Type `/` at the start of an empty line to turn it into a heading, list, to-do, code
-block, quote, or divider; Markdown shortcuts such as `# `, `- `, `[ ] ` and ` ``` ` work too.
-Edits save to the file automatically, and only the blocks you change are rewritten. Tables,
-images, and HTML show rendered but are edited from source view, which the eye/code toggle in
-the file header switches to. Connections without write access show the rendered file only.
+block, quote, table, or divider; Markdown shortcuts such as `# `, `- `, `[ ] ` and ` ``` ` work
+too. Click a table cell to edit it, and use the bar above the table to add or delete rows and
+columns. Hover a heading and click the arrow beside it to fold its section; folding only changes
+the view, not the file. Edits save to the file automatically, and only the blocks you change are
+rewritten. Images and HTML show rendered but are edited from source view, which the eye/code
+toggle in the file header switches to. Connections without write access show the rendered file
+only.

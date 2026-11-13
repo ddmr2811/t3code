@@ -2624,6 +2624,86 @@ code {
   text-decoration: line-through;
 }
 
+/* Editable tables show every cell edge, so empty cells stay clickable. */
+.markdown-block-editor table {
+  margin: 0.65rem 0;
+  table-layout: fixed;
+}
+
+.markdown-block-editor :is(th, td),
+.markdown-block-editor :is(th, td):is(:first-child, :last-child) {
+  position: relative;
+  min-width: 4rem;
+  border: 1px solid color-mix(in srgb, var(--contrast-border) 70%, transparent);
+  padding: 0.35rem 0.6rem;
+}
+
+.markdown-block-editor th {
+  background: color-mix(in srgb, var(--contrast-foreground) 4%, transparent);
+  font-weight: 600;
+}
+
+.markdown-block-editor :is(th, td) > p {
+  margin: 0;
+}
+
+.markdown-block-editor .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--ring) 18%, transparent);
+  pointer-events: none;
+}
+
+/* Folding is view-only: hidden blocks stay in the document and the file. */
+.markdown-block-editor .markdown-fold-heading {
+  position: relative;
+}
+
+.markdown-block-editor .markdown-fold-hidden {
+  display: none;
+}
+
+.markdown-fold-toggle {
+  position: absolute;
+  top: 0;
+  left: -1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1lh;
+  border-radius: 0.25rem;
+  color: var(--muted-foreground);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease-out;
+}
+
+.markdown-fold-toggle::before {
+  content: "";
+  width: 0.4rem;
+  height: 0.4rem;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-20%) rotate(45deg);
+}
+
+.markdown-fold-heading.is-folded .markdown-fold-toggle::before {
+  transform: rotate(-45deg);
+}
+
+.markdown-fold-heading:hover .markdown-fold-toggle,
+.markdown-fold-heading.is-folded .markdown-fold-toggle,
+.markdown-fold-toggle:focus-visible {
+  opacity: 1;
+}
+
+.markdown-fold-toggle:hover {
+  background: color-mix(in srgb, var(--contrast-foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
 .markdown-block-editor-raw {
   margin: 0.65rem 0;
   border-radius: 0.375rem;

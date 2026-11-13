@@ -19,10 +19,12 @@ import {
   MinusIcon,
   PilcrowIcon,
   SquareCodeIcon,
+  Table2Icon,
   TextQuoteIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, use, useRef, useState } from "react";
 
+import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 
@@ -32,6 +34,7 @@ import {
   parseMarkdownBlocks,
   serializeMarkdownBlocks,
 } from "./markdownBlocks";
+import { MarkdownHeadingFold } from "./markdownHeadingFold";
 
 const RawBlockRenderContext = createContext<((source: string) => ReactNode) | null>(null);
 
@@ -52,6 +55,7 @@ const EDITOR_EXTENSIONS = [
   ...markdownBlockExtensions(
     MarkdownRawBlock.extend({ addNodeView: () => ReactNodeViewRenderer(RawBlockView) }),
   ),
+  MarkdownHeadingFold,
   Placeholder.configure({
     placeholder: ({ node }) =>
       node.type.name === "heading" ? `Heading ${node.attrs.level}` : "Type '/' for commands",
@@ -121,6 +125,12 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
     apply: (c) => c.setBlockquote(),
   },
   {
+    label: "Table",
+    keywords: ["table", "grid"],
+    icon: Table2Icon,
+    apply: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
+  },
+  {
     label: "Divider",
     keywords: ["hr", "rule", "separator", "divider"],
     icon: MinusIcon,
@@ -157,6 +167,26 @@ function readSlashTrigger(editor: Editor): SlashTrigger | null {
   return { from: $from.start(), to: $from.pos, query: match[1] ?? "" };
 }
 
+const TABLE_ACTIONS: readonly {
+  readonly label: string;
+  readonly apply: (chain: ChainedCommands) => ChainedCommands;
+}[] = [
+  { label: "Add row", apply: (c) => c.addRowAfter() },
+  { label: "Add column", apply: (c) => c.addColumnAfter() },
+  { label: "Delete row", apply: (c) => c.deleteRow() },
+  { label: "Delete column", apply: (c) => c.deleteColumn() },
+  { label: "Delete table", apply: (c) => c.deleteTable() },
+];
+
+/** Document position of the table holding the caret. */
+function caretTablePosition(editor: Editor): number | null {
+  const { $from } = editor.state.selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if ($from.node(depth).type.name === "table") return $from.before(depth);
+  }
+  return null;
+}
+
 interface SlashMenuState extends SlashTrigger {
   readonly left: number;
   readonly top: number;
@@ -176,13 +206,26 @@ export function MarkdownBlockEditor(props: {
   const [slash, setSlash] = useState<SlashMenuState | null>(null);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  const [tableBar, setTableBar] = useState<{ left: number; top: number } | null>(null);
   const commands = slash ? filterSlashCommands(slash.query) : [];
   const highlightIndex = Math.min(highlight, Math.max(commands.length - 1, 0));
   const menuOpen = slash !== null && commands.length > 0;
 
-  const syncSlashMenu = (editor: Editor) => {
-    const trigger = readSlashTrigger(editor);
+  const syncOverlays = (editor: Editor) => {
     const container = containerRef.current;
+    const tablePosition = caretTablePosition(editor);
+    const tableDom = tablePosition === null ? null : editor.view.nodeDOM(tablePosition);
+    if (container && tableDom instanceof HTMLElement) {
+      const table = tableDom.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      if (tableBar?.left !== table.left - box.left || tableBar.top !== table.top - box.top) {
+        setTableBar({ left: table.left - box.left, top: table.top - box.top });
+      }
+    } else if (tableBar !== null) {
+      setTableBar(null);
+    }
+
+    const trigger = readSlashTrigger(editor);
     if (!trigger || !container || trigger.from === dismissedAt) {
       if (!trigger) setDismissedAt(null);
       setSlash(null);
@@ -203,9 +246,9 @@ export function MarkdownBlockEditor(props: {
         props.onChange(next);
       }
     }
-    syncSlashMenu(editor);
+    syncOverlays(editor);
   });
-  const handleSelectionUpdate = useStableCallback(syncSlashMenu);
+  const handleSelectionUpdate = useStableCallback(syncOverlays);
 
   const runCommand = (editor: Editor, command: SlashCommand, trigger: SlashTrigger) => {
     setSlash(null);
@@ -257,13 +300,36 @@ export function MarkdownBlockEditor(props: {
     },
     onUpdate: ({ editor: updated }) => handleUpdate(updated),
     onSelectionUpdate: ({ editor: updated }) => handleSelectionUpdate(updated),
-    onBlur: () => setSlash(null),
+    onBlur: () => {
+      setSlash(null);
+      setTableBar(null);
+    },
   });
 
   return (
     <RawBlockRenderContext value={props.renderRawBlock}>
       <div ref={containerRef} className="relative mx-auto max-w-4xl px-6 py-5">
         <EditorContent editor={editor} />
+        {tableBar ? (
+          <div
+            role="toolbar"
+            aria-label="Table"
+            className="absolute z-10 flex -translate-y-full gap-0.5 rounded-lg border bg-popover p-0.5 text-popover-foreground shadow-md"
+            style={{ left: tableBar.left, top: tableBar.top - 4 }}
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            {TABLE_ACTIONS.map((action) => (
+              <Button
+                key={action.label}
+                size="xs"
+                variant="ghost"
+                onClick={() => action.apply(editor.chain().focus()).run()}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        ) : null}
         {menuOpen ? (
           <div
             role="listbox"

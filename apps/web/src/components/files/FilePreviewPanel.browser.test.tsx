@@ -169,7 +169,7 @@ describe("rendered Markdown task saves", () => {
       truncated: false,
     };
     await using screen = await render(filePreview("notes.md"));
-    await userEvent.click(screen.getByRole("heading", { name: "Notes" }));
+    await userEvent.click(screen.getByRole("heading", { name: /Notes/ }));
     await userEvent.keyboard("{End}{Enter}/todo");
     await expect.element(screen.getByRole("option", { name: "To-do list" })).toBeVisible();
     await userEvent.keyboard("{Enter}Ship it");
@@ -181,6 +181,41 @@ describe("rendered Markdown task saves", () => {
           cwd: "/workspace",
           relativePath: "notes.md",
           contents: "# Notes\n\n- [ ] Ship it\n\n| a |\n|---|\n| 1 |\n",
+        },
+      }),
+    );
+  });
+
+  it("folds a heading's section in view only and adds table rows from the toolbar", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    state.file = {
+      relativePath: "notes.md",
+      contents: "# Notes\n\nHidden body\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+      byteLength: 56,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("notes.md"));
+    const body = screen.getByText("Hidden body");
+    await userEvent.click(screen.getByRole("button", { name: "Collapse section" }));
+    await expect.element(body).not.toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Expand section" }));
+    await expect.element(body).toBeVisible();
+    expect(state.writeFile).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("cell", { name: "2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add row" }));
+    await vi.waitFor(() =>
+      expect(state.writeFile).toHaveBeenLastCalledWith({
+        environmentId,
+        input: {
+          cwd: "/workspace",
+          relativePath: "notes.md",
+          contents:
+            "# Notes\n\nHidden body\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |\n|     |     |\n",
         },
       }),
     );
