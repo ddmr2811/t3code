@@ -1,7 +1,9 @@
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
+import appCss from "~/index.css?inline";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
@@ -102,12 +104,16 @@ function markdownPreview(truncated: boolean) {
     byteLength: truncated ? 1_200_000 : 32,
     truncated,
   };
+  return filePreview("tasks.md");
+}
+
+function filePreview(relativePath: string) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
-      relativePath="tasks.md"
+      relativePath={relativePath}
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
