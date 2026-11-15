@@ -75,7 +75,7 @@ const loginPty = (logins: Array<{ argv: Array<string>; typed: Array<string> }>) 
           return {
             pid: 1,
             write: (data) => {
-              record.typed.push(data);
+              record.typed.push(data.toString());
               for (const listener of exitListeners) listener({ exitCode: 0, signal: null });
             },
             resize: () => {},

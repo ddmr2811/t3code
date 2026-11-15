@@ -77,7 +77,8 @@ const fakePty = (options: { readonly exitOnLine?: boolean } = {}) =>
           };
           const process: PtyAdapter.PtyProcess = {
             pid: 4242,
-            write: (data) => {
+            write: (chunk) => {
+              const data = chunk.toString();
               login.written.push(data);
               print(data); // a terminal echoes what is typed
               if (data.endsWith("\r") && options.exitOnLine !== false) exit(0);
