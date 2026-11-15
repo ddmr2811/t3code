@@ -1,9 +1,12 @@
 name: Fork desktop (Windows x64)
 
 # Fork: builds the unsigned Windows x64 desktop installer on free GitHub
-# runners. Push a `fork-desktop-<x.y.z>-<n>` tag, or run it by hand, and the
-# installer plus SHA256SUMS is the `fork-desktop-windows-x64` artifact. Nothing
-# is published and no secret is passed, so the packaging jobs skip signing.
+# runners. A `fork-desktop-<x.y.z>-<n>` tag also publishes it as the GitHub
+# release `v<version>`, marked Latest, which installed apps update from: the
+# build's update feed is this repository's releases. A manual run only builds,
+# with the installer plus SHA256SUMS as the `fork-desktop-windows-x64` artifact.
+# No secret is passed, so the packaging jobs skip signing, and the installed
+# app then skips electron-updater's publisher check (it has no publisherName).
 # Packaging is release.yml's: release-desktop.yml for Windows, and for Linux
 # x64 because the Windows app embeds that job's CLI archive as its WSL runtime.
 on:
@@ -49,6 +52,10 @@ jobs:
       # A plain x.y.z keeps the production branding and the GitHub update feed;
       # nightly and preview versions change both. The T3 Connect ids are the
       # public ones in .env.example, as upstream preview builds use.
+      # The updater only moves to a higher semver, so tag `fork-desktop-x.y.z-n`
+      # builds x.y.(z*100+n), n in 1-99: 0.1.9-3 is 0.1.903, above 0.1.9, and a
+      # fork of 0.1.10 starts at 0.1.1001. A prerelease such as 0.1.9-fork.3
+      # sorts below 0.1.9, and build metadata (+fork.3) does not sort at all.
       - name: Resolve version and public config
         id: config
         shell: bash
@@ -57,12 +64,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#fork-desktop-}"
-            version="${version%-*}"
+            if [[ ! "$GITHUB_REF_NAME" =~ ^fork-desktop-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([1-9][0-9]?)$ ]]; then
+              echo "Tag must be fork-desktop-<x.y.z>-<n> with n from 1 to 99, got '$GITHUB_REF_NAME'" >&2
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] * 100 + BASH_REMATCH[4]))"
           else
             version="${INPUT_VERSION:-$(jq -r .version apps/desktop/package.json)}"
           fi
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be x.y.z (tag fork-desktop-<x.y.z>-<n>), got '$version'" >&2; exit 1; }
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be x.y.z, got '$version'" >&2; exit 1; }
           env_example() { sed -n "s|^T3CODE_$1=||p" .env.example; }
           {
             echo "version=$version"
@@ -176,3 +186,63 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+  # Tag runs only. electron-updater reads /releases/latest, then that release's
+  # latest.yml, which names the installer and its blockmap.
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: [build_bundle, installer]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fork-desktop-windows-x64
+          path: release
+
+      - name: Download Windows build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-win-x64
+          path: desktop-win-x64
+
+      # release-desktop.yml suffixes the feed with its arch for release.yml's
+      # merge; with only x64 there is nothing to merge.
+      - name: Stage update feed
+        shell: bash
+        env:
+          VERSION: ${{ needs.build_bundle.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp desktop-win-x64/*.blockmap release/
+          cp desktop-win-x64/latest-win-x64.yml release/latest.yml
+          grep -qx "version: $VERSION" release/latest.yml || { echo "latest.yml is not version $VERSION" >&2; cat release/latest.yml >&2; exit 1; }
+          ls -l release
+
+      # The tag is created through the API with this token, so it starts no
+      # workflow (release.yml listens for v*.*.* pushes). A rerun replaces the
+      # assets, the feed last, so it never names an installer not yet uploaded.
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build_bundle.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" release/*.exe release/*.blockmap release/SHA256SUMS --clobber
+            gh release upload "$tag" release/latest.yml --clobber
+            gh release edit "$tag" --draft=false --prerelease=false --latest
+          else
+            gh release create "$tag" release/* \
+              --target "$GITHUB_SHA" \
+              --title "T3 Code Fork $VERSION" \
+              --notes "Windows x64 build of \`$GITHUB_REF_NAME\` ($GITHUB_SHA), unsigned." \
+              --latest
+          fi
