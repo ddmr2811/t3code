@@ -2,7 +2,13 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
+const branding = vi.hoisted(() => ({
+  APP_VERSION: "0.0.34",
+  forkBase: undefined as string | undefined,
+  get APP_BASE_VERSION(): string {
+    return this.forkBase ?? this.APP_VERSION;
+  },
+}));
 vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
@@ -44,6 +50,7 @@ describe("versionSkew", () => {
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
+    branding.forkBase = undefined;
   });
 
   it("dismisses only the current failed attempt without clearing its retry state", () => {
@@ -79,15 +86,34 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("9.9.9")).toBeNull();
   });
 
-  it("does not warn when nightly, stable and fork builds share a core version", () => {
+  it("does not warn when a nightly and a stable build share a core version", () => {
     expect(resolveVersionMismatch("0.0.34-nightly.20260818.1124")).toBeNull();
 
     branding.APP_VERSION = "0.0.34-nightly.20260818.1124";
     expect(resolveVersionMismatch("0.0.34")).toBeNull();
+  });
 
+  it("compares a fork build's recorded base with the server's own version", () => {
     branding.APP_VERSION = "0.1.903";
+    branding.forkBase = "0.1.9";
+
     expect(resolveVersionMismatch("0.1.9")).toBeNull();
-    expect(resolveVersionMismatch("0.1.8")).not.toBeNull();
+    expect(resolveVersionMismatch("0.1.901")).toBeNull();
+    expect(resolveVersionMismatch("0.1.8")).toEqual({
+      clientVersion: "0.1.9",
+      serverVersion: "0.1.8",
+      hint: MISMATCH_HINT,
+    });
+  });
+
+  it("reads no fork base into an upstream version", () => {
+    branding.APP_VERSION = "0.1.100";
+
+    expect(resolveVersionMismatch("0.1.99")).toEqual({
+      clientVersion: "0.1.100",
+      serverVersion: "0.1.99",
+      hint: MISMATCH_HINT,
+    });
   });
 
   it.each(["0.0.34-nightly.20260823.1124", "0.0.34-nightly.20260824.1124"])(

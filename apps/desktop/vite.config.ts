@@ -24,6 +24,8 @@ const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
+  // Fork: the upstream release a fork build is built on (fork-desktop-windows.yml).
+  __T3CODE_BUILD_BASE_VERSION__: JSON.stringify(process.env.T3CODE_BASE_VERSION?.trim() ?? ""),
 };
 
 export default defineConfig({

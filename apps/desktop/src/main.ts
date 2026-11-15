@@ -22,7 +22,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { forkBaseVersion } from "@t3tools/shared/forkVersion";
+import { resolveBaseVersion } from "@t3tools/shared/forkVersion";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -110,6 +110,8 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
+declare const __T3CODE_BUILD_BASE_VERSION__: string | undefined;
+
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): RemoteT3RunnerOptions => {
@@ -121,7 +123,14 @@ const resolveDesktopSshCliRunner = (
     };
   }
   // The remote runtime comes from upstream's releases, which have no fork build numbers.
-  return { archiveVersion: forkBaseVersion(environment.appVersion) };
+  return {
+    archiveVersion: resolveBaseVersion(
+      environment.appVersion,
+      typeof __T3CODE_BUILD_BASE_VERSION__ === "undefined"
+        ? undefined
+        : __T3CODE_BUILD_BASE_VERSION__,
+    ),
+  };
 };
 
 const layerDesktopSshEnvironment = Layer.unwrap(

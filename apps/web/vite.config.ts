@@ -372,6 +372,10 @@ export default defineConfig(({ command }) => {
       "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      // Fork: the upstream release a fork build is built on (fork-desktop-windows.yml).
+      "import.meta.env.APP_BASE_VERSION": JSON.stringify(
+        process.env.T3CODE_BASE_VERSION?.trim() || configuredAppVersion,
+      ),
     },
     resolve: {
       tsconfigPaths: true,

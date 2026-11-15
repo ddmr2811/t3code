@@ -66,6 +66,16 @@ export interface SkippedMachine {
   readonly reason: string;
 }
 
+/** The release servers move to. A fork build's own numbers are no upstream release, so its servers
+ * move to the base it records, even while this app installs another fork build. */
+export function serverUpdateTargetVersion(
+  localUpdateVersion: string | null,
+  appVersion: string,
+  appBaseVersion: string,
+): string {
+  return appBaseVersion !== appVersion ? appBaseVersion : (localUpdateVersion ?? appVersion);
+}
+
 /** Skip current and app-hosted servers; the latter update with the app and would relaunch mid-run.
  * Desktop-managed servers use their own feed. Each server's updater checks that it can install the
  * release before it restarts, so no registry precheck runs here. */

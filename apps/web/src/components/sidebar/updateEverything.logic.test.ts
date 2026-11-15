@@ -9,6 +9,7 @@ import {
   describeUpdateCapsule,
   describeUpdateEverything,
   runUpdateEverything,
+  serverUpdateTargetVersion,
   type UpdateEverythingMachine,
 } from "./updateEverything.logic";
 
@@ -82,6 +83,25 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
+    ]);
+  });
+
+  it("moves servers to a fork build's recorded base, never to its own number", () => {
+    const servers = [
+      machine("vps", "0.1.8", "boot-service"),
+      machine("fork", "0.1.9", "boot-service"),
+    ];
+    const targetsFor = (localUpdateVersion: string | null, appVersion: string, base: string) =>
+      collectServerUpdateTargets(
+        servers,
+        serverUpdateTargetVersion(localUpdateVersion, appVersion, base),
+      ).targets.map((target) => [target.serverLabel, target.targetVersion]);
+
+    expect(targetsFor(null, "0.1.903", "0.1.9")).toEqual([["vps", "0.1.9"]]);
+    expect(targetsFor("0.1.905", "0.1.903", "0.1.9")).toEqual([["vps", "0.1.9"]]);
+    expect(targetsFor("0.1.10", "0.1.9", "0.1.9")).toEqual([
+      ["vps", "0.1.10"],
+      ["fork", "0.1.10"],
     ]);
   });
 
