@@ -44,6 +44,19 @@ export function machineLoad(host: HostResourcesSnapshot | null): MachineLoad {
   };
 }
 
+const ROUND_TRIP_WINDOW = 4;
+
+/**
+ * The last few round trips, rounded to whole milliseconds. Their minimum is the latency: a
+ * slower one also holds the server's own work, such as taking a fresh CPU sample.
+ */
+export function nextRoundTrips(
+  previous: ReadonlyArray<number>,
+  sampleMs: number,
+): ReadonlyArray<number> {
+  return [...previous, Math.max(0, Math.round(sampleMs))].slice(-ROUND_TRIP_WINDOW);
+}
+
 export interface DashboardEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;

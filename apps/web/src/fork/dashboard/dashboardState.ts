@@ -4,30 +4,47 @@ import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, type HostResourcesSnapshot, WS_METHODS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
+import { nextRoundTrips } from "./dashboard.logic";
+
+interface HostProbe {
+  readonly host: HostResourcesSnapshot;
+  readonly roundTrips: ReadonlyArray<number>;
+  /** The latency: the fastest recent round trip. */
+  readonly roundTripMs: number;
+}
 
 /**
  * The machine's load, read from the sample the server already keeps for load balancing. Timing
  * that same request gives the round trip over the connection the app already holds, so the
- * latency costs no extra request.
+ * latency costs no extra request. Polled faster than the server's 5 s sample cache so every
+ * window holds a cached answer, whose time is the network alone.
  */
 const hostProbe = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:fork-dashboard:host-probe",
   idleTtlMs: 0,
-  staleTimeMs: 4_000,
-  refreshIntervalMs: 5_000,
-  execute: (input: Record<string, never>) =>
+  staleTimeMs: 2_000,
+  refreshIntervalMs: 2_500,
+  execute: (
+    input: Record<string, never>,
+    _emit: (value: HostProbe) => Effect.Effect<void>,
+    previous: Option.Option<HostProbe>,
+  ) =>
     request(WS_METHODS.serverGetHostResources, input).pipe(
       Effect.timeout("5 seconds"),
       Effect.timed,
-      Effect.map(([elapsed, host]) => ({
-        host,
-        roundTripMs: Math.round(Duration.toMillis(elapsed)),
-      })),
+      Effect.map(([elapsed, host]): HostProbe => {
+        const roundTrips = nextRoundTrips(
+          Option.match(previous, { onNone: () => [], onSome: (value) => value.roundTrips }),
+          Duration.toMillis(elapsed),
+        );
+        return { host, roundTrips, roundTripMs: Math.min(...roundTrips) };
+      }),
     ),
 });
 

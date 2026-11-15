@@ -11,6 +11,7 @@ import {
   activeThreads,
   dashboardSpend,
   machineLoad,
+  nextRoundTrips,
   onlineSummary,
   orderMachines,
   pickTailnetSource,
@@ -58,6 +59,15 @@ describe("machineLoad", () => {
       usedMemoryBytes: null,
       totalMemoryBytes: null,
     });
+  });
+});
+
+describe("nextRoundTrips", () => {
+  it("keeps the last four whole-millisecond samples", () => {
+    let samples: ReadonlyArray<number> = [];
+    for (const sample of [208.4, 9.6, 11, 207, 12.2]) samples = nextRoundTrips(samples, sample);
+    expect(samples).toEqual([10, 11, 207, 12]);
+    expect(Math.min(...samples)).toBe(10);
   });
 });
 
