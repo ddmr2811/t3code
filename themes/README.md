@@ -7,6 +7,7 @@
 - The sidebar keeps the fork's attention order. Clawd moved the Working shelf above the threads that wait on you and added a "Recents" label.
 - The machine pill next to the T3 Code logo stays visible.
 - Collapsed shelves behave as in the app. They still show the open thread.
+- A new thread names its project in the heading. Clawd pinned the project picker beside the machine picker, where it covered "Current checkout" and left "What should we build in ?" without a name.
 - Subagents under a row, and the Pinned and Work completed shelves, follow Clawd's look.
 - The New chat badge reads "Ctrl N". Clients drop CSS values that contain a backslash, so the original's escaped ⌘ never showed.
 
