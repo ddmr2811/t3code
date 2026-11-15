@@ -37,6 +37,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       version: ${{ steps.config.outputs.version }}
+      base_version: ${{ steps.config.outputs.base_version }}
       clerk_publishable_key: ${{ steps.config.outputs.clerk_publishable_key }}
       clerk_jwt_template: ${{ steps.config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ steps.config.outputs.clerk_cli_oauth_client_id }}
@@ -57,6 +58,8 @@ jobs:
       # builds x.y.(z*100+n), n in 1-99: 0.1.9-3 is 0.1.903, above 0.1.9, and a
       # fork of 0.1.10 starts at 0.1.1001. A prerelease such as 0.1.9-fork.3
       # sorts below 0.1.9, and build metadata (+fork.3) does not sort at all.
+      # The base x.y.z goes into the bundle (T3CODE_BASE_VERSION) for what the
+      # app asks of upstream; the number alone cannot say (0.2.0-3 is 0.2.3).
       - name: Resolve version and public config
         id: config
         shell: bash
@@ -70,13 +73,16 @@ jobs:
               exit 1
             fi
             version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] * 100 + BASH_REMATCH[4]))"
+            base_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
           else
             version="${INPUT_VERSION:-$(jq -r .version apps/desktop/package.json)}"
+            base_version="$version"
           fi
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be x.y.z, got '$version'" >&2; exit 1; }
           env_example() { sed -n "s|^T3CODE_$1=||p" .env.example; }
           {
             echo "version=$version"
+            echo "base_version=$base_version"
             echo "clerk_publishable_key=$(env_example CLERK_PUBLISHABLE_KEY)"
             echo "clerk_jwt_template=$(env_example CLERK_JWT_TEMPLATE)"
             echo "clerk_cli_oauth_client_id=$(env_example CLERK_CLI_OAUTH_CLIENT_ID)"
@@ -98,6 +104,7 @@ jobs:
           T3CODE_CLERK_JWT_TEMPLATE: ${{ steps.config.outputs.clerk_jwt_template }}
           T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ steps.config.outputs.clerk_cli_oauth_client_id }}
           T3CODE_RELAY_URL: ${{ steps.config.outputs.relay_url }}
+          T3CODE_BASE_VERSION: ${{ steps.config.outputs.base_version }}
         run: vp run build:desktop:bundle
 
       # Same layout as release.yml's js-bundle, which release-desktop.yml restores.
@@ -258,8 +265,15 @@ jobs:
             gh release upload "$tag" release/*
           fi
 
-          current="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2> /dev/null || true)"
-          current="${current#v}"
+          # Only a 404 means there is no Latest yet; any other failure stops here.
+          if current="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2> latest.err)"; then
+            current="${current#v}"
+          elif grep -q "HTTP 404" latest.err; then
+            current=""
+          else
+            cat latest.err >&2
+            exit 1
+          fi
           latest=true
           if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
             [[ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" || "$current" == "$VERSION" ]]; then
