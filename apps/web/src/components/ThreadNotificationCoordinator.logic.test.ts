@@ -1,8 +1,11 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  isThreadNotificationsMuted,
+  withThreadNotificationsMuted,
   RELEASED_COMPLETION_GRACE_MS,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -26,8 +29,9 @@ const woke = (at: number): ThreadNotificationObservation => ({
   ...completed(at),
   backgroundWake: true,
 });
-const visible = { archived: false, quiet: false, snoozed: false };
+const visible = { archived: false, muted: false, quiet: false, snoozed: false };
 const snoozed = { ...visible, snoozed: true };
+const muted = { ...visible, muted: true };
 
 function fakeTimers(): Disposable {
   vi.useFakeTimers();
@@ -54,6 +58,40 @@ describe("createThreadNotificationGate", () => {
     expect(notify).not.toHaveBeenCalled();
     observe({ ...working, attention: "run-2:approval" }, snoozed);
     expect(notify.mock.calls).toEqual([["thread", "input"]]);
+  });
+
+  it("notifies nothing while muted, never replays it, and notifies again once unmuted", () => {
+    const { notify, observe } = harness();
+    observe(working);
+    observe(completed(1), muted);
+    const limited = { ...working, attention: "run-2:limited" };
+    observe(limited, muted);
+    // Unmuted, what arrived while muted stays quiet.
+    observe({ ...limited });
+    const attention = { ...working, attention: "approval:a", requestId: "a" };
+    observe(attention, muted);
+    observe({ ...attention });
+    observe(completed(1));
+    expect(notify).not.toHaveBeenCalled();
+    observe(working);
+    observe(completed(2));
+    observe({ ...working, attention: "approval:b", requestId: "b" });
+    expect(notify.mock.calls).toEqual([
+      ["thread", "completion"],
+      ["thread", "input"],
+    ]);
+  });
+
+  it("drops a pending wake completion when the thread is muted", () => {
+    using _timers = fakeTimers();
+    const { notify, observe } = harness();
+    observe(waking);
+    observe(woke(1));
+    observe({ ...woke(1) }, muted);
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    observe({ ...woke(1) });
+    vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+    expect(notify).not.toHaveBeenCalled();
   });
 
   it("notifies a completion immediately and only once", () => {
@@ -242,5 +280,23 @@ describe("isSnoozedForNotification", () => {
     ],
   ])("a completion %s is suppressed: %s", (_name, shell, completedAt, now, expected) => {
     expect(isSnoozedForNotification(shell, completedAt, now)).toBe(expected);
+  });
+});
+
+describe("withThreadNotificationsMuted", () => {
+  const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+  const other = { ...ref, threadId: ThreadId.make("other") };
+
+  it("keeps only muted threads, so unmuting leaves no entry behind", () => {
+    const mutedBoth = withThreadNotificationsMuted(
+      withThreadNotificationsMuted(undefined, ref, true),
+      other,
+      true,
+    );
+    expect(isThreadNotificationsMuted(mutedBoth, ref)).toBe(true);
+    const unmuted = withThreadNotificationsMuted(mutedBoth, ref, false);
+    expect(isThreadNotificationsMuted(unmuted, ref)).toBe(false);
+    expect(unmuted).toEqual({ "env:other": true });
+    expect(isThreadNotificationsMuted({ "env:thread": false }, ref)).toBe(false);
   });
 });

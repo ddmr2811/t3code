@@ -1,7 +1,9 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
 export type ThreadNotificationKind = "input" | "completion";
 
@@ -34,6 +36,25 @@ export function isSnoozedForNotification(
   if (completedAt === null) return false;
   if (thread.snoozedAt != null && completedAt < Date.parse(thread.snoozedAt)) return false;
   return effectiveSnoozed(thread, { now: new Date(completedAt).toISOString() });
+}
+
+type MutedThreadNotifications = Readonly<Record<string, boolean>> | undefined;
+
+export function isThreadNotificationsMuted(
+  muted: MutedThreadNotifications,
+  ref: ScopedThreadRef,
+): boolean {
+  return muted?.[scopedThreadKey(ref)] === true;
+}
+
+export function withThreadNotificationsMuted(
+  muted: MutedThreadNotifications,
+  ref: ScopedThreadRef,
+  value: boolean,
+): Record<string, boolean> {
+  const key = scopedThreadKey(ref);
+  const { [key]: _previous, ...rest } = muted ?? {};
+  return value ? { ...rest, [key]: true } : rest;
 }
 
 export function createThreadNotificationGate<Key>(
@@ -84,20 +105,28 @@ export function createThreadNotificationGate<Key>(
       key: Key,
       prior: ThreadNotificationObservation | undefined,
       next: ThreadNotificationObservation,
-      options: { readonly archived: boolean; readonly quiet: boolean; readonly snoozed: boolean },
+      options: {
+        readonly archived: boolean;
+        readonly muted: boolean;
+        readonly quiet: boolean;
+        readonly snoozed: boolean;
+      },
     ): void {
       // The grace survives updates that keep the wake's completion; anything else cancels it.
       const pending = releases.get(key);
-      const silenced = options.archived || options.quiet || options.snoozed;
+      // Archived and muted threads notify nothing; snoozed ones still notify attention.
+      const silent = options.archived || options.muted;
+      const silenced = silent || options.quiet || options.snoozed;
       if (pending?.at === next.completedAt && !silenced) {
         if (pending.timer === undefined) release(key, pending.at);
         return;
       }
       cancel(key);
-      // The first sighting, archived or snoozed threads, and stopped or silent runs never notify completion.
+      // The first sighting, archived, muted or snoozed threads, and stopped or silent runs never notify completion.
       if (!prior || silenced) skip(key, next.completedAt);
+      // Attention seen while silent is marked seen, so unmuting or unarchiving does not replay it.
       const fresh = attend(key, prior, next);
-      if (!prior || options.archived) return;
+      if (!prior || silent) return;
       if (fresh) {
         notify(key, "input");
         return;

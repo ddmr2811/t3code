@@ -62,6 +62,11 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 
 Pin a thread from its menu to keep it above your active work.
 
+On web and desktop, choose **Mute notifications** from a thread's menu or the command palette
+to stop its sounds, toasts, and desktop notifications; a crossed-out bell marks the row, and
+**Unmute notifications** turns them back on. The thread's status still updates. Muting applies
+only to that browser or desktop app, not to your phone's alerts.
+
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
 a notification with **Undo** for five seconds. Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were

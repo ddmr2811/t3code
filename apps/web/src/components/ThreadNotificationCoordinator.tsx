@@ -36,6 +36,7 @@ import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  isThreadNotificationsMuted,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -105,14 +106,19 @@ export function startThreadNotifications(
     const opened = threadKey({ environmentId, threadId });
     closeToasts((key) => key === opened);
   };
-  // A notification shown before the tag filter turned on must not stay on screen. While hiding,
-  // one whose thread left the live list (archived) cannot be judged, so it closes too.
+  // A notification shown before the tag filter turned on, or before its thread was muted, must
+  // not stay on screen. While hiding, one whose thread left the live list (archived) cannot be
+  // judged, so it closes too.
   const closeHiddenPending = () => {
     const hidden = registry.get(environmentThreadShells.hiddenThreadKeysAtom);
     const live = registry.get(environmentThreadShells.anyEnvironmentHidingAtom)
       ? new Set(registry.get(environmentThreadShells.threadRefsAtom).map(threadKey))
       : null;
-    const shouldClose = (key: string) => hidden.has(key) || (live !== null && !live.has(key));
+    const { mutedThreadNotifications } = getClientSettings();
+    const shouldClose = (key: string) =>
+      hidden.has(key) ||
+      (live !== null && !live.has(key)) ||
+      isThreadNotificationsMuted(mutedThreadNotifications, parseThreadKey(key));
     closeToasts(shouldClose);
     const count = pending.size;
     for (const [tag, entry] of pending) {
@@ -134,13 +140,18 @@ export function startThreadNotifications(
     kind: ThreadNotificationKind,
   ) => {
     const { thread, status } = state;
+    const ref = { environmentId, threadId: thread.id };
+    const {
+      notificationMode: mode,
+      inAppNotificationsEnabled,
+      mutedThreadNotifications,
+    } = getClientSettings();
+    // A wake completion's grace timer can fire after its thread was muted.
     if (
-      registry
-        .get(environmentThreadShells.hiddenThreadKeysAtom)
-        .has(threadKey({ environmentId, threadId: thread.id }))
+      registry.get(environmentThreadShells.hiddenThreadKeysAtom).has(threadKey(ref)) ||
+      isThreadNotificationsMuted(mutedThreadNotifications, ref)
     )
       return;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
     const title =
       kind === "completion"
@@ -302,9 +313,14 @@ export function startThreadNotifications(
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
     const now = Date.now();
+    const { mutedThreadNotifications } = getClientSettings();
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
+        muted: isThreadNotificationsMuted(mutedThreadNotifications, {
+          environmentId,
+          threadId: state.thread.id,
+        }),
         quiet: state.raw.latestRunStopRequested === true,
         snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
       });
@@ -421,6 +437,7 @@ export function startThreadNotifications(
   const onSettings = () => {
     applyMode();
     syncEnvironments();
+    closeHiddenPending();
   };
   const unsubscribeSettings = subscribeClientSettings(onSettings);
   const unsubscribeEnvironmentIds = registry.subscribe(

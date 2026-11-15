@@ -46,7 +46,9 @@ import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { useClientSettings } from "./useSettings";
+import { getClientSettings, useClientSettings } from "./useSettings";
+import { isThreadNotificationsMuted } from "../components/ThreadNotificationCoordinator.logic";
+import { setThreadNotificationsMuted } from "../threadNotificationMute";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -138,6 +140,10 @@ export function useThreadActionMenu(input: {
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+        isNotificationsMuted: isThreadNotificationsMuted(
+          getClientSettings().mutedThreadNotifications,
+          threadRef,
+        ),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
@@ -255,6 +261,10 @@ export function useThreadActionMenu(input: {
         }
         case "mark-unread":
           markThreadUnread(threadRef);
+          return;
+        case "mute-notifications":
+        case "unmute-notifications":
+          await setThreadNotificationsMuted(threadRef, action === "mute-notifications");
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

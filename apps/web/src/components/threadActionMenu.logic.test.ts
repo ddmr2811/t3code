@@ -11,6 +11,7 @@ const baseState: ThreadActionMenuState = {
   autoSettleEnabled: true,
   isSnoozed: false,
   canSnoozeNow: true,
+  isNotificationsMuted: false,
   isRegeneratingTitle: false,
   isRunning: false,
   supports: {
@@ -35,6 +36,7 @@ describe("buildThreadActionMenuItems", () => {
         isPinned: reversed,
         isSettled: reversed,
         isSnoozed: reversed,
+        isNotificationsMuted: reversed,
       });
       const expected = reversed
         ? [
@@ -58,6 +60,9 @@ describe("buildThreadActionMenuItems", () => {
             "delete",
           ];
       expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(expected);
+      expect(
+        items.some((item) => ["mute-notifications", "unmute-notifications"].includes(item.id)),
+      ).toBe(true);
       expect(
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??
           true,

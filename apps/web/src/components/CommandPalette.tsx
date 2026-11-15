@@ -57,6 +57,8 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  BellIcon,
+  BellOffIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -187,6 +189,10 @@ import {
   newProjectId,
 } from "../lib/utils";
 import { buildThreadRouteParams } from "../threadRoutes";
+import {
+  setThreadNotificationsMuted,
+  useThreadNotificationsMuted,
+} from "../threadNotificationMute";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
@@ -495,6 +501,9 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
+  const activeThreadNotificationsMuted = useThreadNotificationsMuted(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
@@ -1500,6 +1509,23 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         openGuestShareDialog(threadRef);
       },
+    });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const muted = activeThreadNotificationsMuted;
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-thread-notifications",
+      searchTerms: ["mute", "unmute", "notifications", "sound", "silence", "quiet", "alerts"],
+      title: muted ? "Unmute thread notifications" : "Mute thread notifications",
+      icon: muted ? (
+        <BellIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <BellOffIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: () => setThreadNotificationsMuted(threadRef, !muted),
     });
   }
 

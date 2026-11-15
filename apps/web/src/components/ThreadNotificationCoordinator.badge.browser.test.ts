@@ -11,6 +11,7 @@ import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.lo
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
+  muted: {} as Record<string, boolean>,
   toast: vi.fn(),
   closeToast: vi.fn(),
   shells: null as unknown as { set: (id: string, value: unknown) => void },
@@ -75,6 +76,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
   getClientSettings: (() => ({
     notificationMode: state.mode,
     inAppNotificationsEnabled: state.inApp,
+    mutedThreadNotifications: state.muted,
   })) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
@@ -198,6 +200,7 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
+  state.muted = {};
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
@@ -259,6 +262,31 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(notification.close).toHaveBeenCalled();
   },
 );
+
+it("muting a thread closes its notification, takes it off the badge, and keeps it quiet", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  app.start();
+  state.shells.set("one", shell({ hasPendingApprovals: true }));
+  state.shells.set("two", shell({ hasPendingApprovals: true }));
+  expect(state.badge).toHaveBeenLastCalledWith(2);
+  state.muted = { "one:thread": true };
+  app.changeSettings();
+  expect(TestNotification.sent.map((sent) => sent.close.mock.calls.length > 0)).toEqual([
+    true,
+    false,
+  ]);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  state.sound.mockClear();
+  state.shells.set(
+    "one",
+    shell({
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:01.000Z" },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(state.sound).not.toHaveBeenCalled();
+});
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies once per %s request, not again as queued runs start behind it",
