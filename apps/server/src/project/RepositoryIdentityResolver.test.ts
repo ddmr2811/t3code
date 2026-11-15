@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -347,6 +348,59 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         displayName: "julius/t3code-fork",
       });
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keys an ssh config alias by the forge host it names", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const aliased = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-ssh-alias-",
+      });
+      const selfHosted = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-ssh-alias-self-hosted-",
+      });
+      yield* git(aliased, ["init"]);
+      yield* git(aliased, ["remote", "add", "origin", "git@github-deploy:T3Tools/t3code.git"]);
+      yield* git(selfHosted, ["init"]);
+      yield* git(selfHosted, ["remote", "add", "origin", "box:projects/app"]);
+
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const sshHosts: Array<string> = [];
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command !== "git") {
+              const alias = input.args.at(-1) ?? "";
+              sshHosts.push(alias);
+              return Effect.succeed({
+                stdout: `user git\nhostname ${alias === "box" ? "10.0.0.5" : "github.com"}\nport 22\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            }
+            return runner.run(input);
+          },
+        }),
+      );
+
+      const identity = yield* resolver.resolve(aliased);
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.provider).toBe("github");
+      expect(identity?.displayName).toBe("T3Tools/t3code");
+      expect(identity?.locator.remoteUrl).toBe("git@github-deploy:T3Tools/t3code.git");
+      expect(identity?.origin).toBeUndefined();
+
+      // An alias for a host no forge claims keeps the key it was written with.
+      expect((yield* resolver.resolve(selfHosted))?.canonicalKey).toBe(
+        sourceControlDefinitions.repositoryKeyFromRemote("box:projects/app"),
+      );
+      expect(sshHosts).toEqual(["github-deploy", "box"]);
+    }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
   it.effect("uses the fork as the identity when gh repo set-default points at it", () =>

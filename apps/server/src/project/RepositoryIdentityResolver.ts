@@ -134,28 +134,32 @@ function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
 
 function buildRepositoryOrigin(
   originUrl: string | undefined,
+  originKeyUrl: string | undefined,
   canonicalKey: string,
 ): RepositoryIdentity["origin"] {
-  if (!originUrl) return undefined;
-  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(originUrl);
+  if (!originUrl || !originKeyUrl) return undefined;
+  const originKey = sourceControlDefinitions.repositoryKeyFromRemote(originKeyUrl);
   if (originKey === canonicalKey) return undefined;
-  const displayName = repositoryPathOf(originKey, originUrl);
+  const displayName = repositoryPathOf(originKey, originKeyUrl);
   return { canonicalKey: originKey, remoteUrl: originUrl, ...(displayName ? { displayName } : {}) };
 }
 
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  /** `remoteUrl` with an ssh config alias replaced by the forge host it names. */
+  readonly keyUrl: string;
   readonly originUrl: string | undefined;
+  readonly originKeyUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.remoteUrl);
-  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
-  const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
+  const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.keyUrl);
+  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.keyUrl);
+  const repositoryPath = repositoryPathOf(canonicalKey, input.keyUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);
-  const origin = buildRepositoryOrigin(input.originUrl, canonicalKey);
+  const origin = buildRepositoryOrigin(input.originUrl, input.originKeyUrl, canonicalKey);
 
   return {
     canonicalKey,
@@ -297,13 +301,79 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
       ? resolvedResult.value.stdout
       : "";
   const remote = pickPrimaryRemote(remotes, resolved);
-  return remote
-    ? buildRepositoryIdentity({
-        ...remote,
-        originUrl: remotes.get("origin"),
-        rootPath: cacheKey.rootPath,
-      })
-    : null;
+  if (!remote) return null;
+  const originUrl = remotes.get("origin");
+  const keyUrl = yield* resolveSshAliasRemote(remote.remoteUrl, env);
+  const originKeyUrl =
+    originUrl === remote.remoteUrl
+      ? keyUrl
+      : originUrl === undefined
+        ? undefined
+        : yield* resolveSshAliasRemote(originUrl, env);
+  return buildRepositoryIdentity({
+    ...remote,
+    keyUrl,
+    originUrl,
+    originKeyUrl,
+    rootPath: cacheKey.rootPath,
+  });
+});
+
+// Host aliases ssh would read as options or patterns are left alone.
+const SSH_ALIAS_HOST = /^[a-z0-9][a-z0-9._-]*$/iu;
+
+function isSshRemote(remoteUrl: string): boolean {
+  return /^ssh:\/\//iu.test(remoteUrl) || !/^[a-z][a-z0-9+.-]*:\/\//iu.test(remoteUrl);
+}
+
+function replaceRemoteHost(remoteUrl: string, alias: string, hostname: string): string {
+  if (/^ssh:\/\//iu.test(remoteUrl)) {
+    const url = new URL(remoteUrl);
+    url.hostname = hostname;
+    return url.href;
+  }
+  const at = remoteUrl.indexOf("@");
+  const hostStart = at !== -1 && at < remoteUrl.indexOf(":") ? at + 1 : 0;
+  return `${remoteUrl.slice(0, hostStart)}${hostname}${remoteUrl.slice(hostStart + alias.length)}`;
+}
+
+/**
+ * `git@github-work:owner/repo` names an ~/.ssh/config alias, often one per deploy key. Keying
+ * it by the forge host it points at groups it with checkouts cloned from that forge directly.
+ * Only aliases of hosts no forge claims are looked up, and only a forge host is adopted.
+ */
+const resolveSshAliasRemote = Effect.fn("RepositoryIdentityResolver.resolveSshAlias")(function* (
+  remoteUrl: string,
+  env: NodeJS.ProcessEnv,
+) {
+  const remote = parseGitRemoteHost(remoteUrl);
+  if (
+    remote === null ||
+    !isSshRemote(remoteUrl) ||
+    !SSH_ALIAS_HOST.test(remote.hostname) ||
+    sourceControlDefinitions.recognizeRemote(remoteUrl)?.kind !== "unknown"
+  ) {
+    return remoteUrl;
+  }
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  // `ssh -G` prints the resolved config without connecting.
+  const result = yield* processRunner
+    .run({
+      command: "ssh",
+      args: ["-G", remote.hostname],
+      env,
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  if (result._tag === "None" || result.value.timedOut || result.value.code !== 0) {
+    return remoteUrl;
+  }
+  const hostname = /^hostname\s+(\S+)\s*$/imu.exec(result.value.stdout)?.[1]?.toLowerCase();
+  if (!hostname || hostname === remote.hostname) return remoteUrl;
+  const resolvedUrl = replaceRemoteHost(remoteUrl, remote.hostname, hostname);
+  return sourceControlDefinitions.recognizeRemote(resolvedUrl)?.kind === "unknown"
+    ? remoteUrl
+    : resolvedUrl;
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
