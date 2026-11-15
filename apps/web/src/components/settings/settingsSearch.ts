@@ -708,6 +708,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "fork-dashboard-on-start",
+    title: "Open Dashboard on start",
+    to: "/settings/general",
+    searchTerms: ["dashboard panel start screen home startup launch machines"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/threads",

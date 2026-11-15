@@ -200,6 +200,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
   /** Fork: Extensions settings protocol version; absent on upstream or older fork servers. */
   forkExtensions: Schema.optionalKey(Schema.Int),
+  /** Fork: Dashboard tailnet status protocol version; absent on upstream or older fork servers. */
+  forkTailnet: Schema.optionalKey(Schema.Int),
   /** Fork: target branch setting; absent on upstream servers. */
   forkTargetBranch: Schema.optionalKey(Schema.Int),
   /**

@@ -4,6 +4,7 @@ import {
   ArrowRightIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
+  LayoutDashboardIcon,
   SettingsIcon,
 } from "lucide-react";
 import { toggleForkResourceWidget, useForkWidgetEnabled } from "../ForkResourceWidget";
@@ -263,6 +264,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigateToMainApp();
   };
+  // Fork: machines, subscriptions and active threads on every environment.
+  const handleDashboardClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/dashboard" });
+  };
   // Fork: the home page lists what waits on the user, projects and recent threads.
   const handleHomeClick = () => {
     closeMobileSidebar();
@@ -281,6 +287,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       ) : (
         <>
           <SidebarUtilityItem icon={<HouseIcon />} label="Home" onClick={handleHomeClick} />
+          <SidebarUtilityItem
+            icon={<LayoutDashboardIcon />}
+            label="Dashboard"
+            onClick={handleDashboardClick}
+          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

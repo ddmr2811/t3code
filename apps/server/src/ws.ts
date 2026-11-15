@@ -281,6 +281,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
+import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
@@ -1509,6 +1510,7 @@ export const layerWsRpc = (
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const forkExtensions = yield* ForkExtensions.ForkExtensions;
+      const forkTailnet = yield* ForkTailnet.ForkTailnet;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
@@ -3037,6 +3039,8 @@ export const layerWsRpc = (
         [WS_METHODS.forkExtensionsAuthorize]: (input) => forkExtensions.authorize(input),
         [WS_METHODS.forkExtensionsAuthorizeComplete]: (input) =>
           forkExtensions.authorizeComplete(input).pipe(Effect.as({})),
+        // Fork: Dashboard.
+        [WS_METHODS.forkTailnetStatus]: (input) => forkTailnet.status(input),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {

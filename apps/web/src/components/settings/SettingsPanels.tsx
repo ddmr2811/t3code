@@ -478,6 +478,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Environment identification"]
       : []),
     ...(settings.language !== DEFAULT_UNIFIED_SETTINGS.language ? ["Language"] : []),
+    ...(settings.forkOpenDashboardOnStart !== DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart
+      ? ["Open Dashboard on start"]
+      : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
@@ -655,6 +658,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       language: DEFAULT_UNIFIED_SETTINGS.language,
+      forkOpenDashboardOnStart: DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1143,6 +1147,33 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        {/* Fork: the Dashboard as the start screen; Home stays one click away. */}
+        <SettingsRow
+          {...setting("fork-dashboard-on-start")}
+          description="Show the Dashboard instead of Home when T3 Code opens on this device."
+          resetAction={
+            settings.forkOpenDashboardOnStart !==
+            DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart ? (
+              <SettingResetButton
+                label="open Dashboard on start"
+                onClick={() =>
+                  updateSettings({
+                    forkOpenDashboardOnStart: DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.forkOpenDashboardOnStart}
+              onCheckedChange={(checked) =>
+                updateSettings({ forkOpenDashboardOnStart: Boolean(checked) })
+              }
+              aria-label="Open Dashboard on start"
+            />
           }
         />
       </SettingsSection>

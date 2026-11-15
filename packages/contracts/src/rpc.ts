@@ -426,6 +426,7 @@ import {
   ForkSetEnabledInput,
   ForkUninstallInput,
 } from "./forkExtensions.ts";
+import { ForkTailnetStatus, ForkTailnetStatusInput } from "./forkTailnet.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -454,6 +455,8 @@ export const WS_METHODS = {
   forkExtensionsSetEnabled: "forkExtensions.setEnabled",
   forkExtensionsAuthorize: "forkExtensions.authorize",
   forkExtensionsAuthorizeComplete: "forkExtensions.authorizeComplete",
+  // Fork: Dashboard.
+  forkTailnetStatus: "forkTailnet.status",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1541,6 +1544,13 @@ const WsForkExtensionsAuthorizeCompleteRpc = Rpc.make(WS_METHODS.forkExtensionsA
   error: ForkExtensionsRpcError,
 });
 
+// Fork: Dashboard.
+const WsForkTailnetStatusRpc = Rpc.make(WS_METHODS.forkTailnetStatus, {
+  payload: ForkTailnetStatusInput,
+  success: ForkTailnetStatus,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2330,6 +2340,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsForkExtensionsSetEnabledRpc,
   WsForkExtensionsAuthorizeRpc,
   WsForkExtensionsAuthorizeCompleteRpc,
+  WsForkTailnetStatusRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

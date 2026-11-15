@@ -94,6 +94,10 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps the Dashboard's tailnet read behind diagnostics", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkTailnetStatus)).toBe(AuthDiagnosticsReadScope);
+  });
+
   it("still lets readers load settings the way installed Swift clients ask", () => {
     expect(requiredScopeForRpcMethod("server.getSettings")).toBe(AuthOrchestrationReadScope);
   });

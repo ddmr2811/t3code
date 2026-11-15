@@ -61,6 +61,7 @@ import {
   BellOffIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  LayoutDashboardIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -1722,6 +1723,18 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  // Fork: the Dashboard.
+  actionItems.push({
+    kind: "action",
+    value: "action:fork-dashboard",
+    searchTerms: ["dashboard", "panel", "machines", "tailnet", "subscriptions", "latency", "cpu"],
+    title: "Open dashboard",
+    icon: <LayoutDashboardIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/dashboard" });
     },
   });
 

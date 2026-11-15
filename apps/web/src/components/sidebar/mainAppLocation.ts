@@ -44,6 +44,11 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
   return router.subscribe("onResolved", record);
 }
 
+/** Fork: whether the router still shows the history entry this page load opened on. */
+export function isInitialHistoryEntry(router: AnyRouter): boolean {
+  return router.state.location.state.__TSR_index === initialHistoryIndex;
+}
+
 /** The thread Settings or Usage opened over, for views mounted while the modal is open. */
 export function getAppModalReturnThreadTarget() {
   return appModalReturnThreadTarget;

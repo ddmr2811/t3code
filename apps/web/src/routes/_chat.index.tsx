@@ -1,19 +1,21 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
 import { ForkHome } from "../components/ForkHome";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
+import { isInitialHistoryEntry } from "../components/sidebar/mainAppLocation";
 import { Button } from "../components/ui/button";
 import { HostedEmptyState } from "../components/HostedEmptyState";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import {
   readProject,
   useAllEnvironmentShellsBootstrapped,
@@ -34,9 +36,24 @@ function ChatIndexRouteView() {
   return <ForkIndex />;
 }
 
+// Fork: only a Home the app opened on may hand over to the Dashboard; later ones stay.
+let startScreenChosen = false;
+
 // Fork: with projects the index is a home page; the upstream landing only handles the empty workspace.
 function ForkIndex() {
   const hasProject = useProjects().some((project) => project.archivedAt == null);
+  const navigate = useNavigate();
+  const router = useRouter();
+  const settingsHydrated = useClientSettingsHydrated();
+  const openDashboard = useClientSettings((settings) => settings.forkOpenDashboardOnStart);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on app start, opens the Dashboard once the saved client settings have loaded
+  useEffect(() => {
+    if (startScreenChosen || !settingsHydrated) return;
+    startScreenChosen = true;
+    if (openDashboard && isInitialHistoryEntry(router)) {
+      void navigate({ to: "/dashboard", replace: true });
+    }
+  }, [navigate, openDashboard, router, settingsHydrated]);
   return hasProject ? <ForkHome /> : <IndexDraftLanding />;
 }
 

@@ -179,6 +179,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.forkExtensionsSetEnabled]: "fork",
   [WS_METHODS.forkExtensionsAuthorize]: "fork",
   [WS_METHODS.forkExtensionsAuthorizeComplete]: "fork",
+  [WS_METHODS.forkTailnetStatus]: "fork",
   [WS_METHODS.assetsCreateUrl]: "workspace",
   [WS_METHODS.assetsPersistChatAttachments]: "orchestration",
   [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",

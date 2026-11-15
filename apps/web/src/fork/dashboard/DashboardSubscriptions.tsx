@@ -1,0 +1,207 @@
+// Fork-only: the Dashboard's subscriptions: each account's 5-hour and weekly windows, and the
+// last 7 days' spend at list price, from the same atoms as the Usage page.
+import { useAtomValue } from "@effect/atom-react";
+import type { ServerProviderUsageWindow, UsageProviderKind } from "@t3tools/contracts";
+import { formatCount, formatTokens, formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
+import {
+  collectLimitAccounts,
+  formatResetsIn,
+  type LimitAccount,
+} from "@t3tools/shared/usageLimits";
+import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+
+import { cn } from "../../lib/utils";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "../../components/usage/usageProviders";
+import { environmentPresentations } from "../../state/presentation";
+import { useUsage } from "../../state/usage";
+import { dashboardSpend, type ProviderSpend } from "./dashboard.logic";
+
+const SHOWN_WINDOW_KINDS = new Set<ServerProviderUsageWindow["kind"]>(["session", "weekly"]);
+
+function providerOfDriver(driver: LimitAccount["driver"]): UsageProviderKind | null {
+  return PROVIDER_ORDER.find((kind) => PROVIDER_PRESENTATION[kind].driverKind === driver) ?? null;
+}
+
+function WindowMeter(props: {
+  readonly window: ServerProviderUsageWindow;
+  readonly color: string;
+  readonly nowMs: number;
+}) {
+  const used = Math.min(100, Math.max(0, props.window.usedPercent));
+  const resets = formatResetsIn(props.window, props.nowMs);
+  return (
+    <div className="flex w-28 min-w-0 flex-col gap-0.5 font-mono text-2xs tabular-nums">
+      <div className="flex justify-between gap-1">
+        <span className="truncate text-muted-foreground">{props.window.label}</span>
+        <span className={cn(used >= 90 && "text-destructive")}>{Math.round(used)}%</span>
+      </div>
+      <span className="h-1 overflow-hidden rounded-full bg-muted">
+        <span
+          className={cn("block h-full rounded-full", used >= 90 && "bg-destructive")}
+          style={{ width: `${used}%`, ...(used >= 90 ? {} : { backgroundColor: props.color }) }}
+        />
+      </span>
+      <span className="truncate text-muted-foreground">{resets ?? " "}</span>
+    </div>
+  );
+}
+
+function AccountRow(props: {
+  readonly account: LimitAccount;
+  readonly color: string;
+  readonly nowMs: number;
+}) {
+  const { account } = props;
+  const windows = account.limits.windows.filter((window) => SHOWN_WINDOW_KINDS.has(window.kind));
+  const where = account.sourceLabel ?? account.environments.map((entry) => entry.label).join(", ");
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-4 py-2.5 first:border-t-0">
+      <div className="flex min-w-40 flex-1 flex-col">
+        <span className="truncate text-sm">
+          {account.displayName ?? account.email ?? "Account"}
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+          {account.plan ? (
+            <span className="shrink-0 rounded-sm border px-1 font-mono">{account.plan}</span>
+          ) : null}
+          <span className="truncate">{where}</span>
+        </span>
+      </div>
+      <div className="flex gap-3">
+        {windows.length === 0 ? (
+          <span className="text-2xs text-muted-foreground">No 5-hour or weekly window</span>
+        ) : (
+          windows.map((window) => (
+            <WindowMeter
+              key={`${window.kind}:${window.id}`}
+              window={window}
+              color={props.color}
+              nowMs={props.nowMs}
+            />
+          ))
+        )}
+      </div>
+    </li>
+  );
+}
+
+function ProviderPanel(props: {
+  readonly provider: UsageProviderKind;
+  readonly spend: ProviderSpend | null;
+  readonly accounts: ReadonlyArray<LimitAccount>;
+  readonly nowMs: number;
+}) {
+  const presentation = PROVIDER_PRESENTATION[props.provider];
+  return (
+    <section
+      aria-label={presentation.label}
+      className="flex min-w-0 flex-col rounded-lg border bg-card"
+    >
+      <header className="flex items-baseline gap-2 border-b px-4 py-3">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 self-center rounded-full"
+          style={{ backgroundColor: presentation.color }}
+        />
+        <span className="font-medium text-sm">{presentation.label}</span>
+        <span className="text-2xs text-muted-foreground">
+          {props.accounts.length} {props.accounts.length === 1 ? "account" : "accounts"}
+        </span>
+        <span className="ms-auto font-mono text-lg tabular-nums">
+          {props.spend ? formatUsd(props.spend.costUsd) : "–"}
+        </span>
+        <span className="text-2xs text-muted-foreground">list price</span>
+      </header>
+      {props.spend ? (
+        <p className="border-b px-4 py-1.5 font-mono text-2xs text-muted-foreground tabular-nums">
+          {formatCount(props.spend.requests)} requests · {formatTokens(props.spend.tokens)} tokens
+        </p>
+      ) : null}
+      {props.accounts.length > 0 ? (
+        <ul className="flex flex-col">
+          {props.accounts.map((account) => (
+            <AccountRow
+              key={account.key}
+              account={account}
+              color={presentation.color}
+              nowMs={props.nowMs}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-muted-foreground text-xs">No subscription limits reported.</p>
+      )}
+    </section>
+  );
+}
+
+export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  // Kept for the page's life: the usage query is keyed by this window.
+  const [usageWindow] = useState(() => makeWindow(7));
+  const usage = useUsage(usageWindow);
+  const merged = usage.shown?.merged ?? usage.merged;
+  const labels = new Map(
+    usage.environments.map((environment) => [environment.environmentId, environment.label]),
+  );
+  const spend = dashboardSpend(merged, labels);
+  const accounts = collectLimitAccounts(presentations);
+  const accountsByProvider = new Map<UsageProviderKind, LimitAccount[]>();
+  for (const account of accounts) {
+    const provider = providerOfDriver(account.driver);
+    if (provider === null) continue;
+    accountsByProvider.set(provider, [...(accountsByProvider.get(provider) ?? []), account]);
+  }
+  const spendByProvider = new Map(spend.providers.map((entry) => [entry.provider, entry]));
+  const providers = PROVIDER_ORDER.filter(
+    (provider) => accountsByProvider.has(provider) || spendByProvider.has(provider),
+  ).toSorted(
+    (left, right) =>
+      (spendByProvider.get(right)?.costUsd ?? 0) - (spendByProvider.get(left)?.costUsd ?? 0),
+  );
+  const loading = usage.isPending && usage.shown === null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="flex flex-wrap items-baseline gap-x-1.5 text-muted-foreground text-sm">
+        {loading ? (
+          "Reading the last 7 days…"
+        ) : (
+          <>
+            <span className="font-mono text-foreground tabular-nums">
+              {formatUsd(spend.costUsd)}
+            </span>
+            over the last 7 days ·{" "}
+            <span className="font-mono tabular-nums">{formatCount(spend.requests)}</span> requests ·{" "}
+            <span className="font-mono tabular-nums">{formatTokens(spend.tokens)}</span> tokens
+            {spend.machines.length > 0 ? (
+              <span className="text-xs">· from {spend.machines.join(", ")}</span>
+            ) : null}
+            {usage.isPartial ? (
+              <span className="text-xs">· some machines still counting</span>
+            ) : null}
+          </>
+        )}
+        <Link to="/usage" className="ms-auto text-xs text-primary hover:underline">
+          Open usage →
+        </Link>
+      </p>
+      {providers.length === 0 && !loading ? (
+        <p className="text-muted-foreground text-sm">No provider reports usage or limits yet.</p>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2">
+          {providers.map((provider) => (
+            <ProviderPanel
+              key={provider}
+              provider={provider}
+              spend={spendByProvider.get(provider) ?? null}
+              accounts={accountsByProvider.get(provider) ?? []}
+              nowMs={nowMs}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
