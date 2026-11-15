@@ -1,9 +1,10 @@
 name: Fork desktop (Windows x64)
 
 # Fork: builds the unsigned Windows x64 desktop installer on free GitHub
-# runners. A `fork-desktop-<x.y.z>-<n>` tag also publishes it as the GitHub
-# release `v<version>`, marked Latest, which installed apps update from: the
-# build's update feed is this repository's releases. A manual run only builds,
+# runners. Pushing a `fork-desktop-<x.y.z>-<n>` tag also publishes it as the
+# GitHub release `v<version>`, which becomes Latest unless a higher version
+# already is. Installed apps update from Latest: the build's update feed is
+# this repository's releases. A manual run, even on a tag, only builds,
 # with the installer plus SHA256SUMS as the `fork-desktop-windows-x64` artifact.
 # No secret is passed, so the packaging jobs skip signing, and the installed
 # app then skips electron-updater's publisher check (it has no publisherName).
@@ -187,14 +188,18 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-  # Tag runs only. electron-updater reads /releases/latest, then that release's
-  # latest.yml, which names the installer and its blockmap.
+  # Tag pushes only. electron-updater reads /releases/latest, then that
+  # release's latest.yml, which names the installer and its blockmap. One
+  # publish at a time, so two tags cannot race over which one is Latest.
   publish:
     name: Publish release
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: [build_bundle, installer]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    concurrency:
+      group: fork-desktop-windows-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -223,10 +228,13 @@ jobs:
           grep -qx "version: $VERSION" release/latest.yml || { echo "latest.yml is not version $VERSION" >&2; cat release/latest.yml >&2; exit 1; }
           ls -l release
 
-      # The tag is created through the API with this token, so it starts no
-      # workflow (release.yml listens for v*.*.* pushes). A rerun replaces the
-      # assets, the feed last, so it never names an installer not yet uploaded.
-      - name: Create or update release
+      # A published version is never rebuilt: installs may already hold its
+      # latest.yml, and replacing assets one by one serves a feed whose sha512
+      # names another installer. Assets go up on a draft, which updaters do not
+      # see, and it is published only once all are there. Publishing creates the
+      # tag through the API with this token, so it starts no workflow
+      # (release.yml listens for v*.*.* pushes). Latest only ever moves up.
+      - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -235,14 +243,27 @@ jobs:
         run: |
           set -euo pipefail
           tag="v$VERSION"
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" release/*.exe release/*.blockmap release/SHA256SUMS --clobber
-            gh release upload "$tag" release/latest.yml --clobber
-            gh release edit "$tag" --draft=false --prerelease=false --latest
+          if is_draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2> /dev/null)"; then
+            if [[ "$is_draft" != "true" ]]; then
+              echo "::error::Release $tag is already published. Push a new fork-desktop-<x.y.z>-<n> tag with a higher n instead."
+              exit 1
+            fi
+            echo "Reusing the draft $tag left by an earlier run."
+            gh release upload "$tag" release/* --clobber
           else
-            gh release create "$tag" release/* \
+            gh release create "$tag" --draft \
               --target "$GITHUB_SHA" \
               --title "T3 Code Fork $VERSION" \
-              --notes "Windows x64 build of \`$GITHUB_REF_NAME\` ($GITHUB_SHA), unsigned." \
-              --latest
+              --notes "Windows x64 build of \`$GITHUB_REF_NAME\` ($GITHUB_SHA), unsigned."
+            gh release upload "$tag" release/*
           fi
+
+          current="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          current="${current#v}"
+          latest=true
+          if [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+            [[ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" || "$current" == "$VERSION" ]]; then
+            echo "::warning::Latest is $current, not below $VERSION, so $tag is published without becoming Latest."
+            latest=false
+          fi
+          gh release edit "$tag" --target "$GITHUB_SHA" --draft=false --prerelease=false --latest="$latest"
