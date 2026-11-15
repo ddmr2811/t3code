@@ -4,7 +4,7 @@ import {
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -158,11 +158,15 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed";
     if (hasNotificationSound(mode)) {
+      // Muting while the sound loads cancels it, even if the thread is unmuted before it plays.
+      const muteKey = scopedThreadKey(ref);
+      const generation = muteGenerations.get(muteKey);
       void playNotificationSound(kind, () => {
         const settings = getClientSettings();
         return (
           hasNotificationSound(settings.notificationMode) &&
-          !isThreadNotificationsMuted(settings.mutedThreadNotifications, ref)
+          !isThreadNotificationsMuted(settings.mutedThreadNotifications, ref) &&
+          muteGenerations.get(muteKey) === generation
         );
       });
     }
@@ -431,6 +435,8 @@ export function startThreadNotifications(
   };
 
   let appliedMuted = getClientSettings().mutedThreadNotifications;
+  // Times each thread was muted, by scoped thread key, so alerts started before a mute can tell.
+  const muteGenerations = new Map<string, number>();
   const applyMuted = () => {
     const nextMuted = getClientSettings().mutedThreadNotifications;
     if (nextMuted === appliedMuted) return;
@@ -441,9 +447,12 @@ export function startThreadNotifications(
       if (ref === null) continue;
       const wasMuted = isThreadNotificationsMuted(previousMuted, ref);
       const isMuted = isThreadNotificationsMuted(nextMuted, ref);
+      if (wasMuted === isMuted) continue;
+      if (isMuted) muteGenerations.set(key, (muteGenerations.get(key) ?? 0) + 1);
       const entry = watched.get(ref.environmentId);
-      if (!entry || wasMuted === isMuted) continue;
+      if (!entry) continue;
       if (isMuted) entry.gate.mute(ref.threadId);
+      // Not covered: a delegated task's request from a still-offline environment can announce once.
       else if (entry.reconnecting) entry.gate.unmuteWhileStale(ref.threadId);
     }
     closeHiddenPending();

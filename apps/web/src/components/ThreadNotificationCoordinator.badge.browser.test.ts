@@ -319,10 +319,14 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
-  // The sound plays only after it loads; a thread muted meanwhile stays quiet.
+  // The sound plays only after it loads; a thread muted meanwhile stays quiet, even once unmuted.
   const shouldPlay = state.sound.mock.calls[0]![1] as () => boolean;
   expect(shouldPlay()).toBe(true);
   state.muted = { "one:thread": true };
+  app.changeSettings();
+  expect(shouldPlay()).toBe(false);
+  state.muted = {};
+  app.changeSettings();
   expect(shouldPlay()).toBe(false);
 });
 
