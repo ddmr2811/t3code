@@ -4,11 +4,13 @@ import {
   type ForkTailnetStatus,
   USAGE_CONTRACT_VERSION,
 } from "@t3tools/contracts";
+import { makeWindow } from "@t3tools/shared/usageFormat";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   activeThreads,
+  currentUsageWindow,
   dashboardSpend,
   machineLoad,
   nextRoundTrips,
@@ -120,62 +122,90 @@ const status = (
 });
 
 describe("tailnetOnlyPeers", () => {
+  const nas = EnvironmentId.make("env-nas");
+  const offline = EnvironmentId.make("env-offline");
   const environments = [
     { environmentId: dev, label: "dev-box", connected: true },
     { environmentId: nexo, label: "Nexo", connected: true },
     { environmentId: pc, label: "Dani's PC", connected: true },
+    { environmentId: nas, label: "NAS", connected: true },
+    { environmentId: offline, label: "old-box", connected: false },
   ];
   const peers = [
     peer({ id: "nNexo", hostName: "nexo-server", dnsName: "nexo.tail0.ts.net" }),
     peer({ id: "nPc", hostName: "Desk" }),
     peer({ id: "nProd", hostName: "prod-box", latencyMs: 40, connection: "relay" }),
     peer({ id: "nOld", hostName: "old-box", online: false, connection: "offline" }),
+    peer({ id: "nOtherNas", hostName: "nas" }),
+    peer({ id: "nDevbox", hostName: "devbox" }),
+  ];
+  const readings = [
+    { environmentId: dev, status: status("nDev", peers) },
+    // The PC's own reading names it, though its label matches no host name.
+    { environmentId: pc, status: status("nPc") },
+    // The NAS environment is a different machine from the tailnet's "nas" peer.
+    { environmentId: nas, status: status("nNas") },
+    { environmentId: nexo, status: null },
   ];
 
-  it("drops peers that a connected server reports as itself or that share a machine's name", () => {
-    const view = tailnetOnlyPeers({
-      sourceEnvironmentId: dev,
-      readings: [
-        { environmentId: dev, status: status("nDev", peers) },
-        // The PC's own reading names it, though its label matches no host name.
-        { environmentId: pc, status: status("nPc") },
-        { environmentId: nexo, status: null },
-      ],
+  it("drops peers a server reports as itself, and by exact name those of unidentified machines", () => {
+    const list = tailnetOnlyPeers({ source: status("nDev", peers), readings, environments });
+    expect(list?.map((entry) => entry.hostName)).toEqual(["prod-box", "nas", "devbox"]);
+  });
+
+  it("lets a known identity win over a matching name", () => {
+    // Without the NAS's own reading, its label is all there is, and the name stands in.
+    const list = tailnetOnlyPeers({
+      source: status("nDev", peers),
+      readings: readings.filter((reading) => reading.environmentId !== nas),
       environments,
     });
-    expect(view?.sourceEnvironmentId).toBe(dev);
-    expect(view?.peers.map((entry) => entry.hostName)).toEqual(["prod-box", "old-box"]);
+    expect(list?.map((entry) => entry.hostName)).toEqual(["prod-box", "devbox"]);
   });
 
   it("has nothing to show when the source has no Tailscale", () => {
-    expect(
-      tailnetOnlyPeers({
-        sourceEnvironmentId: dev,
-        readings: [{ environmentId: dev, status: status("nDev", peers, false) }],
-        environments,
-      }),
-    ).toBe(null);
-    expect(tailnetOnlyPeers({ sourceEnvironmentId: null, readings: [], environments })).toBe(null);
-    expect(
-      tailnetOnlyPeers({
-        sourceEnvironmentId: dev,
-        readings: [{ environmentId: dev, status: null }],
-        environments,
-      }),
-    ).toBe(null);
+    expect(tailnetOnlyPeers({ source: status("nDev", peers, false), readings, environments })).toBe(
+      null,
+    );
+    expect(tailnetOnlyPeers({ source: null, readings, environments })).toBe(null);
   });
 });
 
 describe("pickTailnetSource", () => {
-  it("prefers the local server, then the first machine that can answer", () => {
-    const candidates = [
-      { environmentId: nexo, supported: true },
-      { environmentId: dev, supported: true },
-      { environmentId: pc, supported: false },
-    ];
-    expect(pickTailnetSource(candidates, dev)).toBe(dev);
-    expect(pickTailnetSource(candidates, pc)).toBe(nexo);
-    expect(pickTailnetSource([{ environmentId: pc, supported: false }], pc)).toBe(null);
+  const reading = (environmentId: EnvironmentId, available: boolean | null) => ({
+    environmentId,
+    status: available === null ? null : status(`self-${environmentId}`, [], available),
+  });
+
+  it("prefers the local server, then the others in order", () => {
+    expect(pickTailnetSource([nexo, dev], dev, [])).toBe(dev);
+    expect(pickTailnetSource([nexo, dev], pc, [])).toBe(nexo);
+    expect(pickTailnetSource([], pc, [])).toBe(null);
+  });
+
+  it("hands over to the next machine when Tailscale is not available on the chosen one", () => {
+    expect(pickTailnetSource([nexo, dev], dev, [reading(dev, false), reading(nexo, true)])).toBe(
+      nexo,
+    );
+    // One still loading keeps its turn rather than flipping between machines.
+    expect(pickTailnetSource([nexo, dev], dev, [reading(dev, null), reading(nexo, true)])).toBe(
+      dev,
+    );
+    expect(pickTailnetSource([nexo, dev], dev, [reading(dev, false), reading(nexo, false)])).toBe(
+      null,
+    );
+  });
+});
+
+describe("currentUsageWindow", () => {
+  it("keeps the same window through the day and moves it once the day changes", () => {
+    const morning = new Date(2026, 10, 15, 9, 0);
+    const window = makeWindow(7, morning);
+    expect(currentUsageWindow(window, new Date(2026, 10, 15, 23, 59))).toBe(window);
+    const next = currentUsageWindow(window, new Date(2026, 10, 16, 0, 1));
+    expect(next).not.toBe(window);
+    expect(next.untilDay).toBe(makeWindow(7, new Date(2026, 10, 16, 12, 0)).untilDay);
+    expect(next.sinceDay > window.sinceDay).toBe(true);
   });
 });
 

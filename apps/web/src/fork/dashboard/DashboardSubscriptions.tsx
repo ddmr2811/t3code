@@ -15,7 +15,16 @@ import { cn } from "../../lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "../../components/usage/usageProviders";
 import { environmentPresentations } from "../../state/presentation";
 import { useUsage } from "../../state/usage";
-import { dashboardSpend, type ProviderSpend } from "./dashboard.logic";
+import {
+  currentUsageWindow,
+  dashboardSpend,
+  type ProviderSpend,
+  USAGE_DAYS,
+} from "./dashboard.logic";
+import { useVisibleInterval } from "./visibleInterval";
+
+/** The transcript scan behind the spend is costly, so it repeats rarely. */
+const USAGE_REFRESH_MS = 10 * 60_000;
 
 const SHOWN_WINDOW_KINDS = new Set<ServerProviderUsageWindow["kind"]>(["session", "weekly"]);
 
@@ -139,8 +148,14 @@ function ProviderPanel(props: {
 export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   // Kept for the page's life: the usage query is keyed by this window.
-  const [usageWindow] = useState(() => makeWindow(7));
+  const [usageWindow, setUsageWindow] = useState(() => makeWindow(USAGE_DAYS));
   const usage = useUsage(usageWindow);
+  // A new day moves the window, which reads afresh; otherwise read the same days again.
+  useVisibleInterval(() => {
+    const next = currentUsageWindow(usageWindow, new Date());
+    if (next !== usageWindow) setUsageWindow(next);
+    else void usage.refresh();
+  }, USAGE_REFRESH_MS);
   const merged = usage.shown?.merged ?? usage.merged;
   const labels = new Map(
     usage.environments.map((environment) => [environment.environmentId, environment.label]),

@@ -7,7 +7,9 @@ import type {
   ForkTailnetStatus,
   HostResourcesSnapshot,
   UsageProviderKind,
+  UsageSummaryInput,
 } from "@t3tools/contracts";
+import { makeWindow } from "@t3tools/shared/usageFormat";
 import type { MergedUsage } from "@t3tools/shared/usageMerge";
 
 import { forkWaitingReason } from "../../components/ForkResourceWidget.logic";
@@ -87,9 +89,9 @@ export function onlineSummary(environments: ReadonlyArray<DashboardEnvironment>)
   return `${online} of ${environments.length} up`;
 }
 
-/** How a machine or peer name compares: case, dots and separators do not count. */
-function nameKey(name: string): string {
-  return (name.split(".")[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Host names compare without case or a trailing dot; nothing else is folded together. */
+function hostKey(name: string): string {
+  return name.trim().replace(/\.$/, "").toLowerCase();
 }
 
 export interface TailnetReading {
@@ -97,53 +99,66 @@ export interface TailnetReading {
   readonly status: ForkTailnetStatus | null;
 }
 
-export interface TailnetView {
-  /** The machine whose Tailscale reported the peers and measured their latency. */
-  readonly sourceEnvironmentId: EnvironmentId;
-  readonly peers: ReadonlyArray<ForkTailnetPeer>;
-}
-
 /**
- * The tailnet's machines that do not run T3 Code, from the source machine's reading. A peer is a
- * T3 machine when a connected fork server reports it as itself, or when its name matches one.
+ * The tailnet's machines that do not run T3 Code. A peer that a connected fork server reports
+ * as itself is a T3 machine. Names only stand in for machines whose identity no reading gives
+ * (offline, upstream or without Tailscale), and only an exact host name counts, so a machine
+ * whose identity is known never hides a different peer that happens to share its name.
  */
 export function tailnetOnlyPeers(input: {
-  readonly sourceEnvironmentId: EnvironmentId | null;
+  /** The source's reading: with latencies once its pings answer, without them until then. */
+  readonly source: ForkTailnetStatus | null;
   readonly readings: ReadonlyArray<TailnetReading>;
   readonly environments: ReadonlyArray<DashboardEnvironment>;
-}): TailnetView | null {
-  const source = input.readings.find(
-    (reading) => reading.environmentId === input.sourceEnvironmentId,
-  )?.status;
-  if (input.sourceEnvironmentId === null || !source?.available) return null;
-  const selfIds = new Set(
-    input.readings.flatMap((reading) => (reading.status?.self ? [reading.status.self.id] : [])),
+}): ReadonlyArray<ForkTailnetPeer> | null {
+  if (!input.source?.available) return null;
+  const selfByEnvironment = new Map(
+    input.readings.flatMap((reading) =>
+      reading.status?.self ? [[reading.environmentId, reading.status.self.id] as const] : [],
+    ),
   );
-  const environmentNames = new Set(
-    input.environments.map((environment) => nameKey(environment.label)).filter(Boolean),
+  const selfIds = new Set(selfByEnvironment.values());
+  const unidentifiedNames = new Set(
+    input.environments
+      .filter((environment) => !selfByEnvironment.has(environment.environmentId))
+      .map((environment) => hostKey(environment.label))
+      .filter((name) => name !== ""),
   );
   const isT3Machine = (peer: ForkTailnetPeer) =>
     selfIds.has(peer.id) ||
-    environmentNames.has(nameKey(peer.hostName)) ||
-    (peer.dnsName !== "" && environmentNames.has(nameKey(peer.dnsName)));
-  return {
-    sourceEnvironmentId: input.sourceEnvironmentId,
-    peers: source.peers.filter((peer) => !isT3Machine(peer)),
-  };
+    unidentifiedNames.has(hostKey(peer.hostName)) ||
+    (peer.dnsName !== "" && unidentifiedNames.has(hostKey(peer.dnsName.split(".")[0] ?? "")));
+  return input.source.peers.filter((peer) => !isT3Machine(peer));
 }
 
-/** The local server first, so latencies are measured from the machine the user sits at. */
+/**
+ * The machine that reads the tailnet: the local server first, so latencies are measured from the
+ * machine the user sits at, then the others in order. One whose reading says Tailscale is not
+ * available there hands over to the next; one still loading keeps its turn.
+ */
 export function pickTailnetSource(
-  candidates: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly supported: boolean }>,
+  candidates: ReadonlyArray<EnvironmentId>,
   primaryEnvironmentId: EnvironmentId | null,
+  readings: ReadonlyArray<TailnetReading>,
 ): EnvironmentId | null {
-  const supported = candidates.filter((candidate) => candidate.supported);
-  return (
-    supported.find((candidate) => candidate.environmentId === primaryEnvironmentId)
-      ?.environmentId ??
-    supported[0]?.environmentId ??
-    null
-  );
+  const unavailable = (environmentId: EnvironmentId) =>
+    readings.find((reading) => reading.environmentId === environmentId)?.status?.available ===
+    false;
+  const ordered =
+    primaryEnvironmentId !== null && candidates.includes(primaryEnvironmentId)
+      ? [primaryEnvironmentId, ...candidates.filter((id) => id !== primaryEnvironmentId)]
+      : candidates;
+  return ordered.find((environmentId) => !unavailable(environmentId)) ?? null;
+}
+
+export const USAGE_DAYS = 7;
+
+/** The last 7 days as of `now`: the same window, by reference, until the day changes. */
+export function currentUsageWindow(previous: UsageSummaryInput, now: Date): UsageSummaryInput {
+  const next = makeWindow(USAGE_DAYS, now);
+  return next.untilDay === previous.untilDay && next.timeZone === previous.timeZone
+    ? previous
+    : next;
 }
 
 export interface ProviderSpend {

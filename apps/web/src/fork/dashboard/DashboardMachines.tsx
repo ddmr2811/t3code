@@ -1,5 +1,5 @@
 // Fork-only: the Dashboard's machines, as a map around this client, and the tailnet's other machines.
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import {
   AuthDiagnosticsReadScope,
@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { MonitorIcon } from "lucide-react";
+import { useContext } from "react";
 
 import { isElectron } from "../../env";
 import { formatBytes } from "../../lib/formatBytes";
@@ -29,7 +30,13 @@ import {
   tailnetOnlyPeers,
   type TailnetReading,
 } from "./dashboard.logic";
-import { dashboardHostProbe, dashboardTailnetStatus } from "./dashboardState";
+import {
+  dashboardHostProbe,
+  dashboardTailnetStatus,
+  HOST_PROBE_INTERVAL_MS,
+  TAILNET_INTERVAL_MS,
+} from "./dashboardState";
+import { useVisibleInterval } from "./visibleInterval";
 
 const BUSY_SHARE = 0.85;
 const SATURATED_SHARE = 0.95;
@@ -79,6 +86,7 @@ function MachineCard({ environment }: { readonly environment: DashboardEnvironme
   const probe = useEnvironmentQuery(
     environment.connected ? dashboardHostProbe(environment.environmentId) : null,
   );
+  useVisibleInterval(probe.refresh, HOST_PROBE_INTERVAL_MS);
   const load = probe.data ? machineLoad(probe.data.host) : NO_LOAD;
   // A failed refresh keeps the last sample; dim it rather than pass it off as current.
   const stale = probe.data !== null && probe.error !== null;
@@ -216,36 +224,59 @@ function TailnetPeers(props: {
   readonly presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>;
   readonly nowMs: number;
 }) {
+  const registry = useContext(RegistryContext);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentsWithScope(props.environments, AuthDiagnosticsReadScope);
-  const candidates = props.environments.map((environment) => ({
-    environmentId: environment.environmentId,
-    supported:
-      environment.connected &&
-      (props.presentations.get(environment.environmentId)?.serverConfig?.environment.capabilities
-        .forkTailnet ?? 0) >= 1 &&
-      canRead.has(environment.environmentId),
-  }));
-  const sourceEnvironmentId = pickTailnetSource(candidates, primaryEnvironmentId);
-  const targets = candidates
-    .filter((candidate) => candidate.supported)
-    .map((candidate) => ({
-      environmentId: candidate.environmentId,
-      ping: candidate.environmentId === sourceEnvironmentId,
-    }));
+  const candidates = props.environments
+    .filter(
+      (environment) =>
+        environment.connected &&
+        (props.presentations.get(environment.environmentId)?.serverConfig?.environment.capabilities
+          .forkTailnet ?? 0) >= 1 &&
+        canRead.has(environment.environmentId),
+    )
+    .map((environment) => environment.environmentId);
+  // Every candidate's plain reading: who it is on the tailnet, and whether it can read it at all.
+  const targets = candidates.map((environmentId) => ({ environmentId, ping: false }));
   const readings = useAtomValue(tailnetReadingsAtom(JSON.stringify(targets)));
-  const view = tailnetOnlyPeers({
-    sourceEnvironmentId,
+  const sourceEnvironmentId = pickTailnetSource(candidates, primaryEnvironmentId, readings);
+  const pinged = useAtomValue(
+    tailnetReadingsAtom(
+      JSON.stringify(
+        sourceEnvironmentId === null ? [] : [{ environmentId: sourceEnvironmentId, ping: true }],
+      ),
+    ),
+  )[0]?.status;
+  useVisibleInterval(() => {
+    for (const target of targets) {
+      registry.refresh(dashboardTailnetStatus(target.environmentId, false));
+    }
+    if (sourceEnvironmentId !== null) {
+      registry.refresh(dashboardTailnetStatus(sourceEnvironmentId, true));
+    }
+  }, TAILNET_INTERVAL_MS);
+  if (candidates.length === 0) return null;
+  const plain = readings.find((reading) => reading.environmentId === sourceEnvironmentId)?.status;
+  // The pinged reading adds latencies; until it answers, the plain one already lists the peers.
+  const sourceStatus = pinged?.available ? pinged : (plain ?? null);
+  const peers = tailnetOnlyPeers({
+    source: sourceStatus,
     readings,
     environments: props.environments,
   });
-  if (sourceEnvironmentId === null) return null;
+  const view = peers === null ? null : { peers };
   const sourceLabel =
-    props.environments.find((environment) => environment.environmentId === sourceEnvironmentId)
-      ?.label ?? "";
-  const sourceStatus = readings.find(
-    (reading) => reading.environmentId === sourceEnvironmentId,
-  )?.status;
+    sourceEnvironmentId === null
+      ? null
+      : (props.environments.find((environment) => environment.environmentId === sourceEnvironmentId)
+          ?.label ?? "");
+  // With no machine able to read the tailnet, say why the first one could not.
+  const problem =
+    sourceEnvironmentId === null
+      ? (readings[0]?.status?.problem ?? "No data")
+      : sourceStatus === null
+        ? null
+        : (sourceStatus.problem ?? "No data");
 
   return (
     <section
@@ -254,7 +285,9 @@ function TailnetPeers(props: {
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className={caption}>Tailnet · without T3 Code</span>
-        <span className="font-mono text-2xs text-muted-foreground">via {sourceLabel}</span>
+        {sourceLabel !== null ? (
+          <span className="font-mono text-2xs text-muted-foreground">via {sourceLabel}</span>
+        ) : null}
         {view ? (
           <span className="ms-auto font-mono text-2xs text-muted-foreground">
             {view.peers.filter((peer) => peer.online).length} of {view.peers.length} online
@@ -262,11 +295,7 @@ function TailnetPeers(props: {
         ) : null}
       </div>
       {view === null ? (
-        <p className="text-muted-foreground text-xs">
-          {sourceStatus === undefined || sourceStatus === null
-            ? "Reading the tailnet…"
-            : (sourceStatus.problem ?? "No data")}
-        </p>
+        <p className="text-muted-foreground text-xs">{problem ?? "Reading the tailnet…"}</p>
       ) : view.peers.length === 0 ? (
         <p className="text-muted-foreground text-xs">Every machine on the tailnet runs T3 Code.</p>
       ) : (

@@ -1,4 +1,5 @@
-// Fork-only: the Dashboard's per-machine queries. Both poll only while the Dashboard reads them.
+// Fork-only: the Dashboard's per-machine queries. The Dashboard refreshes them while its tab is
+// visible (visibleInterval.ts); an atom interval would keep running in a hidden tab.
 import { request } from "@t3tools/client-runtime/rpc";
 import {
   createEnvironmentQueryAtomFamily,
@@ -29,7 +30,6 @@ const hostProbe = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:fork-dashboard:host-probe",
   idleTtlMs: 0,
   staleTimeMs: 2_000,
-  refreshIntervalMs: 2_500,
   execute: (
     input: Record<string, never>,
     _emit: (value: HostProbe) => Effect.Effect<void>,
@@ -48,6 +48,9 @@ const hostProbe = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
     ),
 });
 
+export const HOST_PROBE_INTERVAL_MS = 2_500;
+export const TAILNET_INTERVAL_MS = 45_000;
+
 export const dashboardHostProbe = (environmentId: EnvironmentId) =>
   hostProbe({ environmentId, input: {} });
 
@@ -56,9 +59,8 @@ const tailnetStatus = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime,
   tag: WS_METHODS.forkTailnetStatus,
   idleTtlMs: 0,
   staleTimeMs: 30_000,
-  refreshIntervalMs: 45_000,
 });
 
-/** Only the source machine pings; the others answer who they are on the tailnet. */
+/** Only the source machine pings; every candidate also answers who it is and whether it can read. */
 export const dashboardTailnetStatus = (environmentId: EnvironmentId, ping: boolean) =>
   tailnetStatus({ environmentId, input: { ping } });
