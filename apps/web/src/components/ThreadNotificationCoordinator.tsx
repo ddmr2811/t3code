@@ -4,6 +4,7 @@ import {
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -141,17 +142,8 @@ export function startThreadNotifications(
   ) => {
     const { thread, status } = state;
     const ref = { environmentId, threadId: thread.id };
-    const {
-      notificationMode: mode,
-      inAppNotificationsEnabled,
-      mutedThreadNotifications,
-    } = getClientSettings();
-    // A wake completion's grace timer can fire after its thread was muted.
-    if (
-      registry.get(environmentThreadShells.hiddenThreadKeysAtom).has(threadKey(ref)) ||
-      isThreadNotificationsMuted(mutedThreadNotifications, ref)
-    )
-      return;
+    if (registry.get(environmentThreadShells.hiddenThreadKeysAtom).has(threadKey(ref))) return;
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
     const title =
       kind === "completion"
@@ -166,9 +158,13 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed";
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
-      );
+      void playNotificationSound(kind, () => {
+        const settings = getClientSettings();
+        return (
+          hasNotificationSound(settings.notificationMode) &&
+          !isThreadNotificationsMuted(settings.mutedThreadNotifications, ref)
+        );
+      });
     }
     if (
       inAppNotificationsEnabled &&
@@ -434,10 +430,29 @@ export function startThreadNotifications(
     };
   };
 
+  let appliedMuted = getClientSettings().mutedThreadNotifications;
+  const applyMuted = () => {
+    const nextMuted = getClientSettings().mutedThreadNotifications;
+    if (nextMuted === appliedMuted) return;
+    const previousMuted = appliedMuted;
+    appliedMuted = nextMuted;
+    for (const key of new Set([...Object.keys(previousMuted), ...Object.keys(nextMuted)])) {
+      const ref = parseScopedThreadKey(key);
+      if (ref === null) continue;
+      const wasMuted = isThreadNotificationsMuted(previousMuted, ref);
+      const isMuted = isThreadNotificationsMuted(nextMuted, ref);
+      const entry = watched.get(ref.environmentId);
+      if (!entry || wasMuted === isMuted) continue;
+      if (isMuted) entry.gate.mute(ref.threadId);
+      else if (entry.reconnecting) entry.gate.unmuteWhileStale(ref.threadId);
+    }
+    closeHiddenPending();
+  };
+
   const onSettings = () => {
     applyMode();
     syncEnvironments();
-    closeHiddenPending();
+    applyMuted();
   };
   const unsubscribeSettings = subscribeClientSettings(onSettings);
   const unsubscribeEnvironmentIds = registry.subscribe(

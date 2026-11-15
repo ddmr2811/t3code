@@ -319,7 +319,73 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+  // The sound plays only after it loads; a thread muted meanwhile stays quiet.
+  const shouldPlay = state.sound.mock.calls[0]![1] as () => boolean;
+  expect(shouldPlay()).toBe(true);
+  state.muted = { "one:thread": true };
+  expect(shouldPlay()).toBe(false);
 });
+
+it("drops a wake completion waiting out the grace when its thread is muted, even if unmuted in time", async () => {
+  await using app = setup();
+  using _timers = fakeTimers();
+  app.start();
+  const wake = (turnState: string, completedAt: string | null) => ({
+    status: "live",
+    snapshot: Option.some({
+      threads: [
+        {
+          ...toV2ThreadShell({
+            ...thread,
+            latestTurn: { turnId: "wake", state: turnState, completedAt },
+          }),
+          latestRunBackgroundWake: true,
+          pendingBackgroundTasks: [],
+        },
+      ],
+    }),
+  });
+  state.shells.set("one", wake("running", null));
+  state.shells.set("one", wake("completed", "2026-09-13T07:00:09.000Z"));
+  state.muted = { "one:thread": true };
+  app.changeSettings();
+  state.muted = {};
+  app.changeSettings();
+  vi.advanceTimersByTime(RELEASED_COMPLETION_GRACE_MS);
+  expect(TestNotification.sent).toEqual([]);
+});
+
+it.each([
+  [
+    "a completion",
+    { latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:00:05.000Z" } },
+  ],
+  ["an approval", { hasPendingApprovals: true }],
+] as const)(
+  "does not announce %s from while muted when unmuted before reconnecting",
+  async (_name, offline) => {
+    await using app = setup();
+    app.start();
+    state.muted = { "one:thread": true };
+    app.changeSettings();
+    state.shells.set("one", { ...shell(), status: "cached" });
+    state.muted = {};
+    app.changeSettings();
+    state.shells.set("one", shell(offline));
+    expect(TestNotification.sent).toEqual([]);
+    state.shells.set(
+      "one",
+      shell({ latestTurn: { turnId: "next", state: "running", completedAt: null } }),
+    );
+    state.shells.set(
+      "one",
+      shell({
+        latestTurn: { turnId: "next", state: "completed", completedAt: "2026-09-13T07:00:10.000Z" },
+      }),
+    );
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+  },
+);
 
 it.each([false, true])(
   "presents one completion when a monitor ends with a final wake (disconnected: %s)",

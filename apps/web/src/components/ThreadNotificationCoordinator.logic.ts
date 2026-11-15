@@ -82,6 +82,8 @@ export function createThreadNotificationGate<Key>(
     clearTimeout(releases.get(key)?.timer);
     releases.delete(key);
   };
+  // Unmuted while the snapshot was stale: the next observation reports what happened while muted.
+  const held = new Set<Key>();
   // Attention keys with a request id seen since the thread last stopped needing attention.
   const attended = new Map<Key, Set<string>>();
   const attend = (
@@ -114,8 +116,9 @@ export function createThreadNotificationGate<Key>(
     ): void {
       // The grace survives updates that keep the wake's completion; anything else cancels it.
       const pending = releases.get(key);
+      const wasHeld = held.delete(key);
       // Archived and muted threads notify nothing; snoozed ones still notify attention.
-      const silent = options.archived || options.muted;
+      const silent = options.archived || options.muted || wasHeld;
       const silenced = silent || options.quiet || options.snoozed;
       if (pending?.at === next.completedAt && !silenced) {
         if (pending.timer === undefined) release(key, pending.at);
@@ -140,6 +143,17 @@ export function createThreadNotificationGate<Key>(
       handled.set(key, at);
       notify(key, "completion");
     },
+    /** A thread just muted drops its wake completion waiting out the grace, as handled. */
+    mute(key: Key): void {
+      const pending = releases.get(key);
+      if (!pending) return;
+      cancel(key);
+      skip(key, pending.at);
+    },
+    /** A thread unmuted while the snapshot is stale stays muted for its next observation. */
+    unmuteWhileStale(key: Key): void {
+      held.add(key);
+    },
     /** Stops grace timers while the snapshot is stale; the next observation restarts or drops them. */
     pause(): void {
       for (const [key, { at, timer }] of releases) {
@@ -152,11 +166,13 @@ export function createThreadNotificationGate<Key>(
       for (const key of handled.keys()) if (!keys.has(key)) handled.delete(key);
       for (const key of releases.keys()) if (!keys.has(key)) cancel(key);
       for (const key of attended.keys()) if (!keys.has(key)) attended.delete(key);
+      for (const key of held) if (!keys.has(key)) held.delete(key);
     },
     clear(): void {
       for (const key of releases.keys()) cancel(key);
       handled.clear();
       attended.clear();
+      held.clear();
     },
   };
 }
