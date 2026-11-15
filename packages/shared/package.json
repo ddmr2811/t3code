@@ -463,6 +463,10 @@
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
     },
+    "./forkVersion": {
+      "types": "./src/forkVersion.ts",
+      "import": "./src/forkVersion.ts"
+    },
     "./diffCutLines": {
       "types": "./src/diffCutLines.ts",
       "import": "./src/diffCutLines.ts"

@@ -79,11 +79,15 @@ describe("versionSkew", () => {
     expect(resolveVersionMismatch("9.9.9")).toBeNull();
   });
 
-  it("does not warn when a nightly and a stable build share a core version", () => {
+  it("does not warn when nightly, stable and fork builds share a core version", () => {
     expect(resolveVersionMismatch("0.0.34-nightly.20260818.1124")).toBeNull();
 
     branding.APP_VERSION = "0.0.34-nightly.20260818.1124";
     expect(resolveVersionMismatch("0.0.34")).toBeNull();
+
+    branding.APP_VERSION = "0.1.903";
+    expect(resolveVersionMismatch("0.1.9")).toBeNull();
+    expect(resolveVersionMismatch("0.1.8")).not.toBeNull();
   });
 
   it.each(["0.0.34-nightly.20260823.1124", "0.0.34-nightly.20260824.1124"])(

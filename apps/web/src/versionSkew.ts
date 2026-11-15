@@ -5,6 +5,7 @@ import type {
   ServerSelfUpdateCapability,
 } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { forkBaseVersion } from "@t3tools/shared/forkVersion";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
@@ -54,8 +55,9 @@ export function resolveVersionMismatch(
     return null;
   }
 
-  const clientCore = versionCore(normalizedClientVersion);
-  const serverCore = versionCore(normalizedServerVersion);
+  // A fork build x.y.(z*100+n) runs the same release as an x.y.z server.
+  const clientCore = forkBaseVersion(versionCore(normalizedClientVersion));
+  const serverCore = forkBaseVersion(versionCore(normalizedServerVersion));
   const compareNightlyBuilds =
     parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
     parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
