@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   parseTailscalePing,
   parseTailscaleStatus,
-  shouldPing,
+  pingAddress,
   withPong,
 } from "./tailscaleStatus.ts";
 
@@ -142,7 +142,7 @@ describe("parseTailscalePing", () => {
   });
 });
 
-describe("withPong and shouldPing", () => {
+describe("withPong and pingAddress", () => {
   const parsed = parseTailscaleStatus(STATUS_SAMPLE);
   const peers = parsed.available ? parsed.peers : [];
   const prod = peers.find((peer) => peer.hostName === "prod-box");
@@ -161,7 +161,34 @@ describe("withPong and shouldPing", () => {
     expect(withPong(prod, null)).toBe(prod);
   });
 
-  it("pings online computers only", () => {
-    expect(peers.filter(shouldPing).map((peer) => peer.hostName)).toEqual(["Desk", "prod-box"]);
+  it("pings online computers only, at their IPv4 address", () => {
+    expect(peers.map((peer) => [peer.hostName, pingAddress(peer)])).toEqual([
+      ["Desk", "100.64.0.3"],
+      ["Phone", null],
+      ["prod-box", "100.64.0.2"],
+      ["old-box", null],
+    ]);
+  });
+
+  it("keeps anything but a literal IP away from the command line", () => {
+    const parsed = parseTailscaleStatus(
+      JSON.stringify({
+        BackendState: "Running",
+        Peer: {
+          a: {
+            ID: "nOdd",
+            HostName: "odd",
+            OS: "linux",
+            Online: true,
+            TailscaleIPs: ["--peerapi", "100.64.0.9; rm -rf /", 7, "fd7a:115c:a1e0::9"],
+          },
+        },
+      }),
+    );
+    const odd = parsed.available ? parsed.peers[0] : undefined;
+    expect(odd?.addresses).toEqual(["fd7a:115c:a1e0::9"]);
+    if (odd === undefined) throw new Error("sample has odd");
+    expect(pingAddress(odd)).toBe("fd7a:115c:a1e0::9");
+    expect(pingAddress({ ...odd, addresses: ["--help"] })).toBe(null);
   });
 });

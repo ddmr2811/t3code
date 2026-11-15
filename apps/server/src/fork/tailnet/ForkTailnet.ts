@@ -11,7 +11,7 @@ import * as ProcessRunner from "../../processRunner.ts";
 import {
   parseTailscalePing,
   parseTailscaleStatus,
-  shouldPing,
+  pingAddress,
   withPong,
 } from "./tailscaleStatus.ts";
 
@@ -71,10 +71,12 @@ export const make = Effect.gen(function* () {
     const status = yield* readStatus();
     const peers = yield* Effect.forEach(
       status.peers,
-      (peer) =>
-        shouldPing(peer)
-          ? ping(peer.addresses[0] ?? "").pipe(Effect.map((pong) => withPong(peer, pong)))
-          : Effect.succeed(peer),
+      (peer) => {
+        const address = pingAddress(peer);
+        return address === null
+          ? Effect.succeed(peer)
+          : ping(address).pipe(Effect.map((pong) => withPong(peer, pong)));
+      },
       { concurrency: PING_CONCURRENCY },
     );
     return { ...status, peers };

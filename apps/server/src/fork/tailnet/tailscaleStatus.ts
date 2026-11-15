@@ -1,4 +1,6 @@
 // Fork-only: reads `tailscale status --json` and `tailscale ping` output into the Dashboard's shape.
+import * as NodeNet from "node:net";
+
 import type { ForkTailnetNode, ForkTailnetPeer } from "@t3tools/contracts";
 
 /** Go's zero time, which Tailscale prints for "never". */
@@ -21,7 +23,9 @@ const record = (value: unknown): Record<string, unknown> | null =>
 
 function node(raw: Record<string, unknown>): ForkTailnetNode {
   const addresses = Array.isArray(raw.TailscaleIPs)
-    ? raw.TailscaleIPs.filter((address): address is string => typeof address === "string")
+    ? raw.TailscaleIPs.filter(
+        (address): address is string => typeof address === "string" && NodeNet.isIP(address) !== 0,
+      )
     : [];
   return {
     id: text(raw.ID) || text(raw.PublicKey),
@@ -107,7 +111,13 @@ export function withPong(target: ForkTailnetPeer, pong: TailscalePong | null): F
   };
 }
 
-/** Phones and tablets wake up for every ping, so they only report presence. */
-export function shouldPing(target: ForkTailnetPeer): boolean {
-  return target.online && target.addresses.length > 0 && !/^(android|ios)$/i.test(target.os);
+/**
+ * The address to `tailscale ping`, IPv4 first, or null when the peer is not pinged. Phones and
+ * tablets wake up for every ping, so they only report presence. Only a literal IP reaches the
+ * command line, whatever the status JSON held.
+ */
+export function pingAddress(target: ForkTailnetPeer): string | null {
+  if (!target.online || /^(android|ios)$/i.test(target.os)) return null;
+  const addresses = target.addresses.filter((address) => NodeNet.isIP(address) !== 0);
+  return addresses.find((address) => NodeNet.isIP(address) === 4) ?? addresses[0] ?? null;
 }
