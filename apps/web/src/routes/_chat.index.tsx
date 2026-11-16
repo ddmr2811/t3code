@@ -20,9 +20,14 @@ import {
   readProject,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
+  useQuietThreadShell,
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { useHomeEnvironmentState } from "../fork/homeThread";
+import { parseHomeThread, resolveStartScreen } from "../fork/homeThread.logic";
+import { useRightPanelStore } from "../rightPanelStore";
+import { buildThreadRouteParams } from "../threadRoutes";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -36,7 +41,7 @@ function ChatIndexRouteView() {
   return <ForkIndex />;
 }
 
-// Fork: only a Home the app opened on may hand over to the Dashboard; later ones stay.
+// Fork: only a Home the app opened on may hand over to the home thread or the Dashboard.
 let startScreenChosen = false;
 
 // Fork: with projects the index is a home page; the upstream landing only handles the empty workspace.
@@ -46,14 +51,45 @@ function ForkIndex() {
   const router = useRouter();
   const settingsHydrated = useClientSettingsHydrated();
   const openDashboard = useClientSettings((settings) => settings.forkOpenDashboardOnStart);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on app start, opens the Dashboard once the saved client settings have loaded
+  const homeThreadKey = useClientSettings((settings) => settings.forkHomeThread);
+  const homeThread = parseHomeThread(homeThreadKey);
+  const homeEnvironment = useHomeEnvironmentState(homeThread?.environmentId ?? null);
+  const homeThreadShell = useQuietThreadShell(homeThread);
+  const homeThreadExists =
+    homeThreadShell !== null &&
+    homeThreadShell.deletedAt === null &&
+    homeThreadShell.archivedAt === null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on app start, opens the home thread or the Dashboard once the saved client settings and the home thread's environment have loaded
   useEffect(() => {
     if (startScreenChosen || !settingsHydrated) return;
+    const screen = resolveStartScreen({
+      initialEntry: isInitialHistoryEntry(router),
+      homeThread: parseHomeThread(homeThreadKey),
+      homeEnvironment,
+      homeThreadExists,
+      openDashboard,
+    });
+    if (screen.kind === "wait") return;
     startScreenChosen = true;
-    if (openDashboard && isInitialHistoryEntry(router)) {
+    if (screen.kind === "dashboard") {
       void navigate({ to: "/dashboard", replace: true });
+    } else if (screen.kind === "thread") {
+      useRightPanelStore.getState().open(screen.threadRef, "dashboard");
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(screen.threadRef),
+        replace: true,
+      });
     }
-  }, [navigate, openDashboard, router, settingsHydrated]);
+  }, [
+    homeEnvironment,
+    homeThreadExists,
+    homeThreadKey,
+    navigate,
+    openDashboard,
+    router,
+    settingsHydrated,
+  ]);
   return hasProject ? <ForkHome /> : <IndexDraftLanding />;
 }
 

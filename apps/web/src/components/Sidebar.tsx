@@ -131,6 +131,8 @@ import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { setThreadNotificationsMuted } from "../threadNotificationMute";
+import { setHomeThread } from "../fork/homeThread";
+import { isHomeThread } from "../fork/homeThread.logic";
 import { isThreadNotificationsMuted } from "./ThreadNotificationCoordinator.logic";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -2720,6 +2722,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 getClientSettings().mutedThreadNotifications,
                 threadRef,
               ),
+              isHomeThread: isHomeThread(getClientSettings().forkHomeThread, threadRef),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               canShareWithGuest: appAtomRegistry.get(
@@ -2867,6 +2870,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "mute-notifications":
           case "unmute-notifications":
             await setThreadNotificationsMuted(threadRef, clicked.value === "mute-notifications");
+            return;
+          case "set-home-thread":
+          case "unset-home-thread":
+            await setHomeThread(threadRef, clicked.value === "set-home-thread");
             return;
           case "copy-path":
             if (!threadWorkspacePath) {

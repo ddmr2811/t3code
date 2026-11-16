@@ -63,6 +63,9 @@ describe("buildThreadActionMenuItems", () => {
       expect(
         items.some((item) => ["mute-notifications", "unmute-notifications"].includes(item.id)),
       ).toBe(true);
+      expect(items.some((item) => ["set-home-thread", "unset-home-thread"].includes(item.id))).toBe(
+        true,
+      );
       expect(
         items.find((item) => item.id === "snooze")?.children?.every((child) => child.disabled) ??
           true,

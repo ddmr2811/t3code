@@ -27,6 +27,8 @@ import {
   orderMachines,
   pickTailnetSource,
   splitAroundHub,
+  tailnetEndpointHosts,
+  type TailnetEnvironment,
   tailnetOnlyPeers,
   type TailnetReading,
 } from "./dashboard.logic";
@@ -203,6 +205,26 @@ function PeerCard({ peer, nowMs }: { readonly peer: ForkTailnetPeer; readonly no
   );
 }
 
+/** The Dashboard column's peer: its name and latency, in a row of chips. */
+function PeerChip({ peer }: { readonly peer: ForkTailnetPeer }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1.5 text-xs",
+        !peer.online && "opacity-60",
+      )}
+    >
+      <StatusDot tone={peer.online ? "online" : "offline"} />
+      <span className="truncate">{peer.hostName}</span>
+      {peer.latencyMs !== null ? (
+        <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
+          {Math.round(peer.latencyMs)} ms
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 const tailnetReadingsAtom = Atom.family((key: string) =>
   Atom.make((get): ReadonlyArray<TailnetReading> => {
     const targets = JSON.parse(key) as ReadonlyArray<{
@@ -220,9 +242,10 @@ const tailnetReadingsAtom = Atom.family((key: string) =>
 );
 
 function TailnetPeers(props: {
-  readonly environments: ReadonlyArray<DashboardEnvironment>;
+  readonly environments: ReadonlyArray<TailnetEnvironment>;
   readonly presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>;
   readonly nowMs: number;
+  readonly compact: boolean;
 }) {
   const registry = useContext(RegistryContext);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -281,7 +304,10 @@ function TailnetPeers(props: {
   return (
     <section
       aria-label="Tailnet machines without T3 Code"
-      className="flex flex-col gap-2 rounded-md border border-dashed p-3"
+      className={cn(
+        "flex flex-col gap-2 rounded-md border border-dashed",
+        props.compact ? "px-2.5 py-2" : "p-3",
+      )}
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className={caption}>Tailnet · without T3 Code</span>
@@ -298,6 +324,12 @@ function TailnetPeers(props: {
         <p className="text-muted-foreground text-xs">{problem ?? "Reading the tailnet…"}</p>
       ) : view.peers.length === 0 ? (
         <p className="text-muted-foreground text-xs">Every machine on the tailnet runs T3 Code.</p>
+      ) : props.compact ? (
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {view.peers.map((peer) => (
+            <PeerChip key={peer.id} peer={peer} />
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
           {view.peers.map((peer) => (
@@ -309,17 +341,46 @@ function TailnetPeers(props: {
   );
 }
 
-export function DashboardMachines({ nowMs }: { readonly nowMs: number }) {
+/** `compact` is the Dashboard column beside a chat: a grid of machines, without the map. */
+export function DashboardMachines({
+  nowMs,
+  compact = false,
+}: {
+  readonly nowMs: number;
+  readonly compact?: boolean;
+}) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const environments = orderMachines(
     [...presentations]
       .filter(([, presentation]) => presentation.entry.enabled)
-      .map(([environmentId, presentation]) => ({
+      .map(([environmentId, presentation]): TailnetEnvironment => ({
         environmentId,
         label: presentation.entry.target.label,
         connected: presentation.connection.phase === "connected",
+        hostname: presentation.serverConfig?.hostname ?? null,
+        tailnetHosts: tailnetEndpointHosts(presentation.serverConfig?.directEndpoints),
       })),
   );
+  const tailnet = (
+    <TailnetPeers
+      environments={environments}
+      presentations={presentations}
+      nowMs={nowMs}
+      compact={compact}
+    />
+  );
+  if (compact) {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border p-2">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
+          {environments.map((environment) => (
+            <MachineCard key={environment.environmentId} environment={environment} />
+          ))}
+        </div>
+        {tailnet}
+      </div>
+    );
+  }
   const { left, right } = splitAroundHub(environments);
 
   return (
@@ -335,7 +396,7 @@ export function DashboardMachines({ nowMs }: { readonly nowMs: number }) {
           <Wing machines={right} side="right" />
         </div>
       </div>
-      <TailnetPeers environments={environments} presentations={presentations} nowMs={nowMs} />
+      {tailnet}
     </div>
   );
 }

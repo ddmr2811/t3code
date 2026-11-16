@@ -1152,7 +1152,7 @@ export function GeneralSettingsPanel() {
         {/* Fork: the Dashboard as the start screen; Home stays one click away. */}
         <SettingsRow
           {...setting("fork-dashboard-on-start")}
-          description="Show the Dashboard instead of Home when T3 Code opens on this device."
+          description="Show the Dashboard instead of Home when T3 Code opens on this device. A home thread, set from a thread's menu, opens first."
           resetAction={
             settings.forkOpenDashboardOnStart !==
             DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart ? (

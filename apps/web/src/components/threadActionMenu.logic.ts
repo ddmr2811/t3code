@@ -19,6 +19,8 @@ export type ThreadActionMenuId =
   | "unsnooze"
   | "mute-notifications"
   | "unmute-notifications"
+  | "set-home-thread"
+  | "unset-home-thread"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -84,6 +86,8 @@ export interface ThreadActionMenuState {
   readonly canSnoozeNow: boolean;
   /** Muting is a client setting, so read-only clients can mute too. */
   readonly isNotificationsMuted: boolean;
+  /** Fork: the home thread is a client setting too. */
+  readonly isHomeThread?: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
@@ -110,6 +114,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "mark-unread",
     "mute-notifications",
     "unmute-notifications",
+    "set-home-thread",
+    "unset-home-thread",
     "share-guest",
     "copy",
     "copy-path",
@@ -176,6 +182,9 @@ export function buildThreadActionMenuItems(
     state.isNotificationsMuted
       ? { id: "unmute-notifications", label: "Unmute notifications", icon: "bell" }
       : { id: "mute-notifications", label: "Mute notifications", icon: "bell-off" },
+    state.isHomeThread
+      ? { id: "unset-home-thread", label: "Unset home thread", icon: "house" }
+      : { id: "set-home-thread", label: "Set as home thread", icon: "house" },
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [

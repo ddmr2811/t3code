@@ -47,6 +47,7 @@ import {
   CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
+  HouseIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -68,6 +69,7 @@ import {
 } from "react";
 
 import { useThreadNotificationsMuted } from "../../threadNotificationMute";
+import { useIsHomeThread } from "../../fork/homeThread";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
@@ -696,6 +698,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const terminalProcessCount = runningTerminalIds.length;
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
   const notificationsMuted = useThreadNotificationsMuted(threadRef);
+  const isHomeThread = useIsHomeThread(threadRef);
   const handleDiscardDraftClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1137,6 +1140,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <TooltipPopup side="top">Notifications muted</TooltipPopup>
       </Tooltip>
     ) : null;
+  const homeIndicator =
+    isHomeThread && !sortable?.isDragging ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label="Home thread"
+              className="inline-flex shrink-0 items-center text-muted-foreground/65"
+            />
+          }
+        >
+          <HouseIcon aria-hidden className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Home thread: the app opens here</TooltipPopup>
+      </Tooltip>
+    ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1301,6 +1321,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {draftIndicator}
               {title}
               {multiline ? titleLineIcons : null}
+              {homeIndicator}
               {mutedIndicator}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1487,6 +1508,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
+              {homeIndicator}
               {mutedIndicator}
               {pinIndicator}
               {props.projectDisplayName ? (

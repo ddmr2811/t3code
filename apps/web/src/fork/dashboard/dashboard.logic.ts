@@ -99,36 +99,76 @@ export interface TailnetReading {
   readonly status: ForkTailnetStatus | null;
 }
 
+/** What a server says about itself without the fork's tailnet call (upstream and older forks). */
+export interface TailnetEnvironment extends DashboardEnvironment {
+  /** The machine's own name, which Tailscale reports as its host name unless told otherwise. */
+  readonly hostname?: string | null;
+  /** Hosts of the server's advertised tailnet endpoints: Tailscale IPs or its MagicDNS name. */
+  readonly tailnetHosts?: ReadonlyArray<string>;
+}
+
+/** The host of each tailnet endpoint a server advertises, lowercased, without IPv6 brackets. */
+export function tailnetEndpointHosts(
+  endpoints: ReadonlyArray<{ readonly kind: string; readonly httpBaseUrl: string }> | undefined,
+): ReadonlyArray<string> {
+  return (endpoints ?? []).flatMap((endpoint) => {
+    if (endpoint.kind !== "tailnet") return [];
+    try {
+      const host = hostKey(new URL(endpoint.httpBaseUrl).hostname.replace(/^\[(.*)\]$/, "$1"));
+      return host === "" ? [] : [host];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /**
- * The tailnet's machines that do not run T3 Code. A peer that a connected fork server reports
- * as itself is a T3 machine. Names only stand in for machines whose identity no reading gives
- * (offline, upstream or without Tailscale), and only an exact host name counts, so a machine
- * whose identity is known never hides a different peer that happens to share its name.
+ * The tailnet's machines without T3 Code. A T3 machine is a peer a fork server reports as itself,
+ * or one holding the exact Tailscale IP or MagicDNS name a server advertises as its endpoint.
+ * Exact names stand in only for machines neither identifies, so a known one never hides another.
  */
 export function tailnetOnlyPeers(input: {
   /** The source's reading: with latencies once its pings answer, without them until then. */
   readonly source: ForkTailnetStatus | null;
   readonly readings: ReadonlyArray<TailnetReading>;
-  readonly environments: ReadonlyArray<DashboardEnvironment>;
+  readonly environments: ReadonlyArray<TailnetEnvironment>;
 }): ReadonlyArray<ForkTailnetPeer> | null {
   if (!input.source?.available) return null;
+  const peers = input.source.peers;
   const selfByEnvironment = new Map(
     input.readings.flatMap((reading) =>
       reading.status?.self ? [[reading.environmentId, reading.status.self.id] as const] : [],
     ),
   );
-  const selfIds = new Set(selfByEnvironment.values());
+  const t3PeerIds = new Set(selfByEnvironment.values());
+  const identified = new Set(selfByEnvironment.keys());
+  for (const environment of input.environments) {
+    if (identified.has(environment.environmentId)) continue;
+    const hosts = new Set(environment.tailnetHosts ?? []);
+    const owned = peers.filter(
+      (peer) =>
+        peer.addresses.some((address) => hosts.has(address.toLowerCase())) ||
+        (peer.dnsName !== "" && hosts.has(hostKey(peer.dnsName))),
+    );
+    if (owned.length === 0) continue;
+    identified.add(environment.environmentId);
+    for (const peer of owned) t3PeerIds.add(peer.id);
+  }
   const unidentifiedNames = new Set(
     input.environments
-      .filter((environment) => !selfByEnvironment.has(environment.environmentId))
-      .map((environment) => hostKey(environment.label))
+      .flatMap((environment) =>
+        identified.has(environment.environmentId)
+          ? []
+          : [environment.label, environment.hostname ?? ""],
+      )
+      .map(hostKey)
       .filter((name) => name !== ""),
   );
   const isT3Machine = (peer: ForkTailnetPeer) =>
-    selfIds.has(peer.id) ||
+    t3PeerIds.has(peer.id) ||
     unidentifiedNames.has(hostKey(peer.hostName)) ||
     (peer.dnsName !== "" && unidentifiedNames.has(hostKey(peer.dnsName.split(".")[0] ?? "")));
-  return input.source.peers.filter((peer) => !isT3Machine(peer));
+  return peers.filter((peer) => !isT3Machine(peer));
 }
 
 /**

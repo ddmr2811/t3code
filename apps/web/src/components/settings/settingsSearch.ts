@@ -711,7 +711,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "fork-dashboard-on-start",
     title: "Open Dashboard on start",
     to: "/settings/general",
-    searchTerms: ["dashboard panel start screen home startup launch machines"],
+    searchTerms: ["dashboard panel start screen home thread startup launch machines"],
   },
   {
     id: "response-streaming",

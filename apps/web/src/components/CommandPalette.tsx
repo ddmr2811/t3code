@@ -61,6 +61,7 @@ import {
   BellOffIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  HouseIcon,
   LayoutDashboardIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -194,6 +195,7 @@ import {
   setThreadNotificationsMuted,
   useThreadNotificationsMuted,
 } from "../threadNotificationMute";
+import { setHomeThread, useIsHomeThread } from "../fork/homeThread";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
@@ -503,6 +505,9 @@ function OpenCommandPaletteDialog(props: {
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadNotificationsMuted = useThreadNotificationsMuted(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const activeThreadIsHome = useIsHomeThread(
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
   );
   const activeThreadServerConfig = useServerConfigs().get(
@@ -1527,6 +1532,26 @@ function OpenCommandPaletteDialog(props: {
         <BellOffIcon className={ITEM_ICON_CLASS} />
       ),
       run: () => setThreadNotificationsMuted(threadRef, !muted),
+    });
+    // Fork: the home thread and the Dashboard column beside any thread.
+    const isHome = activeThreadIsHome;
+    actionItems.push({
+      kind: "action",
+      value: "action:fork-toggle-home-thread",
+      searchTerms: ["home", "start", "startup", "main", "default", "open on start"],
+      title: isHome ? "Unset home thread" : "Set as home thread",
+      icon: <HouseIcon className={ITEM_ICON_CLASS} />,
+      run: () => setHomeThread(threadRef, !isHome),
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:fork-toggle-dashboard-panel",
+      searchTerms: ["dashboard", "panel", "machines", "tailnet", "subscriptions", "column"],
+      title: "Toggle dashboard panel",
+      icon: <LayoutDashboardIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().toggle(threadRef, "dashboard");
+      },
     });
   }
 

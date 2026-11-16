@@ -605,6 +605,10 @@ export const ClientSettingsSchema = Schema.Struct({
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Fork: open the Dashboard instead of Home when the app starts.
   forkOpenDashboardOnStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Fork: the scoped thread key the app opens on start, with the Dashboard panel beside it.
+  forkHomeThread: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -2136,5 +2140,6 @@ export const ClientSettingsPatch = Schema.Struct({
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
   // Fork: Dashboard start screen.
   forkOpenDashboardOnStart: Schema.optionalKey(Schema.Boolean),
+  forkHomeThread: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

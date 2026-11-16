@@ -135,6 +135,11 @@ describe("parseTailscalePing", () => {
       "pong from desk (100.64.0.3) via 203.0.113.7:41641 in 1.2s\n",
       { latencyMs: 1200, via: "203.0.113.7:41641" },
     ],
+    // Windows 1.104.5, stdout and stderr joined: a relayed pong that exits 1.
+    [
+      "pong from prod-cx43 (100.96.210.49) via DERP(hel) in 186ms\n\ndirect connection not established\n",
+      { latencyMs: 186, via: "DERP(hel)" },
+    ],
     ["timeout waiting for ping reply\n", null],
     ["", null],
   ])("reads %j", (stdout, expected) => {

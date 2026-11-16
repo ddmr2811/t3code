@@ -56,15 +56,27 @@ export const make = Effect.gen(function* () {
     return { checkedAt, available: true, problem: null, self: parsed.self, peers: parsed.peers };
   });
 
+  // Without --until-direct=false a relayed pong exits 1 and waits for a direct path first.
+  // Any failure, a defect included, costs only this peer's latency, never the whole read.
   const ping = Effect.fn("ForkTailnet.ping")(function* (address: string) {
-    const output = yield* runner
+    return yield* runner
       .run({
         command: "tailscale",
-        args: ["ping", "-c", "1", `--timeout=${PING_TIMEOUT_SECONDS}s`, address],
+        args: [
+          "ping",
+          "-c",
+          "1",
+          "--until-direct=false",
+          `--timeout=${PING_TIMEOUT_SECONDS}s`,
+          address,
+        ],
         timeout: Duration.seconds(PING_TIMEOUT_SECONDS + 2),
+        timeoutBehavior: "timedOutResult",
       })
-      .pipe(Effect.option);
-    return output._tag === "None" ? null : parseTailscalePing(output.value.stdout);
+      .pipe(
+        Effect.map((output) => parseTailscalePing(`${output.stdout}\n${output.stderr}`)),
+        Effect.catchCause(() => Effect.succeed(null)),
+      );
   });
 
   const readWithPings = Effect.fn("ForkTailnet.readWithPings")(function* () {

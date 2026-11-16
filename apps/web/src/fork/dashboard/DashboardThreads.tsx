@@ -9,7 +9,14 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { activeThreads } from "./dashboard.logic";
 
-export function DashboardThreads({ nowMs }: { readonly nowMs: number }) {
+/** `compact` is the Dashboard column beside a chat, which leaves out the machine column. */
+export function DashboardThreads({
+  nowMs,
+  compact = false,
+}: {
+  readonly nowMs: number;
+  readonly compact?: boolean;
+}) {
   const threads = useVisibleThreadShells();
   const environments = useEnvironmentIdentities();
   const labels = new Map(
@@ -32,7 +39,10 @@ export function DashboardThreads({ nowMs }: { readonly nowMs: number }) {
             <Link
               to="/$environmentId/$threadId"
               params={buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id))}
-              className="flex min-w-0 items-center gap-3 px-4 py-2 text-sm hover:bg-accent"
+              className={cn(
+                "flex min-w-0 items-center gap-3 py-2 text-sm hover:bg-accent",
+                compact ? "px-3" : "px-4",
+              )}
             >
               <span
                 aria-hidden
@@ -50,9 +60,11 @@ export function DashboardThreads({ nowMs }: { readonly nowMs: number }) {
               >
                 {label}
               </span>
-              <span className="hidden w-28 shrink-0 truncate text-end font-mono text-2xs text-muted-foreground sm:block">
-                {labels.get(thread.environmentId) ?? ""}
-              </span>
+              {compact ? null : (
+                <span className="hidden w-28 shrink-0 truncate text-end font-mono text-2xs text-muted-foreground sm:block">
+                  {labels.get(thread.environmentId) ?? ""}
+                </span>
+              )}
               <span className="w-16 shrink-0 text-end font-mono text-2xs text-muted-foreground tabular-nums">
                 {formatRelativeTimeLabel(thread.updatedAt, nowMs)}
               </span>

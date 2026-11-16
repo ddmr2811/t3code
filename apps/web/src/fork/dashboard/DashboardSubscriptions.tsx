@@ -60,12 +60,18 @@ function AccountRow(props: {
   readonly account: LimitAccount;
   readonly color: string;
   readonly nowMs: number;
+  readonly compact: boolean;
 }) {
   const { account } = props;
   const windows = account.limits.windows.filter((window) => SHOWN_WINDOW_KINDS.has(window.kind));
   const where = account.sourceLabel ?? account.environments.map((entry) => entry.label).join(", ");
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-4 py-2.5 first:border-t-0">
+    <li
+      className={cn(
+        "flex flex-wrap items-center gap-x-4 gap-y-2 border-t first:border-t-0",
+        props.compact ? "px-3 py-2" : "px-4 py-2.5",
+      )}
+    >
       <div className="flex min-w-40 flex-1 flex-col">
         <span className="truncate text-sm">
           {account.displayName ?? account.email ?? "Account"}
@@ -100,6 +106,7 @@ function ProviderPanel(props: {
   readonly spend: ProviderSpend | null;
   readonly accounts: ReadonlyArray<LimitAccount>;
   readonly nowMs: number;
+  readonly compact: boolean;
 }) {
   const presentation = PROVIDER_PRESENTATION[props.provider];
   return (
@@ -107,7 +114,12 @@ function ProviderPanel(props: {
       aria-label={presentation.label}
       className="flex min-w-0 flex-col rounded-lg border bg-card"
     >
-      <header className="flex items-baseline gap-2 border-b px-4 py-3">
+      <header
+        className={cn(
+          "flex items-baseline gap-2 border-b",
+          props.compact ? "px-3 py-2" : "px-4 py-3",
+        )}
+      >
         <span
           aria-hidden
           className="size-2 shrink-0 self-center rounded-full"
@@ -117,12 +129,14 @@ function ProviderPanel(props: {
         <span className="text-2xs text-muted-foreground">
           {props.accounts.length} {props.accounts.length === 1 ? "account" : "accounts"}
         </span>
-        <span className="ms-auto font-mono text-lg tabular-nums">
+        <span
+          className={cn("ms-auto font-mono tabular-nums", props.compact ? "text-sm" : "text-lg")}
+        >
           {props.spend ? formatUsd(props.spend.costUsd) : "–"}
         </span>
-        <span className="text-2xs text-muted-foreground">list price</span>
+        {props.compact ? null : <span className="text-2xs text-muted-foreground">list price</span>}
       </header>
-      {props.spend ? (
+      {props.spend && !props.compact ? (
         <p className="border-b px-4 py-1.5 font-mono text-2xs text-muted-foreground tabular-nums">
           {formatCount(props.spend.requests)} requests · {formatTokens(props.spend.tokens)} tokens
         </p>
@@ -135,6 +149,7 @@ function ProviderPanel(props: {
               account={account}
               color={presentation.color}
               nowMs={props.nowMs}
+              compact={props.compact}
             />
           ))}
         </ul>
@@ -145,7 +160,14 @@ function ProviderPanel(props: {
   );
 }
 
-export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
+/** `compact` is the Dashboard column beside a chat: one provider per row, the totals in brief. */
+export function DashboardSubscriptions({
+  nowMs,
+  compact = false,
+}: {
+  readonly nowMs: number;
+  readonly compact?: boolean;
+}) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   // Kept for the page's life: the usage query is keyed by this window.
   const [usageWindow, setUsageWindow] = useState(() => makeWindow(USAGE_DAYS));
@@ -187,10 +209,16 @@ export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
             <span className="font-mono text-foreground tabular-nums">
               {formatUsd(spend.costUsd)}
             </span>
-            over the last 7 days ·{" "}
-            <span className="font-mono tabular-nums">{formatCount(spend.requests)}</span> requests ·{" "}
-            <span className="font-mono tabular-nums">{formatTokens(spend.tokens)}</span> tokens
-            {spend.machines.length > 0 ? (
+            {compact ? "last 7 days" : "over the last 7 days"} ·{" "}
+            <span className="font-mono tabular-nums">{formatCount(spend.requests)}</span> requests
+            {compact ? null : (
+              <>
+                {" "}
+                · <span className="font-mono tabular-nums">{formatTokens(spend.tokens)}</span>{" "}
+                tokens
+              </>
+            )}
+            {spend.machines.length > 0 && !compact ? (
               <span className="text-xs">· from {spend.machines.join(", ")}</span>
             ) : null}
             {usage.isPartial ? (
@@ -205,7 +233,7 @@ export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
       {providers.length === 0 && !loading ? (
         <p className="text-muted-foreground text-sm">No provider reports usage or limits yet.</p>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
+        <div className={cn("grid", compact ? "gap-2" : "gap-3 xl:grid-cols-2")}>
           {providers.map((provider) => (
             <ProviderPanel
               key={provider}
@@ -213,6 +241,7 @@ export function DashboardSubscriptions({ nowMs }: { readonly nowMs: number }) {
               spend={spendByProvider.get(provider) ?? null}
               accounts={accountsByProvider.get(provider) ?? []}
               nowMs={nowMs}
+              compact={compact}
             />
           ))}
         </div>

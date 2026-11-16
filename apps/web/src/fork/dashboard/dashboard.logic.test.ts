@@ -18,6 +18,7 @@ import {
   orderMachines,
   pickTailnetSource,
   splitAroundHub,
+  tailnetEndpointHosts,
   tailnetOnlyPeers,
 } from "./dashboard.logic";
 
@@ -161,6 +162,49 @@ describe("tailnetOnlyPeers", () => {
       environments,
     });
     expect(list?.map((entry) => entry.hostName)).toEqual(["prod-box", "devbox"]);
+  });
+
+  it("matches a server without the tailnet call by the tailnet endpoint it advertises", () => {
+    // "jarvisvps" runs a server that does not report itself; its endpoint holds jarvis's IP.
+    const vps = EnvironmentId.make("env-vps");
+    const tailnet = [
+      peer({ id: "nJarvis", hostName: "jarvis", addresses: ["100.116.26.117", "fd7a::7"] }),
+      peer({ id: "nProd", hostName: "prod-box", dnsName: "prod-box.tail0.ts.net" }),
+      peer({ id: "nVps", hostName: "jarvisvps" }),
+    ];
+    const hidden = (environment: Parameters<typeof tailnetOnlyPeers>[0]["environments"][number]) =>
+      tailnetOnlyPeers({
+        source: status("nDev", tailnet),
+        readings: [],
+        environments: [environment],
+      })?.map((entry) => entry.hostName);
+    const base = { environmentId: vps, label: "jarvisvps", connected: true };
+    // The endpoint identifies the machine, so its label no longer hides the "jarvisvps" peer.
+    expect(hidden({ ...base, tailnetHosts: ["100.116.26.117"] })).toEqual([
+      "prod-box",
+      "jarvisvps",
+    ]);
+    expect(hidden({ ...base, tailnetHosts: ["prod-box.tail0.ts.net"] })).toEqual([
+      "jarvis",
+      "jarvisvps",
+    ]);
+    // An endpoint no peer holds identifies nothing; the names still stand in.
+    expect(hidden({ ...base, tailnetHosts: ["100.64.0.99"], hostname: "jarvis" })).toEqual([
+      "prod-box",
+    ]);
+  });
+
+  it("reads the host of each advertised tailnet endpoint and skips LAN ones", () => {
+    expect(
+      tailnetEndpointHosts([
+        { kind: "tailnet", httpBaseUrl: "http://100.116.26.117:3773/" },
+        { kind: "tailnet", httpBaseUrl: "https://Jarvis.tail0.ts.net/" },
+        { kind: "tailnet", httpBaseUrl: "http://[fd7a:115c:a1e0::7]:3773/" },
+        { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
+        { kind: "tailnet", httpBaseUrl: "not a url" },
+      ]),
+    ).toEqual(["100.116.26.117", "jarvis.tail0.ts.net", "fd7a:115c:a1e0::7"]);
+    expect(tailnetEndpointHosts(undefined)).toEqual([]);
   });
 
   it("has nothing to show when the source has no Tailscale", () => {

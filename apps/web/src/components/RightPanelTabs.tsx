@@ -43,6 +43,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  LayoutDashboard,
   MessagesSquare,
   Plus,
   TerminalSquare,
@@ -145,6 +146,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Fork: absent where the Dashboard column is not offered. */
+  onAddDashboard?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -326,6 +329,8 @@ function RightPanelEmptyState(props: {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  /** Fork: absent where the Dashboard column is not offered. */
+  onAddDashboard?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -396,6 +401,19 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
+    ...(props.onAddDashboard
+      ? [
+          {
+            label: "Dashboard",
+            description: "Machines, the tailnet, subscriptions and active threads.",
+            icon: LayoutDashboard,
+            shortcut: "H",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddDashboard,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -592,6 +610,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "dashboard":
+      return "Dashboard";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -684,6 +704,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "dashboard":
+      return <LayoutDashboard className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -1149,6 +1171,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    ...(props.onAddDashboard
+      ? [
+          {
+            label: "Dashboard",
+            icon: LayoutDashboard,
+            shortcut: "H",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddDashboard,
+          },
+        ]
+      : []),
     ...(props.onAddSideChat
       ? [
           {
@@ -1546,6 +1580,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            onAddDashboard={props.onAddDashboard}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}

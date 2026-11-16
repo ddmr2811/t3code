@@ -49,6 +49,8 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { getClientSettings, useClientSettings } from "./useSettings";
 import { isThreadNotificationsMuted } from "../components/ThreadNotificationCoordinator.logic";
 import { setThreadNotificationsMuted } from "../threadNotificationMute";
+import { setHomeThread } from "../fork/homeThread";
+import { isHomeThread } from "../fork/homeThread.logic";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -144,6 +146,7 @@ export function useThreadActionMenu(input: {
           getClientSettings().mutedThreadNotifications,
           threadRef,
         ),
+        isHomeThread: isHomeThread(getClientSettings().forkHomeThread, threadRef),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
@@ -265,6 +268,10 @@ export function useThreadActionMenu(input: {
         case "mute-notifications":
         case "unmute-notifications":
           await setThreadNotificationsMuted(threadRef, action === "mute-notifications");
+          return;
+        case "set-home-thread":
+        case "unset-home-thread":
+          await setHomeThread(threadRef, action === "set-home-thread");
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

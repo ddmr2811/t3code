@@ -50,7 +50,7 @@ const STATUS = JSON.stringify({
   },
 });
 
-type Behavior = "running" | "missing" | "failing";
+type Behavior = "running" | "missing" | "failing" | "dyingPing";
 
 /** Holds `tailscale status` open: `started` fires when it runs, and it answers once `release` does. */
 interface StatusGate {
@@ -89,9 +89,12 @@ const runnerLayer = (
               });
             }
             if (input.args[0] === "ping") {
-              return Effect.succeed(
-                output("pong from prod-box (100.64.0.2) via DERP(hel) in 83ms\n", 1),
-              );
+              if (behavior === "dyingPing") return Effect.die(new Error("spawn crashed"));
+              // As Windows prints a relayed pong: LF endings, exit 1, the path note on stderr.
+              return Effect.succeed({
+                ...output("pong from prod-box (100.64.0.2) via DERP(hel) in 83ms\n", 1),
+                stderr: "direct connection not established\n",
+              });
             }
             if (gate === undefined) return Effect.succeed(output(STATUS));
             return Deferred.succeed(gate.started, undefined).pipe(
@@ -163,12 +166,26 @@ describe("ForkTailnet", () => {
             expect(prod).toMatchObject({ latencyMs: 83, connection: "relay", relay: "hel" });
             expect(yield* Ref.get(calls)).toEqual([
               "tailscale status --json",
-              "tailscale ping -c 1 --timeout=2s 100.64.0.2",
+              "tailscale ping -c 1 --until-direct=false --timeout=2s 100.64.0.2",
             ]);
           }),
         gate,
       );
     }),
+  );
+
+  it.effect("a ping that dies only loses that peer's latency", () =>
+    run("dyingPing", () =>
+      Effect.gen(function* () {
+        const status = yield* (yield* ForkTailnet.ForkTailnet).status({ ping: true });
+        expect(status.available).toBe(true);
+        expect(status.peers.map((peer) => [peer.hostName, peer.latencyMs])).toEqual([
+          ["Phone", null],
+          ["prod-box", null],
+          ["old-box", null],
+        ]);
+      }),
+    ),
   );
 
   it.effect("answers unavailable when tailscale is missing", () =>
