@@ -33,7 +33,7 @@ import {
   splitAroundHub,
   tailnetEndpointHosts,
   type TailnetEnvironment,
-  tailnetNodesByEnvironment,
+  linkTailnet,
   tailnetOnlyPeers,
   type TailnetReading,
 } from "./dashboard.logic";
@@ -423,11 +423,11 @@ function useTailnet(
         : sourceStatus === null
           ? null
           : (sourceStatus.problem ?? "No data"),
-    nodes: tailnetNodesByEnvironment({
+    nodes: linkTailnet({
       peers: sourceStatus?.available ? sourceStatus.peers : [],
       readings,
       environments: identified,
-    }),
+    }).nodes,
   };
 }
 
@@ -524,7 +524,12 @@ const isOnline = (data: MachineData) =>
 function machineStatus(nowMs: number) {
   return (machine: PlacedMachine<MachineData>): MachineStatus => {
     const data = machine.live?.data;
-    if (data === undefined) return { online: false, detail: "No longer reported" };
+    if (data === undefined) {
+      return {
+        online: false,
+        detail: machine.ambiguous ? "Matches more than one machine" : "No longer reported",
+      };
+    }
     if (data.type === "peer") {
       return {
         online: data.peer.online,
@@ -664,21 +669,19 @@ function TailnetBox(props: {
   );
 }
 
+export interface DashboardMachineData {
+  readonly environments: ReadonlyArray<TailnetEnvironment>;
+  readonly tailnet: TailnetView;
+  readonly live: ReadonlyArray<LiveMachine<MachineData>>;
+}
+
+const NO_ENVIRONMENTS: ReadonlyArray<TailnetEnvironment> = [];
+
 /**
- * `compact` is the Dashboard column beside a chat: a grid of machines, without the map. With
- * `onLayoutChange` it shows the editor, which writes every change to the layout it was given.
+ * Every machine there is to show, read once for the page so a save can join the identities the
+ * view found. `enabled` false, as for a hidden Machines panel, reads nothing.
  */
-export function DashboardMachines({
-  nowMs,
-  layout,
-  onLayoutChange,
-  compact = false,
-}: {
-  readonly nowMs: number;
-  readonly layout: ForkDashboardLayout;
-  readonly onLayoutChange?: ((layout: ForkDashboardLayout) => void) | undefined;
-  readonly compact?: boolean;
-}) {
+export function useDashboardMachineData(enabled: boolean): DashboardMachineData {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const environments = orderMachines(
     [...presentations]
@@ -697,9 +700,30 @@ export function DashboardMachines({
         };
       }),
   );
-  const exporters = useNodeExporters(environments);
-  const tailnet = useTailnet(environments, exporters, presentations);
-  const sections = placeMachines(layout, liveMachines({ environments, exporters, tailnet }));
+  const exporters = useNodeExporters(enabled ? environments : NO_ENVIRONMENTS);
+  const tailnet = useTailnet(enabled ? environments : NO_ENVIRONMENTS, exporters, presentations);
+  return { environments, tailnet, live: liveMachines({ environments, exporters, tailnet }) };
+}
+
+/**
+ * `compact` is the Dashboard column beside a chat: a grid of machines, without the map. With
+ * `onLayoutChange` it shows the editor, which writes every change to the layout it was given.
+ */
+export function DashboardMachines({
+  nowMs,
+  data,
+  layout,
+  onLayoutChange,
+  compact = false,
+}: {
+  readonly nowMs: number;
+  readonly data: DashboardMachineData;
+  readonly layout: ForkDashboardLayout;
+  readonly onLayoutChange?: ((layout: ForkDashboardLayout) => void) | undefined;
+  readonly compact?: boolean;
+}) {
+  const { environments, tailnet } = data;
+  const sections = placeMachines(layout, data.live);
 
   if (onLayoutChange) {
     return (

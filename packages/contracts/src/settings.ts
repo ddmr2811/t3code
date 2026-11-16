@@ -1761,6 +1761,8 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  // Fork: a Dashboard save made from a revision another device already replaced.
+  "write-stale-dashboard",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1786,6 +1788,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   override get message(): string {
     if (this.operation === "write-managed-setting") {
       return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
+    }
+    if (this.operation === "write-stale-dashboard") {
+      return "The dashboard changed on another device. Reload it, then make your change again.";
     }
     if (this.operation === "use-disallowed-provider") {
       return disallowedProviderMessage(

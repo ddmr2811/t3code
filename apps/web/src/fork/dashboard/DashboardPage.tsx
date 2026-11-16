@@ -7,16 +7,18 @@ import { type ReactNode, useState } from "react";
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
 import { SidebarInset } from "../../components/ui/sidebar";
+import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { isElectron } from "../../env";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
-import { DashboardMachines } from "./DashboardMachines";
+import { DashboardMachines, useDashboardMachineData } from "./DashboardMachines";
 import { DashboardSubscriptions } from "./DashboardSubscriptions";
 import { DashboardThreads } from "./DashboardThreads";
 import {
+  consolidateLayout,
   type DashboardPanelId,
   isDefaultLayout,
   movePanel,
@@ -107,19 +109,41 @@ export function DashboardPage() {
   const saved = useSavedDashboardLayout();
   const writer = useDashboardLayoutWriter();
   const [draft, setDraft] = useState<ForkDashboardLayout | null>(null);
+  /** What the draft was edited from: a save is its revision plus one. */
+  const [base, setBase] = useState<ForkDashboardLayout>(saved);
   const [pending, setPending] = useState<Saved | null>(null);
   const [saving, setSaving] = useState(false);
+  const [stale, setStale] = useState(false);
   const shown = pending !== null && pending.before === saved ? pending.layout : saved;
   const layout = draft ?? shown;
   const editing = draft !== null;
   const panels = resolvePanels(layout);
+  const machineData = useDashboardMachineData(
+    panels.some((panel) => panel.id === "machines" && (editing || !panel.hidden)),
+  );
 
+  const edit = (from: ForkDashboardLayout) => {
+    setBase(from);
+    setDraft(from);
+    setStale(false);
+  };
   const save = async (next: ForkDashboardLayout) => {
+    // The save records the identities each machine has now, not only the ones it was saved with.
+    const toSave = consolidateLayout(next, machineData.live);
     setSaving(true);
-    const ok = await writer.save(next);
+    const outcome = await writer.save(toSave, base);
     setSaving(false);
-    if (!ok) return;
-    setPending({ layout: next, before: saved });
+    if (outcome === "stale") {
+      setStale(true);
+      toastManager.add({
+        type: "warning",
+        title: "Changed on another device: reload",
+        description: "Your edits are still here. Reload to start from the saved dashboard.",
+      });
+      return;
+    }
+    if (outcome !== "saved") return;
+    setPending({ layout: { ...toSave, revision: base.revision + 1 }, before: saved });
     setDraft(null);
   };
   const reset = async () => {
@@ -129,12 +153,22 @@ export function DashboardPage() {
     );
     if (confirmed) await save(resetLayout());
   };
-  const change = (next: ForkDashboardLayout) => setDraft(next);
+  // Edits wait while a save is in flight, so none is lost between the request and its answer.
+  const change = (next: ForkDashboardLayout) => {
+    if (!saving) setDraft(next);
+  };
   const panelBody = (id: DashboardPanelId) => {
     const onLayoutChange = editing ? change : undefined;
     switch (id) {
       case "machines":
-        return <DashboardMachines nowMs={nowMs} layout={layout} onLayoutChange={onLayoutChange} />;
+        return (
+          <DashboardMachines
+            nowMs={nowMs}
+            data={machineData}
+            layout={layout}
+            onLayoutChange={onLayoutChange}
+          />
+        );
       case "subscriptions":
         return (
           <DashboardSubscriptions nowMs={nowMs} layout={layout} onLayoutChange={onLayoutChange} />
@@ -160,11 +194,23 @@ export function DashboardPage() {
                 <div className="flex min-w-0 flex-col">
                   <span className="font-medium text-sm">Editing the dashboard</span>
                   <span className="text-muted-foreground text-xs">
-                    Saved in {writer.serverLabel ?? "the server"}'s settings, for every client of
-                    it.
+                    {stale
+                      ? "Changed on another device since you started. Reload to start from it; your edits stay until then."
+                      : `Saved in ${writer.serverLabel ?? "the server"}'s settings, for every client of it.`}
                   </span>
                 </div>
                 <span className="ms-auto flex items-center gap-2">
+                  {stale ? (
+                    <Button
+                      type="button"
+                      variant="warning-outline"
+                      size="sm"
+                      disabled={saving}
+                      onClick={() => edit(saved)}
+                    >
+                      Reload
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="destructive-outline"
@@ -186,7 +232,7 @@ export function DashboardPage() {
                   <Button
                     type="button"
                     size="sm"
-                    disabled={saving}
+                    disabled={saving || stale}
                     onClick={() => void save(layout)}
                   >
                     {saving ? "Saving…" : "Save"}
@@ -195,7 +241,10 @@ export function DashboardPage() {
               </div>
             </div>
           ) : null}
-          <div className="mx-auto flex w-full max-w-[100rem] flex-col gap-12 px-4 py-10 sm:px-8">
+          <fieldset
+            disabled={saving}
+            className="mx-auto flex w-full max-w-[100rem] min-w-0 flex-col gap-12 px-4 py-10 sm:px-8"
+          >
             {visiblePanels.map((panel, index) => (
               <Section
                 key={panel.id}
@@ -210,7 +259,7 @@ export function DashboardPage() {
                       onMove={(steps) => change(movePanel(layout, panel.id, steps))}
                     />
                   ) : index === 0 ? (
-                    <EditButton blocked={writer.blocked} onEdit={() => setDraft(shown)} />
+                    <EditButton blocked={writer.blocked} onEdit={() => edit(shown)} />
                   ) : null
                 }
               >
@@ -224,10 +273,10 @@ export function DashboardPage() {
             {visiblePanels.length === 0 ? (
               <div className="flex items-center gap-3">
                 <p className="text-muted-foreground text-sm">Every section is hidden.</p>
-                <EditButton blocked={writer.blocked} onEdit={() => setDraft(shown)} />
+                <EditButton blocked={writer.blocked} onEdit={() => edit(shown)} />
               </div>
             ) : null}
-          </div>
+          </fieldset>
         </div>
       </div>
     </SidebarInset>

@@ -19,6 +19,7 @@ import {
   pickTailnetSource,
   splitAroundHub,
   exporterEnvironments,
+  linkTailnet,
   spendReadAt,
   tailnetEndpointHosts,
   tailnetOnlyPeers,
@@ -211,6 +212,53 @@ describe("tailnetOnlyPeers", () => {
       environments: exporterEnvironments([{ name: "prod", host: "100.96.210.49" }]),
     });
     expect(list?.map((entry) => entry.hostName)).toEqual(["ps5"]);
+  });
+
+  it("gives a node to one machine at most, and a shared name to none", () => {
+    const a = EnvironmentId.make("env-a");
+    const b = EnvironmentId.make("env-b");
+    const twins = [
+      { environmentId: a, label: "A", connected: true, hostname: "box" },
+      { environmentId: b, label: "B", connected: true, hostname: "box" },
+    ];
+    const tailnet = [peer({ id: "nBox", hostName: "box" })];
+    const links = linkTailnet({ peers: tailnet, readings: [], environments: twins });
+    expect(links.nodes.size).toBe(0);
+    // Still a T3 machine, so it stays out of the tailnet box.
+    expect(links.claimed.has("nBox")).toBe(true);
+    // B's own reading settles it: B gets the node and A's name no longer reaches it.
+    const read = linkTailnet({
+      peers: tailnet,
+      readings: [{ environmentId: b, status: status("nBox") }],
+      environments: twins,
+    });
+    expect([...read.nodes]).toEqual([[b, ["nBox"]]]);
+  });
+
+  it("keeps a node a server advertises from the node_exporter read at the same host", () => {
+    const prod = EnvironmentId.make("env-prod");
+    const tailnet = [peer({ id: "nProd", hostName: "prod-cx43", addresses: ["100.96.210.49"] })];
+    const [exporter] = exporterEnvironments([{ name: "prod", host: "100.96.210.49" }]);
+    const links = linkTailnet({
+      peers: tailnet,
+      readings: [],
+      environments: [
+        { environmentId: prod, label: "prod", connected: true, tailnetHosts: ["100.96.210.49"] },
+        exporter!,
+      ],
+    });
+    expect([...links.nodes]).toEqual([[prod, ["nProd"]]]);
+    // Two servers advertising the same host: neither gets it.
+    const other = EnvironmentId.make("env-other");
+    const contested = linkTailnet({
+      peers: tailnet,
+      readings: [],
+      environments: [
+        { environmentId: prod, label: "prod", connected: true, tailnetHosts: ["100.96.210.49"] },
+        { environmentId: other, label: "x", connected: true, tailnetHosts: ["100.96.210.49"] },
+      ],
+    });
+    expect(contested.nodes.size).toBe(0);
   });
 
   it("reads the host of each advertised tailnet endpoint and skips LAN ones", () => {

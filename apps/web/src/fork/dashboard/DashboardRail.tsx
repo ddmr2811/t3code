@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { DashboardMachines } from "./DashboardMachines";
+import { DashboardMachines, useDashboardMachineData } from "./DashboardMachines";
 import { DashboardSubscriptions } from "./DashboardSubscriptions";
 import { DashboardThreads } from "./DashboardThreads";
 import { type DashboardPanelId, resolvePanels } from "./dashboardLayout.logic";
@@ -58,10 +58,11 @@ function DashboardRailContent() {
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   const layout = useSavedDashboardLayout();
   const panels = resolvePanels(layout).filter((panel) => !panel.hidden);
+  const machineData = useDashboardMachineData(panels.some((panel) => panel.id === "machines"));
   const body = (id: DashboardPanelId) => {
     switch (id) {
       case "machines":
-        return <DashboardMachines nowMs={nowMs} layout={layout} compact />;
+        return <DashboardMachines nowMs={nowMs} data={machineData} layout={layout} compact />;
       case "subscriptions":
         return <DashboardSubscriptions nowMs={nowMs} layout={layout} compact />;
       case "threads":

@@ -358,7 +358,7 @@ function MachineRow<T>(
             size="icon-xs"
             variant="ghost-destructive"
             aria-label={`Forget ${machine.label}`}
-            onClick={() => onChange(forgetMachine(layout, machine.ids))}
+            onClick={() => onChange(forgetMachine(layout, machine))}
           >
             <XIcon />
           </Button>
@@ -377,7 +377,7 @@ function StatusBadge<T>(props: {
   if (props.machine.live === null) {
     return (
       <Badge variant="warning" size="sm">
-        Not seen
+        {props.machine.ambiguous ? "Ambiguous" : "Not seen"}
       </Badge>
     );
   }

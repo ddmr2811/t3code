@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   addSection,
+  consolidateLayout,
   environmentIdentity,
   forgetMachine,
   isDefaultLayout,
@@ -98,7 +99,60 @@ describe("placeMachines", () => {
     const gone = placeMachines(saved, live)
       .flatMap((section) => section.machines)
       .find((machine) => machine.live === null)!;
-    expect(names(forgetMachine(saved, gone.ids), live).tailnet).toEqual(["ps5"]);
+    expect(names(forgetMachine(saved, gone), live).tailnet).toEqual(["ps5"]);
+  });
+
+  it("applies an entry two machines match equally to neither, and keeps their own apart", () => {
+    // Old data: both servers once got the same node, and Dani named them after that.
+    const both = [env("a", "box", "nX"), env("b", "box")];
+    const stale = {
+      ...empty,
+      machines: [
+        {
+          ids: ["tailnet:nX"],
+          name: "box",
+          alias: "Shared",
+          icon: null,
+          color: null,
+          hidden: false,
+          section: null,
+        },
+      ],
+    };
+    const sharedBoth = [
+      env("a", "box", "nX"),
+      { ...env("b", "box"), ids: ["env:b", "tailnet:nX"] },
+    ];
+    const placed = placeMachines(stale, sharedBoth).flatMap((section) => section.machines);
+    expect(placed.filter((machine) => machine.live).map((machine) => machine.label)).toEqual([
+      "box",
+      "box",
+    ]);
+    expect(placed.find((machine) => machine.live === null)).toMatchObject({ ambiguous: true });
+    // Naming A then B keeps each alias on its own machine, even with the node in A's entry.
+    let layout = updateMachine(empty, placeMachines(empty, both)[0]!.machines[0]!, {
+      alias: "Alpha",
+    });
+    const b = placeMachines(layout, both)[0]!.machines.find((machine) => machine.key === "env:b")!;
+    layout = updateMachine(layout, b, { alias: "Beta" });
+    expect(names(layout, sharedBoth).t3).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("joins a peer's entry with the server it became when saving, so it outlives the link", () => {
+    const saved = updateMachine(
+      empty,
+      { ids: ["tailnet:nCx53"], name: "dev-cx53" },
+      { alias: "Builder" },
+    );
+    const after = [...live, env("cx53", "dev-cx53", "nCx53")];
+    // Dani only hides a panel before saving; the save still records the new identity.
+    const toSave = consolidateLayout(setPanelHidden(saved, "threads", true), after);
+    expect(toSave.machines).toMatchObject([
+      { ids: ["env:cx53", "tailnet:nCx53"], alias: "Builder" },
+    ]);
+    expect(names(toSave, [...live, env("cx53", "dev-cx53")]).t3).toContain("Builder");
+    // Nothing to join: the layout comes back as it was.
+    expect(consolidateLayout(toSave, after)).toBe(toSave);
   });
 
   it("hides a machine without losing its place", () => {
@@ -167,13 +221,13 @@ describe("placeMachines", () => {
 });
 
 describe("panels", () => {
-  it("fills in missing panels, drops unknown ones and reorders", () => {
+  it("fills in missing panels, keeps the first of a repeated one and reorders", () => {
     const layout = {
       ...empty,
       panels: [
         { id: "threads", hidden: true },
-        { id: "calendar", hidden: false },
-      ],
+        { id: "threads", hidden: false },
+      ] as const,
     };
     expect(resolvePanels(layout).map((panel) => [panel.id, panel.hidden])).toEqual([
       ["threads", true],

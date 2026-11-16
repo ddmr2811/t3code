@@ -178,6 +178,10 @@ export interface PlacedMachine<T> {
   readonly defaultSection: string;
   /** Null once nothing reports the machine: only its saved entry is left. */
   readonly live: LiveMachine<T> | null;
+  /** The saved entries this machine owns; edits rewrite these and no others. */
+  readonly entries: ReadonlyArray<ForkDashboardMachine>;
+  /** A saved entry that matches several machines equally, so it is applied to none. */
+  readonly ambiguous: boolean;
 }
 
 export interface PlacedSection<T> {
@@ -196,6 +200,30 @@ const defaultSectionOfIds = (ids: ReadonlyArray<string>) =>
     : TAILNET_SECTION;
 
 /**
+ * Which live machine owns each saved entry. One holding a machine's own identity (its first id)
+ * goes to that machine; failing that, one sharing a linked identity, such as the tailnet node a
+ * server was matched to. An entry two machines claim equally goes to neither.
+ */
+function assignEntries<T>(
+  layout: ForkDashboardLayout,
+  live: ReadonlyArray<LiveMachine<T>>,
+): { readonly owner: ReadonlyArray<number | null>; readonly ambiguous: ReadonlySet<number> } {
+  const ambiguous = new Set<number>();
+  const owner = layout.machines.map((entry, entryIndex) => {
+    const strong = live.flatMap((machine, index) =>
+      machine.ids[0] !== undefined && entry.ids.includes(machine.ids[0]) ? [index] : [],
+    );
+    const candidates =
+      strong.length > 0
+        ? strong
+        : live.flatMap((machine, index) => (shares(entry.ids, machine.ids) ? [index] : []));
+    if (candidates.length > 1) ambiguous.add(entryIndex);
+    return candidates.length === 1 ? candidates[0]! : null;
+  });
+  return { owner, ambiguous };
+}
+
+/**
  * Every section in its order (the map, the custom ones, then the tailnet box) with its machines.
  * Saved machines keep their saved order; one never saved goes right after the live machine it
  * follows, so naming a machine never moves it. Gone machines go last. A saved section that is
@@ -206,12 +234,14 @@ export function placeMachines<T>(
   live: ReadonlyArray<LiveMachine<T>>,
 ): ReadonlyArray<PlacedSection<T>> {
   const customIds = new Set(layout.sections.map((section) => section.id));
-  const claimed = new Set<number>();
+  const { owner, ambiguous } = assignEntries(layout, live);
   const toPlaced = (
-    entry: ForkDashboardMachine | null,
+    entries: ReadonlyArray<ForkDashboardMachine>,
     machine: LiveMachine<T> | null,
     ids: ReadonlyArray<string>,
+    isAmbiguous = false,
   ): PlacedMachine<T> => {
+    const entry = entries[0] ?? null;
     const name = machine?.name || entry?.name || ids[0] || "Machine";
     const alias = entry?.alias?.trim() || null;
     return {
@@ -232,27 +262,20 @@ export function placeMachines<T>(
             ? TAILNET_SECTION
             : T3_SECTION,
       live: machine,
+      entries,
+      ambiguous: isAmbiguous,
     };
   };
-  const resolved = live.map((machine) => {
-    const matches = layout.machines.flatMap((entry, entryIndex) =>
-      !claimed.has(entryIndex) && shares(entry.ids, machine.ids) ? [entryIndex] : [],
-    );
-    for (const entryIndex of matches) claimed.add(entryIndex);
-    const first = matches[0];
-    const ids = [
-      ...new Set([
-        ...machine.ids,
-        ...matches.flatMap((entryIndex) => layout.machines[entryIndex]!.ids),
-      ]),
-    ];
-    return {
-      savedIndex: first ?? null,
-      machine: toPlaced(first === undefined ? null : layout.machines[first]!, machine, ids),
-    };
+  const resolved = live.map((machine, index) => {
+    const matches = owner.flatMap((owned, entryIndex) => (owned === index ? [entryIndex] : []));
+    const entries = matches.map((entryIndex) => layout.machines[entryIndex]!);
+    const ids = [...new Set([...machine.ids, ...entries.flatMap((entry) => entry.ids)])];
+    return { savedIndex: matches[0] ?? null, machine: toPlaced(entries, machine, ids) };
   });
   const gone = layout.machines.flatMap((entry, entryIndex) =>
-    claimed.has(entryIndex) || entry.ids.length === 0 ? [] : [toPlaced(entry, null, entry.ids)],
+    owner[entryIndex] !== null || entry.ids.length === 0
+      ? []
+      : [toPlaced([entry], null, entry.ids, ambiguous.has(entryIndex))],
   );
   const sectionOf = (machine: PlacedMachine<T>) =>
     machine.assignedSection ?? machine.defaultSection;
@@ -299,25 +322,29 @@ type MachinePatch = Partial<
 interface MachineTarget {
   readonly ids: ReadonlyArray<string>;
   readonly name: string;
+  /** The entries it owns, as placed; without them, every entry sharing an identity. */
+  readonly entries?: ReadonlyArray<ForkDashboardMachine>;
 }
 
-/** One saved entry for the machine, joining every entry that shares an identity with it. */
-export function updateMachine(
+/** Writes one entry for the machine in place of every entry it owns, and returns it. */
+function upsertMachine(
   layout: ForkDashboardLayout,
   target: MachineTarget,
   patch: MachinePatch,
-): ForkDashboardLayout {
-  const matches = layout.machines.flatMap((entry, index) =>
-    shares(entry.ids, target.ids) ? [index] : [],
-  );
-  const first = matches[0];
-  const base: ForkDashboardMachine =
-    first === undefined
-      ? { ids: [], name: "", alias: null, icon: null, color: null, hidden: false, section: null }
-      : layout.machines[first]!;
-  const ids = [
-    ...new Set([...target.ids, ...matches.flatMap((index) => layout.machines[index]!.ids)]),
-  ];
+): { readonly layout: ForkDashboardLayout; readonly entry: ForkDashboardMachine } {
+  const owned = target.entries
+    ? layout.machines.filter((entry) => target.entries!.includes(entry))
+    : layout.machines.filter((entry) => shares(entry.ids, target.ids));
+  const base: ForkDashboardMachine = owned[0] ?? {
+    ids: [],
+    name: "",
+    alias: null,
+    icon: null,
+    color: null,
+    hidden: false,
+    section: null,
+  };
+  const ids = [...new Set([...target.ids, ...owned.flatMap((entry) => entry.ids)])];
   const alias = patch.alias === undefined ? base.alias : patch.alias?.trim() || null;
   const merged: ForkDashboardMachine = {
     ...base,
@@ -326,17 +353,47 @@ export function updateMachine(
     name: target.name || base.name,
     alias: alias === target.name ? null : alias,
   };
-  if (first === undefined) return { ...layout, machines: [...layout.machines, merged] };
+  if (owned.length === 0) {
+    return { layout: { ...layout, machines: [...layout.machines, merged] }, entry: merged };
+  }
   return {
-    ...layout,
-    machines: layout.machines.flatMap((entry, index) =>
-      index === first ? [merged] : matches.includes(index) ? [] : [entry],
-    ),
+    layout: {
+      ...layout,
+      machines: layout.machines.flatMap((entry) =>
+        entry === owned[0] ? [merged] : owned.includes(entry) ? [] : [entry],
+      ),
+    },
+    entry: merged,
   };
 }
 
-const entryOf = (layout: ForkDashboardLayout, target: MachineTarget) =>
-  layout.machines.find((entry) => shares(entry.ids, target.ids));
+/** One saved entry for the machine, joining the entries it owns. */
+export function updateMachine(
+  layout: ForkDashboardLayout,
+  target: MachineTarget,
+  patch: MachinePatch,
+): ForkDashboardLayout {
+  return upsertMachine(layout, target, patch).layout;
+}
+
+/**
+ * Before a save: each live machine's entries joined into one that holds every identity it has now,
+ * so a peer that became a server keeps its look once the tailnet link is gone.
+ */
+export function consolidateLayout<T>(
+  layout: ForkDashboardLayout,
+  live: ReadonlyArray<LiveMachine<T>>,
+): ForkDashboardLayout {
+  let next = layout;
+  for (const machine of placeMachines(layout, live).flatMap((section) => section.machines)) {
+    if (machine.live === null || machine.entries.length === 0) continue;
+    const [only] = machine.entries;
+    const complete =
+      machine.entries.length === 1 && machine.live.ids.every((id) => only!.ids.includes(id));
+    if (!complete) next = upsertMachine(next, machine, {}).layout;
+  }
+  return next;
+}
 
 /** Saves the section's order as shown after moving one machine `steps` places. */
 export function moveMachine<T>(
@@ -349,8 +406,12 @@ export function moveMachine<T>(
   const ordered = moveItem(section.machines, from, from + steps);
   if (ordered === section.machines) return layout;
   let next = layout;
-  for (const machine of ordered) next = updateMachine(next, machine, {});
-  const owned = ordered.map((machine) => entryOf(next, machine)!);
+  const owned: ForkDashboardMachine[] = [];
+  for (const machine of ordered) {
+    const result = upsertMachine(next, machine, {});
+    next = result.layout;
+    owned.push(result.entry);
+  }
   // Only the order within a section counts, so the section's entries can go last together.
   return {
     ...next,
@@ -364,19 +425,23 @@ export function moveMachineToSection(
   target: MachineTarget,
   section: string | null,
 ): ForkDashboardLayout {
-  const next = updateMachine(layout, target, {
+  const { layout: next, entry } = upsertMachine(layout, target, {
     section: section === T3_SECTION || section === TAILNET_SECTION ? null : section,
   });
-  const entry = entryOf(next, target)!;
   return { ...next, machines: [...next.machines.filter((other) => other !== entry), entry] };
 }
 
 /** Drops what was saved for a machine, as for one that is gone. */
 export function forgetMachine(
   layout: ForkDashboardLayout,
-  ids: ReadonlyArray<string>,
+  target: Pick<MachineTarget, "ids" | "entries">,
 ): ForkDashboardLayout {
-  return { ...layout, machines: layout.machines.filter((entry) => !shares(entry.ids, ids)) };
+  return {
+    ...layout,
+    machines: layout.machines.filter((entry) =>
+      target.entries ? !target.entries.includes(entry) : !shares(entry.ids, target.ids),
+    ),
+  };
 }
 
 /** `s1`, `s2`…: the first number no saved section holds. */

@@ -136,54 +136,96 @@ export function tailnetEndpointHosts(
   });
 }
 
+const isExporter = (environmentId: EnvironmentId) => environmentId.startsWith("node-exporter:");
+
+export interface TailnetLinks {
+  /** The nodes each machine is, every node given to one machine at most. */
+  readonly nodes: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
+  /** Every node some machine claims, contested ones too: none of them is "without T3 Code". */
+  readonly claimed: ReadonlySet<string>;
+}
+
 /**
- * The tailnet nodes each machine is. A server's own reading names it; otherwise a peer holding the
- * exact Tailscale IP or MagicDNS name it advertises as its endpoint. Exact names stand in only for
- * machines neither identifies, so a known one never claims another.
+ * The tailnet nodes each machine is, strongest evidence first: its own reading, an advertised
+ * endpoint, a node_exporter's host, then an exact name. A node two machines claim at one level goes
+ * to neither, and a name counts only when one machine holds it, so a saved look lands once.
  */
-export function tailnetNodesByEnvironment(input: {
+export function linkTailnet(input: {
   readonly peers: ReadonlyArray<ForkTailnetPeer>;
   readonly readings: ReadonlyArray<TailnetReading>;
   readonly environments: ReadonlyArray<TailnetEnvironment>;
-}): ReadonlyMap<EnvironmentId, ReadonlyArray<string>> {
+}): TailnetLinks {
   const nodes = new Map<EnvironmentId, string[]>();
-  const add = (environmentId: EnvironmentId, nodeId: string) => {
-    const list = nodes.get(environmentId) ?? [];
-    if (!list.includes(nodeId)) list.push(nodeId);
-    nodes.set(environmentId, list);
+  const claimed = new Set<string>();
+  /** Nodes decided at an earlier level, given or contested. */
+  const settled = new Set<string>();
+  const evidenced = new Set<EnvironmentId>();
+  const settle = (claims: ReadonlyArray<readonly [EnvironmentId, string]>) => {
+    const owners = new Map<string, Set<EnvironmentId>>();
+    for (const [environmentId, nodeId] of claims) {
+      evidenced.add(environmentId);
+      claimed.add(nodeId);
+      if (settled.has(nodeId)) continue;
+      owners.set(nodeId, (owners.get(nodeId) ?? new Set()).add(environmentId));
+    }
+    for (const [nodeId, environmentIds] of owners) {
+      settled.add(nodeId);
+      if (environmentIds.size !== 1) continue;
+      const [environmentId] = environmentIds;
+      nodes.set(environmentId!, [...(nodes.get(environmentId!) ?? []), nodeId]);
+    }
   };
-  for (const reading of input.readings) {
-    if (reading.status?.self) add(reading.environmentId, reading.status.self.id);
-  }
-  const unidentified: TailnetEnvironment[] = [];
-  for (const environment of input.environments) {
-    if (nodes.has(environment.environmentId)) continue;
+  settle(
+    input.readings.flatMap((reading) =>
+      reading.status?.self ? [[reading.environmentId, reading.status.self.id] as const] : [],
+    ),
+  );
+  const byHost = (environment: TailnetEnvironment) => {
+    if (evidenced.has(environment.environmentId)) return [];
     const hosts = new Set(environment.tailnetHosts ?? []);
-    const owned = input.peers.filter(
-      (peer) =>
-        peer.addresses.some((address) => hosts.has(address.toLowerCase())) ||
-        (peer.dnsName !== "" && hosts.has(hostKey(peer.dnsName))),
-    );
-    if (owned.length === 0) unidentified.push(environment);
-    for (const peer of owned) add(environment.environmentId, peer.id);
-  }
+    return input.peers
+      .filter(
+        (peer) =>
+          peer.addresses.some((address) => hosts.has(address.toLowerCase())) ||
+          (peer.dnsName !== "" && hosts.has(hostKey(peer.dnsName))),
+      )
+      .map((peer) => [environment.environmentId, peer.id] as const);
+  };
+  const servers = input.environments.filter(
+    (environment) => !isExporter(environment.environmentId),
+  );
+  const exporters = input.environments.filter((environment) =>
+    isExporter(environment.environmentId),
+  );
+  settle(servers.flatMap(byHost));
+  settle(exporters.flatMap(byHost));
   const byName = new Map<string, EnvironmentId[]>();
-  for (const environment of unidentified) {
+  for (const environment of servers) {
+    if (evidenced.has(environment.environmentId)) continue;
     // The machine's own name when the server reports one; the label is a user's choice.
     const name = hostKey(environment.hostname || environment.label);
     if (name === "") continue;
     byName.set(name, [...(byName.get(name) ?? []), environment.environmentId]);
   }
+  const nameClaims: Array<readonly [EnvironmentId, string]> = [];
   for (const peer of input.peers) {
     const names = [hostKey(peer.hostName)];
     if (peer.dnsName !== "") names.push(hostKey(peer.dnsName.split(".")[0] ?? ""));
-    const owners = new Set(names.flatMap((name) => byName.get(name) ?? []));
-    for (const environmentId of owners) add(environmentId, peer.id);
+    for (const environmentId of new Set(names.flatMap((name) => byName.get(name) ?? []))) {
+      nameClaims.push([environmentId, peer.id]);
+    }
   }
-  return nodes;
+  // A name that two machines share, or that two nodes answer to, identifies nothing.
+  const claimsPerMachine = new Map<EnvironmentId, number>();
+  for (const [environmentId] of nameClaims) {
+    claimsPerMachine.set(environmentId, (claimsPerMachine.get(environmentId) ?? 0) + 1);
+  }
+  for (const [, nodeId] of nameClaims) claimed.add(nodeId);
+  settle(nameClaims.filter(([environmentId]) => claimsPerMachine.get(environmentId) === 1));
+  return { nodes, claimed };
 }
 
-/** The tailnet's machines without T3 Code: every peer no machine above turns out to be. */
+/** The tailnet's machines without T3 Code: every peer no machine above claims. */
 export function tailnetOnlyPeers(input: {
   /** The source's reading: with latencies once its pings answer, without them until then. */
   readonly source: ForkTailnetStatus | null;
@@ -192,16 +234,12 @@ export function tailnetOnlyPeers(input: {
 }): ReadonlyArray<ForkTailnetPeer> | null {
   if (!input.source?.available) return null;
   const peers = input.source.peers;
-  const t3 = new Set(
-    [
-      ...tailnetNodesByEnvironment({
-        peers,
-        readings: input.readings,
-        environments: input.environments,
-      }).values(),
-    ].flat(),
-  );
-  return peers.filter((peer) => !t3.has(peer.id));
+  const { claimed } = linkTailnet({
+    peers,
+    readings: input.readings,
+    environments: input.environments,
+  });
+  return peers.filter((peer) => !claimed.has(peer.id));
 }
 
 /**

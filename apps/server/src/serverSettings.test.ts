@@ -2,6 +2,7 @@ import { deriveProviderInstanceConfigMap } from "./provider/ProviderInstanceRegi
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DEFAULT_FORK_DASHBOARD_LAYOUT,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
@@ -552,6 +553,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.isTrue(Object.hasOwn(created.providerInstances, prototypeNamedId));
       }
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "saves one of two Dashboard edits made from the same revision and refuses the other",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const layout = (alias: string) => ({
+          ...DEFAULT_FORK_DASHBOARD_LAYOUT,
+          revision: 1,
+          machines: [
+            {
+              ids: ["env:pc"],
+              name: "pc",
+              alias,
+              icon: null,
+              color: null,
+              hidden: false,
+              section: null,
+            },
+          ],
+        });
+        const results = yield* Effect.forEach(
+          ["Desk", "Laptop"],
+          (alias) =>
+            serverSettings.updateSettings({ forkDashboard: layout(alias) }).pipe(Effect.result),
+          { concurrency: "unbounded" },
+        );
+
+        const failures = results.flatMap((result) =>
+          result._tag === "Failure" ? [result.failure] : [],
+        );
+        assert.equal(failures.length, 1);
+        assert.equal(failures[0]!.operation, "write-stale-dashboard");
+        const saved = (yield* serverSettings.getSettings).forkDashboard;
+        assert.equal(saved.revision, 1);
+        assert.isTrue(["Desk", "Laptop"].includes(saved.machines[0]?.alias ?? ""));
+        // A save from the revision now held goes through.
+        const next = yield* serverSettings.updateSettings({
+          forkDashboard: { ...saved, revision: 2 },
+        });
+        assert.equal(next.forkDashboard.revision, 2);
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("pauses provider-instance mutations while a settings snapshot is in use", () =>

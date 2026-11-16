@@ -2,6 +2,10 @@
 // client of that server shows the same Dashboard. Writing it needs the settings permission.
 import { useAtomValue } from "@effect/atom-react";
 import { DEFAULT_FORK_DASHBOARD_LAYOUT, type ForkDashboardLayout } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+
+import { toastManager } from "../../components/ui/toast";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
@@ -19,7 +23,11 @@ export interface DashboardLayoutWriter {
   readonly serverLabel: string | null;
   /** Why the layout cannot be changed from here, or null when it can. */
   readonly blocked: string | null;
-  readonly save: (layout: ForkDashboardLayout) => Promise<boolean>;
+  /** Saves `layout` as the revision after `base`; "stale" when another device saved since. */
+  readonly save: (
+    layout: ForkDashboardLayout,
+    base: ForkDashboardLayout,
+  ) => Promise<"saved" | "stale" | "failed">;
 }
 
 export function useDashboardLayoutWriter(): DashboardLayoutWriter {
@@ -29,9 +37,9 @@ export function useDashboardLayoutWriter(): DashboardLayoutWriter {
   const allowed = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT),
   );
-  const update = useAtomCommand(serverEnvironment.updateSettings, "save the Dashboard layout");
+  const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const serverLabel = presentation?.entry.target.label ?? null;
-  const supported = (presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0) >= 1;
+  const supported = (presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0) >= 2;
   const blocked =
     environmentId === null
       ? "Connect to a server to arrange the Dashboard."
@@ -43,13 +51,29 @@ export function useDashboardLayoutWriter(): DashboardLayoutWriter {
   return {
     serverLabel,
     blocked,
-    save: async (layout) => {
-      if (environmentId === null || blocked !== null) return false;
+    save: async (layout, base) => {
+      if (environmentId === null || blocked !== null) return "failed";
       const result = await update({
         environmentId,
-        input: { patch: { forkDashboard: layout } },
+        input: { patch: { forkDashboard: { ...layout, revision: base.revision + 1 } } },
       });
-      return result._tag === "Success";
+      if (result._tag === "Success") return "saved";
+      const error =
+        result._tag === "Failure" ? Option.getOrNull(Cause.findErrorOption(result.cause)) : null;
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "operation" in error &&
+        error.operation === "write-stale-dashboard"
+      ) {
+        return "stale";
+      }
+      toastManager.add({
+        type: "error",
+        title: "Dashboard not saved",
+        description: error instanceof Error ? error.message : "The server did not take the change.",
+      });
+      return "failed";
     },
   };
 }
