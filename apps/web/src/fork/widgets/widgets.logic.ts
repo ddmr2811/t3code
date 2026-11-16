@@ -160,12 +160,12 @@ export function remainingLine(
   const points = series
     .flatMap((entry) => entry.windows.filter((window) => window.id === windowId))
     .flatMap((window) => window.points)
-    .filter((point) => point[0] <= untilMs)
     .toSorted((left, right) => left[0] - right[0]);
   const firstInside = points.findIndex((point) => point[0] >= sinceMs);
   const start = firstInside === -1 ? points.length - 1 : Math.max(0, firstInside - 1);
   return points.slice(Math.max(0, start)).map(([atMs, used]) => ({
-    x: Math.max(0, (atMs - sinceMs) / span),
+    // `untilMs` is the minute shown; a sample taken since then still belongs at the right edge.
+    x: Math.max(0, Math.min(1, (atMs - sinceMs) / span)),
     y: Math.max(0, Math.min(1, (100 - used) / 100)),
   }));
 }

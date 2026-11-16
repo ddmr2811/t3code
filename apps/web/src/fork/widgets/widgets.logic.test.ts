@@ -197,7 +197,7 @@ describe("remainingLine", () => {
         }),
         series({
           windows: [
-            { id: "w", kind: "weekly", label: "Weekly", points: [[30 * hour, 60]] },
+            { id: "w", kind: "weekly", label: "Weekly", points: [[30 * hour + 20_000, 60]] },
             { id: "s", kind: "session", label: "5h", points: [[20 * hour, 99]] },
             { id: "w-fable", kind: "weekly", label: "Weekly · Fable", points: [[20 * hour, 99]] },
           ],
