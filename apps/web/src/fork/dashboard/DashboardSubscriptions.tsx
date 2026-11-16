@@ -48,7 +48,7 @@ function WindowMeter(props: {
     <div
       className={cn(
         "flex min-w-0 flex-col gap-0.5 font-mono text-2xs tabular-nums",
-        props.compact ? "w-full" : "w-28",
+        props.compact ? "w-full" : "w-40",
       )}
     >
       <div className="flex justify-between gap-1">

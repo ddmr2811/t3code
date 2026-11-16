@@ -209,7 +209,7 @@ export function pickTailnetSource(
 export const USAGE_DAYS = 7;
 
 /** Below this share of a window left, its bar turns to the theme's warning colour. */
-export const LOW_REMAINING_PERCENT = 15;
+const LOW_REMAINING_PERCENT = 15;
 
 /** A limit window as room left, the way the composer shows it. */
 export function windowRemaining(window: { readonly usedPercent: number }): {

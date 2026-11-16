@@ -112,7 +112,6 @@ function MachineCardView(props: MachineCardViewProps) {
   const specs = [
     load.cores === null ? null : `${load.cores} cores`,
     load.totalMemoryBytes === null ? null : formatBytes(load.totalMemoryBytes),
-    props.source ?? null,
   ].filter((value) => value !== null);
   return (
     <article
@@ -125,6 +124,9 @@ function MachineCardView(props: MachineCardViewProps) {
       <div className="flex min-w-0 items-center gap-2">
         <StatusDot tone={props.connected ? "online" : "offline"} />
         <span className="min-w-0 flex-1 truncate font-medium text-sm">{props.label}</span>
+        {props.source ? (
+          <span className="shrink-0 font-mono text-2xs text-muted-foreground">{props.source}</span>
+        ) : null}
         <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
           {props.latency ?? "offline"}
         </span>

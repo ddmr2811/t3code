@@ -59,16 +59,15 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const baselines = new Map<string, { readonly counters: CpuCounters; readonly atMs: number }>();
 
-  const scrapeText = (url: string) =>
-    httpClient.get(url, { headers: { accept: "text/plain" } }).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) =>
-        Number(response.headers["content-length"] ?? 0) > MAX_SCRAPE_BYTES
-          ? Effect.fail(new NodeExporterTooLarge())
-          : response.text,
-      ),
-      Effect.timeout(SCRAPE_TIMEOUT),
-    );
+  const scrapeText = Effect.fn("ForkMachines.scrape")(function* (url: string) {
+    const response = yield* httpClient
+      .get(url, { headers: { accept: "text/plain" } })
+      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+    if (Number(response.headers["content-length"] ?? 0) > MAX_SCRAPE_BYTES) {
+      return yield* new NodeExporterTooLarge();
+    }
+    return yield* response.text;
+  }, Effect.timeout(SCRAPE_TIMEOUT));
 
   const read = Effect.fn("ForkMachines.readExporter")(function* (exporter: ForkNodeExporter) {
     const base = { name: exporter.name, host: nodeExporterHost(exporter.url) };
