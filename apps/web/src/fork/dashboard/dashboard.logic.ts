@@ -215,13 +215,20 @@ export function linkTailnet(input: {
       nameClaims.push([environmentId, peer.id]);
     }
   }
-  // A name that two machines share, or that two nodes answer to, identifies nothing.
-  const claimsPerMachine = new Map<EnvironmentId, number>();
-  for (const [environmentId] of nameClaims) {
-    claimsPerMachine.set(environmentId, (claimsPerMachine.get(environmentId) ?? 0) + 1);
+  // A name that two machines share, or that two nodes answer to, identifies nothing. Both counts
+  // come from every claim, so dropping one machine's claims never hands its node to a rival.
+  const perMachine = new Map<EnvironmentId, number>();
+  const perNode = new Map<string, number>();
+  for (const [environmentId, nodeId] of nameClaims) {
+    perMachine.set(environmentId, (perMachine.get(environmentId) ?? 0) + 1);
+    perNode.set(nodeId, (perNode.get(nodeId) ?? 0) + 1);
+    claimed.add(nodeId);
   }
-  for (const [, nodeId] of nameClaims) claimed.add(nodeId);
-  settle(nameClaims.filter(([environmentId]) => claimsPerMachine.get(environmentId) === 1));
+  settle(
+    nameClaims.filter(
+      ([environmentId, nodeId]) => perMachine.get(environmentId) === 1 && perNode.get(nodeId) === 1,
+    ),
+  );
   return { nodes, claimed };
 }
 

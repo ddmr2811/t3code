@@ -235,6 +235,23 @@ describe("tailnetOnlyPeers", () => {
     expect([...read.nodes]).toEqual([[b, ["nBox"]]]);
   });
 
+  it("leaves a node two machines name unassigned, even when one of them names another node too", () => {
+    const a = EnvironmentId.make("env-a");
+    const b = EnvironmentId.make("env-b");
+    const links = linkTailnet({
+      peers: [
+        peer({ id: "nX", hostName: "box", dnsName: "nas.tail0.ts.net" }),
+        peer({ id: "nY", hostName: "box" }),
+      ],
+      readings: [],
+      environments: [
+        { environmentId: a, label: "A", connected: true, hostname: "box" },
+        { environmentId: b, label: "B", connected: true, hostname: "nas" },
+      ],
+    });
+    expect(links.nodes.size).toBe(0);
+  });
+
   it("keeps a node a server advertises from the node_exporter read at the same host", () => {
     const prod = EnvironmentId.make("env-prod");
     const tailnet = [peer({ id: "nProd", hostName: "prod-cx43", addresses: ["100.96.210.49"] })];

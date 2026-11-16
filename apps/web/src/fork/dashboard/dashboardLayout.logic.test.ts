@@ -1,4 +1,9 @@
-import { DEFAULT_FORK_DASHBOARD_LAYOUT, type ForkDashboardLayout } from "@t3tools/contracts";
+import {
+  DEFAULT_FORK_DASHBOARD_LAYOUT,
+  type ForkDashboardLayout,
+  ForkDashboardLayout as ForkDashboardLayoutSchema,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -47,6 +52,7 @@ const names = (layout: ForkDashboardLayout, live: ReadonlyArray<LiveMachine<stri
   );
 
 const empty = DEFAULT_FORK_DASHBOARD_LAYOUT;
+const decodeLayout = Schema.decodeSync(ForkDashboardLayoutSchema);
 
 describe("placeMachines", () => {
   const live = [env("pc", "Dani"), env("dev", "dev-cx43"), peer("nPs5", "ps5")];
@@ -136,6 +142,71 @@ describe("placeMachines", () => {
     const b = placeMachines(layout, both)[0]!.machines.find((machine) => machine.key === "env:b")!;
     layout = updateMachine(layout, b, { alias: "Beta" });
     expect(names(layout, sharedBoth).t3).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("keeps each server's own entry when a tailnet node moves from one to the other", () => {
+    const entry = (ids: ReadonlyArray<string>, alias: string) => ({
+      ids,
+      name: "box",
+      alias,
+      icon: null,
+      color: null,
+      hidden: false,
+      section: null,
+    });
+    const saved = {
+      ...empty,
+      machines: [entry(["env:a", "tailnet:nX"], "Alpha"), entry(["env:b"], "Beta")],
+    };
+    // A is off and its node now answers as B: B keeps Beta, and Alpha waits for A.
+    const aOff = [env("b", "box", "nX")];
+    expect(names(saved, aOff).t3).toEqual(["Beta", "Alpha (gone)"]);
+    const toSave = consolidateLayout(saved, aOff);
+    expect(toSave.machines.map((machine) => [machine.ids, machine.alias])).toEqual([
+      [["env:a", "tailnet:nX"], "Alpha"],
+      [["env:b", "tailnet:nX"], "Beta"],
+    ]);
+    expect(names(toSave, [env("a", "box"), env("b", "box", "nX")]).t3).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("drops tailnet nodes a machine no longer has, so a save stays under the identity cap", () => {
+    const history = Array.from({ length: 9 }, (_, index) => `tailnet:old${index}`);
+    const saved = {
+      ...empty,
+      machines: [
+        {
+          ids: ["env:pc", ...history],
+          name: "pc",
+          alias: "Desk",
+          icon: null,
+          color: null,
+          hidden: false,
+          section: null,
+        },
+      ],
+    };
+    const toSave = consolidateLayout(saved, [env("pc", "pc", "new")]);
+    expect(toSave.machines[0]).toMatchObject({ ids: ["env:pc", "tailnet:new"], alias: "Desk" });
+    expect(() => decodeLayout(toSave)).not.toThrow();
+  });
+
+  it("gives a gone or ambiguous entry a key of its own, apart from the machines it names", () => {
+    // An entry naming two servers at once belongs to neither, and its first id is A's own key.
+    const stale = updateMachine(empty, { ids: ["env:a", "env:b"], name: "box" }, { alias: "Both" });
+    const servers = [env("a", "alpha"), env("b", "beta")];
+    const section = placeMachines(stale, servers)[0]!;
+    expect(section.machines.map((machine) => [machine.key, machine.ambiguous])).toEqual([
+      ["env:a", false],
+      ["env:b", false],
+      ["saved:env:a,env:b", true],
+    ]);
+    // Keys stay apart, so moving B moves B and leaves the entry that names it alone.
+    const moved = moveMachine(stale, section, "env:b", -1);
+    expect(names(moved, servers).t3).toEqual(["beta", "alpha", "Both (gone)"]);
+    expect(moved.machines.find((machine) => machine.alias === "Both")?.ids).toEqual([
+      "env:a",
+      "env:b",
+    ]);
   });
 
   it("joins a peer's entry with the server it became when saving, so it outlives the link", () => {

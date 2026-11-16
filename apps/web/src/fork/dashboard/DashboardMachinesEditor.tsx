@@ -223,7 +223,7 @@ function MachineRow<T>(
 ) {
   const { machine, layout, onChange, section } = props;
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
-    useSortable({ id: machine.key });
+    useSortable({ id: machine.key, disabled: machine.live === null });
   const status = props.status(machine);
   const kind = machine.live?.kind ?? null;
   const sectionChoices = [
@@ -336,7 +336,7 @@ function MachineRow<T>(
           type="button"
           size="icon-xs"
           variant="ghost-muted"
-          disabled={props.index === 0}
+          disabled={props.index === 0 || machine.live === null}
           aria-label={`Move ${machine.label} up`}
           onClick={() => onChange(moveMachine(layout, section, machine.key, -1))}
         >
@@ -346,7 +346,7 @@ function MachineRow<T>(
           type="button"
           size="icon-xs"
           variant="ghost-muted"
-          disabled={props.index === props.count - 1}
+          disabled={props.index === props.count - 1 || machine.live === null}
           aria-label={`Move ${machine.label} down`}
           onClick={() => onChange(moveMachine(layout, section, machine.key, 1))}
         >
