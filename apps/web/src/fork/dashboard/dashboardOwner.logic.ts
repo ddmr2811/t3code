@@ -1,0 +1,168 @@
+// Fork-only: which environment keeps the Dashboard. A client setting names it (null: the primary);
+// the layout is read from and written to that environment alone, never to another one by itself.
+import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
+
+import { isDefaultLayout } from "./dashboardLayout.logic";
+
+/** Servers that check the revision and keep `charts`. */
+const DASHBOARD_OWNER_PROTOCOL = 3;
+
+export interface OwnerCandidate {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly connected: boolean;
+  /** Its `forkDashboard` capability; 0 when it has none. */
+  readonly protocol: number;
+  readonly canWrite: boolean;
+  /** Its saved layout, while its settings are known. */
+  readonly layout: ForkDashboardLayout | null;
+}
+
+export type DashboardSource =
+  | { readonly kind: "primary"; readonly layout: ForkDashboardLayout }
+  | {
+      readonly kind: "chosen";
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly layout: ForkDashboardLayout;
+    }
+  | {
+      /** Read only: the chosen environment cannot answer, so nothing is written anywhere. */
+      readonly kind: "unavailable";
+      readonly environmentId: EnvironmentId;
+      readonly label: string;
+      readonly layout: ForkDashboardLayout;
+      readonly notice: string;
+    };
+
+const UNKNOWN_LABEL = "The chosen server";
+
+export function resolveDashboardSource(input: {
+  readonly owner: EnvironmentId | null;
+  readonly primaryId: EnvironmentId | null;
+  readonly candidates: ReadonlyArray<OwnerCandidate>;
+  /** The chosen environment's layout as last read on this device. */
+  readonly lastRead: ForkDashboardLayout | null;
+  readonly primaryLayout: ForkDashboardLayout;
+}): DashboardSource {
+  const { owner } = input;
+  if (owner === null || owner === input.primaryId) {
+    return { kind: "primary", layout: input.primaryLayout };
+  }
+  const candidate = input.candidates.find((entry) => entry.environmentId === owner);
+  const label = candidate?.label ?? UNKNOWN_LABEL;
+  const fallback = input.lastRead ?? input.primaryLayout;
+  if (candidate === undefined || !candidate.connected) {
+    return {
+      kind: "unavailable",
+      environmentId: owner,
+      label,
+      layout: fallback,
+      notice: `${label} is offline: showing the last saved layout`,
+    };
+  }
+  if (candidate.protocol < DASHBOARD_OWNER_PROTOCOL || candidate.layout === null) {
+    return {
+      kind: "unavailable",
+      environmentId: owner,
+      label,
+      layout: fallback,
+      notice: `Update the T3 Code server on ${label} to keep the Dashboard there: showing the last saved layout`,
+    };
+  }
+  return { kind: "chosen", environmentId: owner, label, layout: candidate.layout };
+}
+
+/** The one environment a save from this source may go to. */
+export function dashboardWriteTarget(
+  source: DashboardSource,
+  primaryId: EnvironmentId | null,
+): EnvironmentId | null {
+  switch (source.kind) {
+    case "primary":
+      return primaryId;
+    case "chosen":
+      return source.environmentId;
+    case "unavailable":
+      return null;
+  }
+}
+
+const canKeepDashboard = (candidate: OwnerCandidate) =>
+  candidate.connected &&
+  candidate.canWrite &&
+  candidate.protocol >= DASHBOARD_OWNER_PROTOCOL &&
+  candidate.layout !== null;
+
+export interface OwnerOption {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly primary: boolean;
+  /** The current owner stays listed so the selector names it, even when it cannot be chosen. */
+  readonly disabled: boolean;
+}
+
+/** The environments the Dashboard can move to, the primary first, plus the current owner. */
+export function ownerOptions(input: {
+  readonly candidates: ReadonlyArray<OwnerCandidate>;
+  readonly primaryId: EnvironmentId | null;
+  readonly current: EnvironmentId | null;
+}): ReadonlyArray<OwnerOption> {
+  const options = input.candidates
+    .filter((candidate) => canKeepDashboard(candidate) || candidate.environmentId === input.current)
+    .map((candidate) => ({
+      environmentId: candidate.environmentId,
+      label: candidate.label,
+      primary: candidate.environmentId === input.primaryId,
+      disabled: !canKeepDashboard(candidate),
+    }));
+  if (input.current !== null && !options.some((o) => o.environmentId === input.current)) {
+    options.push({
+      environmentId: input.current,
+      label: UNKNOWN_LABEL,
+      primary: input.current === input.primaryId,
+      disabled: true,
+    });
+  }
+  return options.toSorted((a, b) => Number(b.primary) - Number(a.primary));
+}
+
+export type OwnerSwitchChoice = "copy" | "use";
+
+export interface OwnerSwitch {
+  /** The client setting to store: null for the primary. */
+  readonly owner: EnvironmentId | null;
+  /** The one write the switch makes, always to the target. */
+  readonly write: {
+    readonly environmentId: EnvironmentId;
+    readonly layout: ForkDashboardLayout;
+    readonly base: ForkDashboardLayout;
+  } | null;
+  /** Asked before the write, when it would replace a layout the target already has. */
+  readonly confirm: string | null;
+  /** What the Dashboard shows once switched. */
+  readonly next: ForkDashboardLayout;
+}
+
+export function planOwnerSwitch(input: {
+  readonly choice: OwnerSwitchChoice;
+  readonly target: OwnerCandidate;
+  readonly primaryId: EnvironmentId | null;
+  /** The layout on screen, which "copy" takes there. */
+  readonly layout: ForkDashboardLayout;
+}): OwnerSwitch | null {
+  const { target } = input;
+  if (!canKeepDashboard(target) || target.layout === null) return null;
+  const owner = target.environmentId === input.primaryId ? null : target.environmentId;
+  if (input.choice === "use") {
+    return { owner, write: null, confirm: null, next: target.layout };
+  }
+  return {
+    owner,
+    write: { environmentId: target.environmentId, layout: input.layout, base: target.layout },
+    confirm: isDefaultLayout(target.layout)
+      ? null
+      : `Replace the dashboard saved on ${target.label}?\nIts aliases, icons, colours, sections, order and hidden items are replaced by this layout on every client that uses it.`,
+    next: { ...input.layout, revision: target.layout.revision + 1 },
+  };
+}

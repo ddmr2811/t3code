@@ -1,6 +1,7 @@
-// Fork-only: how the user arranged the Dashboard, saved in the primary server's settings so every
-// client of that server shows the same one. Icons and colours are plain strings so a newer
-// client's never fails an older server's settings decode; clients ignore what they do not know.
+// Fork-only: how the user arranged the Dashboard, saved in one server's settings (the primary
+// unless a client picks another) so every client using that server shows the same one. Icons and
+// colours are plain strings so a newer client's never fails an older server's settings decode;
+// clients ignore what they do not know.
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

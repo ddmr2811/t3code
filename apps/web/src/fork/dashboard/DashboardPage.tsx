@@ -1,5 +1,5 @@
 // Fork-only: one page with every machine, the tailnet, the subscriptions and the active threads,
-// arranged as saved in the primary server's settings and editable in place.
+// arranged as saved in the settings of the server chosen to keep it, and editable in place.
 import type { ForkDashboardLayout } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -28,7 +28,8 @@ import {
   resolvePanels,
   setPanelHidden,
 } from "./dashboardLayout.logic";
-import { useDashboardLayoutWriter, useSavedDashboardLayout } from "./dashboardLayoutState";
+import { useDashboardLayoutWriter, useDashboardOwner } from "./dashboardLayoutState";
+import { DashboardOwnerNotice, DashboardOwnerPicker } from "./DashboardOwnerPicker";
 
 function Section(props: {
   readonly panel: ResolvedPanel;
@@ -118,8 +119,9 @@ export function DashboardPage() {
   const contentArea = workspaceAreaProps("home", 1, "Dashboard");
   // The minute tick is UTC without a zone suffix; it refreshes reset and relative labels.
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
-  const saved = useSavedDashboardLayout();
-  const writer = useDashboardLayoutWriter();
+  const owner = useDashboardOwner();
+  const saved = owner.source.layout;
+  const writer = useDashboardLayoutWriter(owner);
   const [draft, setDraft] = useState<ForkDashboardLayout | null>(null);
   /** What the draft was edited from: a save is its revision plus one. */
   const [base, setBase] = useState<ForkDashboardLayout>(saved);
@@ -138,6 +140,10 @@ export function DashboardPage() {
     setBase(from);
     setDraft(from);
     setStale(false);
+  };
+  const switched = (next: ForkDashboardLayout) => {
+    setPending(null);
+    if (editing) edit(next);
   };
   const save = async (next: ForkDashboardLayout) => {
     // The save records the identities each machine has now, not only the ones it was saved with.
@@ -210,9 +216,17 @@ export function DashboardPage() {
                   <span className="text-muted-foreground text-xs">
                     {stale
                       ? "Changed on another device since you started. Reload to start from it; your edits stay until then."
-                      : `Saved in ${writer.serverLabel ?? "the server"}'s settings, for every client of it.`}
+                      : "Changes show on every client that saves its Dashboard there."}
                   </span>
                 </div>
+                <DashboardOwnerPicker
+                  owner={owner}
+                  writer={writer}
+                  layout={layout}
+                  disabled={saving}
+                  onBusy={setSaving}
+                  onSwitched={switched}
+                />
                 <span className="ms-auto flex items-center gap-2">
                   {stale ? (
                     <Button
@@ -259,6 +273,14 @@ export function DashboardPage() {
             disabled={saving}
             className="mx-auto flex w-full max-w-[100rem] min-w-0 flex-col gap-12 px-4 py-10 sm:px-8"
           >
+            {editing ? null : (
+              <DashboardOwnerNotice
+                owner={owner}
+                writer={writer}
+                layout={layout}
+                onSwitched={switched}
+              />
+            )}
             {visiblePanels.map((panel, index) => (
               <Section
                 key={panel.id}

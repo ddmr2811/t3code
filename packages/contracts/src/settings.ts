@@ -613,6 +613,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   // Fork: the chart cards under a new thread's composer.
   forkNewThreadWidgets: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: the environment whose settings keep the Dashboard; null keeps it on the primary.
+  forkDashboardOwner: Schema.NullOr(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -2161,5 +2165,6 @@ export const ClientSettingsPatch = Schema.Struct({
   forkOpenDashboardOnStart: Schema.optionalKey(Schema.Boolean),
   forkHomeThread: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   forkNewThreadWidgets: Schema.optionalKey(Schema.Boolean),
+  forkDashboardOwner: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

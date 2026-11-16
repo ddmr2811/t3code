@@ -1,22 +1,122 @@
-// Fork-only: where the Dashboard's arrangement lives: the primary server's settings, so every
-// client of that server shows the same Dashboard. Writing it needs the settings permission.
+// Fork-only: where the Dashboard's arrangement lives: the settings of the environment the client
+// setting `forkDashboardOwner` names, or of the primary, so every client of it shows the same
+// Dashboard. Writing it needs the settings permission there.
 import { useAtomValue } from "@effect/atom-react";
-import { DEFAULT_FORK_DASHBOARD_LAYOUT, type ForkDashboardLayout } from "@t3tools/contracts";
+import {
+  DEFAULT_FORK_DASHBOARD_LAYOUT,
+  type EnvironmentId,
+  type ForkDashboardLayout,
+  ForkDashboardLayout as ForkDashboardLayoutSchema,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
+import { useEffect } from "react";
 
 import { toastManager } from "../../components/ui/toast";
-
+import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
+import { useClientSettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryServerSettingsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-
-export function useSavedDashboardLayout(): ForkDashboardLayout {
-  return useAtomValue(primaryServerSettingsAtom).forkDashboard;
-}
+import {
+  type DashboardSource,
+  dashboardWriteTarget,
+  type OwnerCandidate,
+  resolveDashboardSource,
+} from "./dashboardOwner.logic";
 
 const PERMISSION_INPUT = { patch: { forkDashboard: DEFAULT_FORK_DASHBOARD_LAYOUT } };
+
+const ownerCandidatesAtom = Atom.make((get): ReadonlyArray<OwnerCandidate> =>
+  [...get(environmentPresentations.presentationsAtom)].map(([environmentId, presentation]) => ({
+    environmentId,
+    label: presentation.entry.target.label,
+    connected: presentation.connection.phase === "connected",
+    protocol: presentation.serverConfig?.environment.capabilities.forkDashboard ?? 0,
+    canWrite: get(serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT)),
+    layout: presentation.serverConfig?.settings.forkDashboard ?? null,
+  })),
+).pipe(Atom.withLabel("fork-dashboard-owner-candidates"));
+
+const lastReadKey = (environmentId: EnvironmentId) =>
+  `t3code:fork-dashboard-last-layout:${environmentId}`;
+
+function readLastRead(environmentId: EnvironmentId): ForkDashboardLayout | null {
+  try {
+    return getLocalStorageItem(lastReadKey(environmentId), ForkDashboardLayoutSchema);
+  } catch {
+    return null;
+  }
+}
+
+export interface DashboardOwnerState {
+  readonly source: DashboardSource;
+  readonly primaryId: EnvironmentId | null;
+  readonly candidates: ReadonlyArray<OwnerCandidate>;
+}
+
+export function useDashboardOwner(): DashboardOwnerState {
+  const owner = useClientSettings((settings) => settings.forkDashboardOwner);
+  const primaryId = usePrimaryEnvironmentId();
+  const candidates = useAtomValue(ownerCandidatesAtom);
+  const primaryLayout = useAtomValue(primaryServerSettingsAtom).forkDashboard;
+  const ownerConnected =
+    candidates.find((candidate) => candidate.environmentId === owner)?.connected ?? false;
+  // Read again when the owner drops, so it shows what was saved there up to that moment.
+  const lastRead = owner === null || ownerConnected ? null : readLastRead(owner);
+  const source = resolveDashboardSource({ owner, primaryId, candidates, lastRead, primaryLayout });
+  const liveLayout = source.kind === "chosen" ? source.layout : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the owner's layout into localStorage so it still shows while that server is offline
+  useEffect(() => {
+    if (owner === null || liveLayout === null) return;
+    try {
+      setLocalStorageItem(lastReadKey(owner), liveLayout, ForkDashboardLayoutSchema);
+    } catch {
+      // Storage may be unavailable; the offline fallback is then the primary's layout.
+    }
+  }, [owner, liveLayout]);
+  return { source, primaryId, candidates };
+}
+
+export function useSavedDashboardLayout(): ForkDashboardLayout {
+  return useDashboardOwner().source.layout;
+}
+
+export type DashboardSaveOutcome = "saved" | "stale" | "failed";
+
+/** Saves `layout` to one environment as the revision after `base`. */
+function useWriteDashboardLayout() {
+  const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  return async (
+    environmentId: EnvironmentId,
+    layout: ForkDashboardLayout,
+    base: ForkDashboardLayout,
+  ): Promise<DashboardSaveOutcome> => {
+    const result = await update({
+      environmentId,
+      input: { patch: { forkDashboard: { ...layout, revision: base.revision + 1 } } },
+    });
+    if (result._tag === "Success") return "saved";
+    const error =
+      result._tag === "Failure" ? Option.getOrNull(Cause.findErrorOption(result.cause)) : null;
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "operation" in error &&
+      error.operation === "write-stale-dashboard"
+    ) {
+      return "stale";
+    }
+    toastManager.add({
+      type: "error",
+      title: "Dashboard not saved",
+      description: error instanceof Error ? error.message : "The server did not take the change.",
+    });
+    return "failed";
+  };
+}
 
 export interface DashboardLayoutWriter {
   /** The machine whose settings hold the layout, as the user names it. */
@@ -29,62 +129,48 @@ export interface DashboardLayoutWriter {
   readonly save: (
     layout: ForkDashboardLayout,
     base: ForkDashboardLayout,
-  ) => Promise<"saved" | "stale" | "failed">;
+  ) => Promise<DashboardSaveOutcome>;
+  /** Writes `layout` to the environment the Dashboard moves to, the only other write it makes. */
+  readonly copyTo: (
+    environmentId: EnvironmentId,
+    layout: ForkDashboardLayout,
+    base: ForkDashboardLayout,
+  ) => Promise<DashboardSaveOutcome>;
 }
 
-export function useDashboardLayoutWriter(): DashboardLayoutWriter {
-  const environmentId = usePrimaryEnvironmentId();
+export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardLayoutWriter {
+  const { source } = state;
+  const environmentId = dashboardWriteTarget(source, state.primaryId);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentation = environmentId === null ? undefined : presentations.get(environmentId);
   const allowed = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT),
   );
-  const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  const serverLabel = presentation?.entry.target.label ?? null;
+  const write = useWriteDashboardLayout();
+  const serverLabel =
+    source.kind === "primary" ? (presentation?.entry.target.label ?? null) : source.label;
   const protocol = presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0;
-  const supported = protocol >= 2;
   const blocked =
-    environmentId === null
-      ? "Connect to a server to arrange the Dashboard."
-      : !supported
-        ? `Update the T3 Code server on ${serverLabel ?? "this machine"} to arrange the Dashboard.`
-        : !allowed
-          ? `This connection may not change ${serverLabel ?? "the server"}'s settings.`
-          : null;
+    source.kind === "unavailable"
+      ? source.notice
+      : environmentId === null
+        ? "Connect to a server to arrange the Dashboard."
+        : protocol < 2
+          ? `Update the T3 Code server on ${serverLabel ?? "this machine"} to arrange the Dashboard.`
+          : !allowed
+            ? `This connection may not change ${serverLabel ?? "the server"}'s settings.`
+            : null;
   return {
     serverLabel,
     blocked,
     chartsBlocked:
-      protocol >= 3
+      protocol >= 3 || source.kind === "unavailable"
         ? null
         : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide Charts.`,
     save: async (layout, base) => {
       if (environmentId === null || blocked !== null) return "failed";
-      const result = await update({
-        environmentId,
-        input: {
-          patch: {
-            forkDashboard: { ...layout, revision: base.revision + 1 },
-          },
-        },
-      });
-      if (result._tag === "Success") return "saved";
-      const error =
-        result._tag === "Failure" ? Option.getOrNull(Cause.findErrorOption(result.cause)) : null;
-      if (
-        error !== null &&
-        typeof error === "object" &&
-        "operation" in error &&
-        error.operation === "write-stale-dashboard"
-      ) {
-        return "stale";
-      }
-      toastManager.add({
-        type: "error",
-        title: "Dashboard not saved",
-        description: error instanceof Error ? error.message : "The server did not take the change.",
-      });
-      return "failed";
+      return write(environmentId, layout, base);
     },
+    copyTo: write,
   };
 }
