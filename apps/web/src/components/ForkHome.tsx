@@ -6,6 +6,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import { isListedThreadLineage } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   BugIcon,
@@ -27,7 +28,7 @@ import { useProjects, useVisibleThreadShells } from "../state/entities";
 import { useEnvironmentIdentities } from "../state/environments";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
-import { isSidebarHiddenThread, sortScopedProjectsForSidebar } from "./Sidebar.logic";
+import { sortScopedProjectsForSidebar } from "./Sidebar.logic";
 import {
   forkWidgetHasDesktopShell,
   setForkAutostart,
@@ -74,7 +75,7 @@ const projectKey = (item: { readonly environmentId: string; readonly id: string 
 
 function isOpenInboxThread(thread: EnvironmentThreadShell, nowMs: number): boolean {
   if (thread.archivedAt !== null || thread.deletedAt !== null) return false;
-  if (isSidebarHiddenThread(thread)) return false;
+  if (!isListedThreadLineage(thread.lineage)) return false;
   if (thread.settledOverride === "settled") return false;
   const snoozedUntil = thread.snoozedUntil === null ? Number.NaN : Date.parse(thread.snoozedUntil);
   return !(snoozedUntil > nowMs);
@@ -208,7 +209,7 @@ export function ForkHome() {
     .filter((thread) => !isThreadWorking(thread) && !isWorkCompletedThread(thread))
     .toSorted(byRecency);
   const recentThreads = threads
-    .filter((thread) => thread.archivedAt === null && !isSidebarHiddenThread(thread))
+    .filter((thread) => thread.archivedAt === null && isListedThreadLineage(thread.lineage))
     .toSorted(byRecency)
     .slice(0, RECENT_THREAD_COUNT);
 

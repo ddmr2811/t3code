@@ -12,6 +12,7 @@ import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  isListedThreadLineage,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ResourceTelemetrySnapshot,
@@ -50,7 +51,6 @@ import {
   parseForkWidgetBounds,
   parseForkWidgetCollapsed,
 } from "./ForkResourceWidget.logic";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { isWorkCompletedThread } from "./sidebar/forkInbox";
 
 /** Must match the frame name the desktop shell allows. */
@@ -814,7 +814,7 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
   const waiting = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of threads) {
     if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
-    if (isSidebarHiddenThread(thread) || thread.settledOverride === "settled") continue;
+    if (!isListedThreadLineage(thread.lineage) || thread.settledOverride === "settled") continue;
     // Same split as the sidebar: working, finished, or waiting on the user.
     if (isThreadWorking(thread)) {
       working.set(thread.environmentId, (working.get(thread.environmentId) ?? 0) + 1);

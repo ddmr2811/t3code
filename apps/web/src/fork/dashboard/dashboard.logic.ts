@@ -3,6 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   EnvironmentId,
+  isListedThreadLineage,
   type ForkTailnetPeer,
   type ForkTailnetStatus,
   type HostResourcesSnapshot,
@@ -13,7 +14,6 @@ import { makeWindow } from "@t3tools/shared/usageFormat";
 import type { MergedUsage } from "@t3tools/shared/usageMerge";
 
 import { forkWaitingReason } from "../../components/ForkResourceWidget.logic";
-import { isSidebarHiddenThread } from "../../components/Sidebar.logic";
 import { isWorkCompletedThread } from "../../components/sidebar/forkInbox";
 
 export interface MachineLoad {
@@ -318,7 +318,7 @@ export function activeThreads<T extends ActiveThreadInput>(
   const active: ActiveThread<T>[] = [];
   for (const thread of threads) {
     if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
-    if (isSidebarHiddenThread(thread) || thread.settledOverride === "settled") continue;
+    if (!isListedThreadLineage(thread.lineage) || thread.settledOverride === "settled") continue;
     const snoozedUntil =
       thread.snoozedUntil === null ? Number.NaN : Date.parse(thread.snoozedUntil);
     if (snoozedUntil > nowMs) continue;

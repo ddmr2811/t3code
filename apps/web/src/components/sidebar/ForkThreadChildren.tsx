@@ -3,14 +3,10 @@
 // touch as little as possible.
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { isListedThreadLineage, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
-import {
-  isSidebarHiddenThread,
-  resolveSidebarThreadStatus,
-  type SidebarThreadStatus,
-} from "../Sidebar.logic";
+import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 
 const MAX_LISTED_CHILDREN = 8;
 
@@ -60,7 +56,7 @@ export function buildForkChildrenByRowKey(
       seen.add(parentId);
       const parent = byKey.get(`${thread.environmentId}:${parentId}`);
       if (parent === undefined) break;
-      if (!isSidebarHiddenThread(parent)) {
+      if (isListedThreadLineage(parent.lineage)) {
         row = parent;
         break;
       }

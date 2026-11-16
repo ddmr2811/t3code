@@ -105,6 +105,56 @@ describe("collectServerUpdateTargets", () => {
     ]);
   });
 
+  it("does not offer a Nightly build to a Stable desktop app, whose own feed has nothing newer", () => {
+    const { targets, skipped } = collectServerUpdateTargets(
+      [machine("stable-desktop", "0.1.9", "desktop-managed")],
+      "0.1.10-nightly.20261116.4761",
+    );
+
+    expect(targets.map((target) => target.serverLabel)).toEqual([]);
+    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
+      ["stable-desktop", "on the stable channel"],
+    ]);
+  });
+
+  it("keeps a Stable fork build's servers on its base and never offers Nightly to a Stable desktop", () => {
+    const machines = [
+      machine("vps", "0.1.8", "boot-service"),
+      machine("stable-desktop", "0.1.8", "desktop-managed"),
+      machine("nightly-desktop", "0.1.8-nightly.20261110.4700", "desktop-managed"),
+    ];
+    const plan = (localUpdateVersion: string | null, appVersion: string, base: string) => {
+      const { targets, skipped } = collectServerUpdateTargets(
+        machines,
+        serverUpdateTargetVersion(localUpdateVersion, appVersion, base),
+      );
+      return {
+        targets: targets.map((target) => [target.serverLabel, target.targetVersion]),
+        skipped: skipped.map((entry) => [entry.label, entry.reason]),
+      };
+    };
+
+    // A Stable fork build sends every host to its base, whatever build it installs itself.
+    for (const localUpdateVersion of [null, "0.1.905", "0.1.10-nightly.20261116.4761"]) {
+      expect(plan(localUpdateVersion, "0.1.904", "0.1.9")).toEqual({
+        targets: [
+          ["vps", "0.1.9"],
+          ["stable-desktop", "0.1.9"],
+          ["nightly-desktop", "0.1.9"],
+        ],
+        skipped: [],
+      });
+    }
+    // A fork built on a Nightly base offers that Nightly only to hosts that can take it.
+    expect(plan(null, "0.1.904", "0.1.10-nightly.20261116.4761")).toEqual({
+      targets: [["nightly-desktop", "0.1.10-nightly.20261116.4761"]],
+      skipped: [
+        ["vps", "on the stable channel"],
+        ["stable-desktop", "on the stable channel"],
+      ],
+    });
+  });
+
   it("skips servers whose policy refuses the update, with the policy's message", () => {
     const managed = (
       id: string,
@@ -139,7 +189,10 @@ describe("collectServerUpdateTargets", () => {
           ...entry,
           serverConfig: {
             ...entry.serverConfig,
-            environment: { ...entry.serverConfig.environment, serverVersion: "0.0.49-nightly.1" },
+            environment: {
+              ...entry.serverConfig.environment,
+              serverVersion: "0.0.49-nightly.20261027.1",
+            },
           },
         })),
         "0.0.50-nightly.20261028.1",
