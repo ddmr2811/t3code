@@ -81,18 +81,18 @@ describe("launchTarget", () => {
     );
   });
 
-  it("stops waiting once the primary's own snapshot is live without a welcome", () => {
-    const before = launchTarget({
-      expectsPrimary: true,
-      welcome: null,
-      primaryEnvironment: "cached",
-    });
-    const after = launchTarget({
+  it("keeps waiting for the welcome when the primary's shell snapshot arrives first", () => {
+    const shellFirst = launchTarget({
       expectsPrimary: true,
       welcome: null,
       primaryEnvironment: "ready",
     });
-    expect([before, after]).toEqual(["pending", "none"]);
+    const welcomeNamesThread = launchTarget({
+      expectsPrimary: true,
+      welcome: { bootstrapProjectId: "project", bootstrapThreadId: "thread" },
+      primaryEnvironment: "ready",
+    });
+    expect([shellFirst, welcomeNamesThread]).toEqual(["pending", "present"]);
   });
 
   it("does not wait for a welcome that cannot come", () => {
