@@ -205,12 +205,19 @@ const isStrongId = (id: string) => id.startsWith("env:") || id.startsWith("expor
 const MAX_IDS = 10;
 
 /**
- * The identities an entry keeps when written: its own server or exporter ids and the machine's
- * current ones. Tailnet nodes it no longer has go, and past the cap the oldest go, so a save never
- * fails on a machine that changed nodes many times.
+ * The identities an entry keeps when written: the machine's own server or exporter ids first, then
+ * the entry's other strong ids, then the machine's current tailnet nodes. Nodes it no longer has go,
+ * and past the cap tailnet nodes go before any strong id, so a save never fails and never drops the
+ * identity that ties the entry to its machine.
  */
 function keptIds(entry: ForkDashboardMachine | null, current: ReadonlyArray<string>) {
-  return [...new Set([...(entry?.ids.filter(isStrongId) ?? []), ...current])].slice(-MAX_IDS);
+  return [
+    ...new Set([
+      ...current.filter(isStrongId),
+      ...(entry?.ids.filter(isStrongId) ?? []),
+      ...current.filter((id) => !isStrongId(id)),
+    ]),
+  ].slice(0, MAX_IDS);
 }
 
 const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>

@@ -190,6 +190,17 @@ describe("placeMachines", () => {
     expect(() => decodeLayout(toSave)).not.toThrow();
   });
 
+  it("keeps a machine's own identity when its current tailnet nodes alone reach the cap", () => {
+    const saved = updateMachine(empty, { ids: ["env:pc"], name: "pc" }, { alias: "Desk" });
+    const nodes = Array.from({ length: 10 }, (_, index) => `tailnet:n${index}`);
+    const live = { ...env("pc", "pc"), ids: ["env:pc", ...nodes] };
+    const toSave = consolidateLayout(saved, [live]);
+    expect(toSave.machines[0]?.ids[0]).toBe("env:pc");
+    expect(toSave.machines[0]?.ids).toHaveLength(10);
+    expect(names(toSave, [env("pc", "pc")]).t3).toEqual(["Desk"]);
+    expect(() => decodeLayout(toSave)).not.toThrow();
+  });
+
   it("gives a gone or ambiguous entry a key of its own, apart from the machines it names", () => {
     // An entry naming two servers at once belongs to neither, and its first id is A's own key.
     const stale = updateMachine(empty, { ids: ["env:a", "env:b"], name: "box" }, { alias: "Both" });
