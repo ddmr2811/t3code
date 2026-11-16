@@ -1,9 +1,17 @@
 // Fork-only: where the app lands when it starts on Home, kept pure so it can be tested.
+import type { SupervisorConnectionState } from "@t3tools/client-runtime/connection";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-/** Whether the home thread's environment can say yet if the thread is there. */
-export type HomeEnvironmentState = "pending" | "ready" | "unavailable";
+/**
+ * What the home thread's environment can say about the thread: nothing yet, a cache that can
+ * confirm it but not rule it out, the server's own snapshot, or nothing ever (gone or offline).
+ */
+export type HomeEnvironmentState = "pending" | "cached" | "ready" | "unavailable";
+
+/** Whether the primary server's welcome named a thread to open, which outranks the settings. */
+export type LaunchTarget = "pending" | "none" | "present";
 
 export type StartScreen =
   | { readonly kind: "wait" }
@@ -19,23 +27,75 @@ export function isHomeThread(key: string | null, ref: ScopedThreadRef): boolean 
   return key !== null && key === scopedThreadKey(ref);
 }
 
+/** Settled offline: the same test the app's bootstrap uses; a first connect is still trying. */
+function stoppedTrying(connection: SupervisorConnectionState | null): boolean {
+  if (connection === null) return false;
+  switch (connection.phase) {
+    case "offline":
+    case "blocked":
+      return true;
+    case "backoff":
+      return !(connection.desired && connection.attempt <= 2);
+    case "available":
+    case "connecting":
+    case "connected":
+      return false;
+  }
+}
+
+export function homeEnvironmentState(input: {
+  readonly enabled: boolean;
+  readonly catalogComplete: boolean;
+  readonly shellStatus: EnvironmentShellStatus;
+  readonly hasSnapshot: boolean;
+  /** Null until the environment's connection reports a state. */
+  readonly connection: SupervisorConnectionState | null;
+}): HomeEnvironmentState {
+  if (!input.enabled) return input.catalogComplete ? "unavailable" : "pending";
+  if (input.hasSnapshot && input.shellStatus === "live") return "ready";
+  if (stoppedTrying(input.connection)) return "unavailable";
+  return input.hasSnapshot ? "cached" : "pending";
+}
+
+export function launchTarget(input: {
+  readonly expectsPrimary: boolean;
+  readonly welcome: {
+    readonly bootstrapProjectId?: string | undefined;
+    readonly bootstrapThreadId?: string | undefined;
+  } | null;
+  /** Null until the primary environment is known. */
+  readonly primaryEnvironment: HomeEnvironmentState | null;
+}): LaunchTarget {
+  if (!input.expectsPrimary) return "none";
+  if (input.welcome !== null) {
+    return input.welcome.bootstrapProjectId && input.welcome.bootstrapThreadId ? "present" : "none";
+  }
+  // No welcome will come from a primary that has stopped trying.
+  return input.primaryEnvironment === "unavailable" ? "none" : "pending";
+}
+
 /**
- * The home thread wins over opening the Dashboard; a missing thread or an unreachable
- * environment falls back to that setting, and then to Home. Only the entry the app opened
- * on counts, so a deep link or a later visit to Home stays where it is.
+ * A thread the server was launched for wins; then the home thread, then opening the Dashboard.
+ * A cache can confirm the home thread but only the server's snapshot can rule it out; a missing
+ * thread or an unreachable environment falls back. Only the entry the app opened on counts, so
+ * a deep link or a later visit to Home stays where it is.
  */
 export function resolveStartScreen(input: {
   readonly initialEntry: boolean;
+  readonly launch: LaunchTarget;
   readonly homeThread: ScopedThreadRef | null;
   readonly homeEnvironment: HomeEnvironmentState;
   readonly homeThreadExists: boolean;
   readonly openDashboard: boolean;
 }): StartScreen {
-  if (!input.initialEntry) return { kind: "stay" };
+  if (!input.initialEntry || input.launch === "present") return { kind: "stay" };
+  if (input.homeThread === null && !input.openDashboard) return { kind: "stay" };
+  if (input.launch === "pending") return { kind: "wait" };
   if (input.homeThread !== null) {
-    if (input.homeEnvironment === "pending") return { kind: "wait" };
-    if (input.homeEnvironment === "ready" && input.homeThreadExists) {
-      return { kind: "thread", threadRef: input.homeThread };
+    const canGo = input.homeEnvironment === "ready" || input.homeEnvironment === "cached";
+    if (canGo && input.homeThreadExists) return { kind: "thread", threadRef: input.homeThread };
+    if (input.homeEnvironment === "pending" || input.homeEnvironment === "cached") {
+      return { kind: "wait" };
     }
   }
   return input.openDashboard ? { kind: "dashboard" } : { kind: "stay" };

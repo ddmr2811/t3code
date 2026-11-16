@@ -188,10 +188,13 @@ describe("tailnetOnlyPeers", () => {
       "jarvis",
       "jarvisvps",
     ]);
-    // An endpoint no peer holds identifies nothing; the names still stand in.
+    // An endpoint no peer holds identifies nothing; the host name stands in, not the label too.
     expect(hidden({ ...base, tailnetHosts: ["100.64.0.99"], hostname: "jarvis" })).toEqual([
       "prod-box",
+      "jarvisvps",
     ]);
+    // Without a host name, as for an offline machine, the label is all there is.
+    expect(hidden(base)).toEqual(["jarvis", "prod-box"]);
   });
 
   it("reads the host of each advertised tailnet endpoint and skips LAN ones", () => {

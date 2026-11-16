@@ -159,7 +159,8 @@ export function tailnetOnlyPeers(input: {
       .flatMap((environment) =>
         identified.has(environment.environmentId)
           ? []
-          : [environment.label, environment.hostname ?? ""],
+          : // The machine's own name when the server reports one; the label is a user's choice.
+            [environment.hostname || environment.label],
       )
       .map(hostKey)
       .filter((name) => name !== ""),

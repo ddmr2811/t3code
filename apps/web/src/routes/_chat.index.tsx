@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -23,9 +24,11 @@ import {
   useQuietThreadShell,
   useVisibleThreadShells,
 } from "../state/entities";
-import { useEnvironments } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { primaryServerWelcomeAtom } from "../state/server";
+import { expectsPrimaryEnvironment } from "../state/shell";
 import { useHomeEnvironmentState } from "../fork/homeThread";
-import { parseHomeThread, resolveStartScreen } from "../fork/homeThread.logic";
+import { launchTarget, parseHomeThread, resolveStartScreen } from "../fork/homeThread.logic";
 import { useRightPanelStore } from "../rightPanelStore";
 import { buildThreadRouteParams } from "../threadRoutes";
 
@@ -59,11 +62,21 @@ function ForkIndex() {
     homeThreadShell !== null &&
     homeThreadShell.deletedAt === null &&
     homeThreadShell.archivedAt === null;
+  // A thread the primary server was launched for (`t3 <folder>`) outranks both settings.
+  const welcome = useAtomValue(primaryServerWelcomeAtom);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryEnvironment = useHomeEnvironmentState(primaryEnvironmentId);
+  const launch = launchTarget({
+    expectsPrimary: expectsPrimaryEnvironment(),
+    welcome,
+    primaryEnvironment: primaryEnvironmentId === null ? null : primaryEnvironment,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on app start, opens the home thread or the Dashboard once the saved client settings and the home thread's environment have loaded
   useEffect(() => {
     if (startScreenChosen || !settingsHydrated) return;
     const screen = resolveStartScreen({
       initialEntry: isInitialHistoryEntry(router),
+      launch,
       homeThread: parseHomeThread(homeThreadKey),
       homeEnvironment,
       homeThreadExists,
@@ -85,6 +98,7 @@ function ForkIndex() {
     homeEnvironment,
     homeThreadExists,
     homeThreadKey,
+    launch,
     navigate,
     openDashboard,
     router,
