@@ -32,7 +32,7 @@ export function DashboardPage() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-4 py-10 sm:px-8">
+          <div className="mx-auto flex w-full max-w-[100rem] flex-col gap-12 px-4 py-10 sm:px-8">
             <Section title="Machines">
               <DashboardMachines nowMs={nowMs} />
             </Section>

@@ -371,8 +371,8 @@ export function DashboardMachines({
   );
   if (compact) {
     return (
-      <div className="flex flex-col gap-2 rounded-lg border p-2">
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-2">
+      <div className="@container flex flex-col gap-2 rounded-lg border p-2">
+        <div className="grid grid-cols-1 gap-2 @xs:grid-cols-2">
           {environments.map((environment) => (
             <MachineCard key={environment.environmentId} environment={environment} />
           ))}

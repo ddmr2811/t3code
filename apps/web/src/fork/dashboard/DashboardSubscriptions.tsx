@@ -36,11 +36,17 @@ function WindowMeter(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string;
   readonly nowMs: number;
+  readonly compact: boolean;
 }) {
   const used = Math.min(100, Math.max(0, props.window.usedPercent));
   const resets = formatResetsIn(props.window, props.nowMs);
   return (
-    <div className="flex w-28 min-w-0 flex-col gap-0.5 font-mono text-2xs tabular-nums">
+    <div
+      className={cn(
+        "flex min-w-0 flex-col gap-0.5 font-mono text-2xs tabular-nums",
+        props.compact ? "w-full" : "w-28",
+      )}
+    >
       <div className="flex justify-between gap-1">
         <span className="truncate text-muted-foreground">{props.window.label}</span>
         <span className={cn(used >= 90 && "text-destructive")}>{Math.round(used)}%</span>
@@ -72,7 +78,7 @@ function AccountRow(props: {
         props.compact ? "px-3 py-2" : "px-4 py-2.5",
       )}
     >
-      <div className="flex min-w-40 flex-1 flex-col">
+      <div className={cn("flex flex-1 flex-col", props.compact ? "min-w-full" : "min-w-40")}>
         <span className="truncate text-sm">
           {account.displayName ?? account.email ?? "Account"}
         </span>
@@ -83,7 +89,7 @@ function AccountRow(props: {
           <span className="truncate">{where}</span>
         </span>
       </div>
-      <div className="flex gap-3">
+      <div className={props.compact ? "grid w-full grid-cols-2 gap-3" : "flex gap-3"}>
         {windows.length === 0 ? (
           <span className="text-2xs text-muted-foreground">No 5-hour or weekly window</span>
         ) : (
@@ -93,6 +99,7 @@ function AccountRow(props: {
               window={window}
               color={props.color}
               nowMs={props.nowMs}
+              compact={props.compact}
             />
           ))
         )}
