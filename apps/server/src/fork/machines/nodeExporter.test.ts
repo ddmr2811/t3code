@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   cpuUtilizationBetween,
+  MAX_LINE_LENGTH,
   nodeExporterResources,
   nodeExporterUrlProblem,
   parseNodeExporterMetrics,
@@ -61,6 +62,28 @@ describe("parseNodeExporterMetrics", () => {
       ),
     ).toEqual({ cpu: null, cpuCount: 0, availableMemoryBytes: null, totalMemoryBytes: null });
   });
+
+  it("drops a line too long to be real before reading it", () => {
+    // 40 KB of label pairs that a backtracking pattern would take seconds over.
+    const hostile = `node_cpu_seconds_total{${'a="b",'.repeat(6_700)}cpu="9",mode="idle"} 5`;
+    expect(hostile.length).toBeGreaterThan(MAX_LINE_LENGTH);
+    const metrics = parseNodeExporterMetrics(`${hostile}\n${SAMPLE}`);
+    expect(metrics.cpuCount).toBe(2);
+    expect(parseNodeExporterMetrics(hostile).cpu).toBe(null);
+  });
+
+  it("reads labels with escaped quotes and a trailing timestamp", () => {
+    expect(
+      parseNodeExporterMetrics(
+        'node_cpu_seconds_total{cpu="0",note="a \\"quoted\\" b",mode="idle"} 7 1731744000000',
+      ),
+    ).toEqual({
+      cpu: { idleSeconds: 7, totalSeconds: 7 },
+      cpuCount: 1,
+      availableMemoryBytes: null,
+      totalMemoryBytes: null,
+    });
+  });
 });
 
 describe("cpuUtilizationBetween", () => {
@@ -104,16 +127,17 @@ describe("cpuUtilizationBetween", () => {
 describe("nodeExporterUrlProblem", () => {
   it.each([
     ["http://100.96.210.49:9100/metrics", null],
-    ["http://prod-cx43.tail0.ts.net:9100/metrics", null],
+    // Names are never resolved, so a MagicDNS name cannot be rebound elsewhere.
+    ["http://prod-cx43.tail0.ts.net:9100/metrics", "Only Tailscale IPs"],
     ["http://[fd7a:115c:a1e0::5]:9100/metrics", null],
     ["https://100.96.210.49:9100/metrics", "Only http URLs are read."],
     ["http://user:pass@100.96.210.49:9100/metrics", "URLs with credentials are not read."],
-    ["http://192.168.1.10:9100/metrics", "Only Tailscale addresses"],
-    ["http://169.254.169.254/latest/meta-data", "Only Tailscale addresses"],
-    ["http://127.0.0.1:9100/metrics", "Only Tailscale addresses"],
-    ["http://prod-cx43:9100/metrics", "Only Tailscale addresses"],
-    ["http://example.com/metrics", "Only Tailscale addresses"],
-    ["http://100.128.0.1:9100/metrics", "Only Tailscale addresses"],
+    ["http://192.168.1.10:9100/metrics", "Only Tailscale IPs"],
+    ["http://169.254.169.254/latest/meta-data", "Only Tailscale IPs"],
+    ["http://127.0.0.1:9100/metrics", "Only Tailscale IPs"],
+    ["http://prod-cx43:9100/metrics", "Only Tailscale IPs"],
+    ["http://example.com/metrics", "Only Tailscale IPs"],
+    ["http://100.128.0.1:9100/metrics", "Only Tailscale IPs"],
     ["not a url", "Not a URL."],
   ])("%s", (url, problem) => {
     const answer = nodeExporterUrlProblem(url);

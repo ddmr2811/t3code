@@ -70,8 +70,12 @@ export function launchTarget(input: {
   if (input.welcome !== null) {
     return input.welcome.bootstrapProjectId && input.welcome.bootstrapThreadId ? "present" : "none";
   }
-  // No welcome will come from a primary that has stopped trying.
-  return input.primaryEnvironment === "unavailable" ? "none" : "pending";
+  // The welcome comes on its own subscription, unordered with the shell's, but it is replayed
+  // at once on connect; once the primary's own snapshot is live without one, it names nothing.
+  // A primary that has stopped trying will not send one either.
+  return input.primaryEnvironment === "unavailable" || input.primaryEnvironment === "ready"
+    ? "none"
+    : "pending";
 }
 
 /**

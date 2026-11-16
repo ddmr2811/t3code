@@ -6,7 +6,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const ForkNodeExporter = Schema.Struct({
   name: TrimmedNonEmptyString,
-  /** Plain http to a Tailscale address or MagicDNS name, such as http://100.96.210.49:9100/metrics. */
+  /** Plain http to a literal Tailscale IP, such as http://100.96.210.49:9100/metrics. */
   url: TrimmedNonEmptyString,
 });
 export type ForkNodeExporter = typeof ForkNodeExporter.Type;

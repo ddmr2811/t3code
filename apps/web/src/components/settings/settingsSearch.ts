@@ -718,7 +718,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Dashboard exporters",
     to: "/settings/general",
     scope: "environment",
-    searchTerms: ["dashboard node exporter prometheus machines prod tailscale metrics"],
+    searchTerms: ["dashboard node exporter prometheus machines prod tailscale ip metrics"],
   },
   {
     id: "response-streaming",

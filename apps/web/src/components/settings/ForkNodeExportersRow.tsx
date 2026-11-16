@@ -14,7 +14,7 @@ import {
 } from "./useScopedSettings";
 
 const DESCRIPTION =
-  "One per line: a name and the exporter's URL, such as prod-cx43 http://100.96.210.49:9100/metrics. This machine reads them for the Dashboard. Only plain http to Tailscale addresses and MagicDNS names is read.";
+  "One per line: a name and the exporter's URL, such as prod-cx43 http://100.96.210.49:9100/metrics. This machine reads them for the Dashboard. Use the machine's Tailscale IP: only plain http to Tailscale IPs is read, never names.";
 
 export function ForkNodeExportersRow() {
   const settings = useScopedSettings();

@@ -1,4 +1,6 @@
 // Fork-only: reads a Prometheus node_exporter's text into the Dashboard's machine load.
+import * as NodeNet from "node:net";
+
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import { isSharedAddressSpaceHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
@@ -15,37 +17,84 @@ export interface NodeExporterMetrics {
   readonly totalMemoryBytes: number | null;
 }
 
-const SAMPLE = /^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+(\S+)/;
-const LABEL = /([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"/g;
+/** Longer lines are dropped unread; real node_exporter lines are well under 1 KB. */
+export const MAX_LINE_LENGTH = 4096;
+/** A full node_exporter page is a few thousand lines; more than this is not one. */
+const MAX_LINES = 50_000;
+const CPU_SECONDS = "node_cpu_seconds_total";
+const MEMORY_AVAILABLE = "node_memory_MemAvailable_bytes";
+const MEMORY_TOTAL = "node_memory_MemTotal_bytes";
 // iowait is time a core waited with nothing to run, so it counts as idle.
 const IDLE_MODES = new Set(["idle", "iowait"]);
 
-/** The text exposition format; unknown and malformed lines are skipped. */
+/** `{key="value",...}` from `start` (the brace), read once left to right; null if malformed. */
+function readLabels(
+  line: string,
+  start: number,
+): { readonly labels: Map<string, string>; readonly end: number } | null {
+  const labels = new Map<string, string>();
+  let index = start + 1;
+  while (index < line.length) {
+    const char = line[index];
+    if (char === "}") return { labels, end: index + 1 };
+    if (char === "," || char === " ") {
+      index++;
+      continue;
+    }
+    let keyEnd = index;
+    while (keyEnd < line.length && line[keyEnd] !== "=") keyEnd++;
+    if (line[keyEnd + 1] !== '"') return null;
+    let value = "";
+    let cursor = keyEnd + 2;
+    while (cursor < line.length && line[cursor] !== '"') {
+      if (line[cursor] === "\\") cursor++;
+      value += line[cursor] ?? "";
+      cursor++;
+    }
+    if (cursor >= line.length) return null;
+    labels.set(line.slice(index, keyEnd).trim(), value);
+    index = cursor + 1;
+  }
+  return null;
+}
+
+/** The sample's value: the first field after the name and labels, before any timestamp. */
+function readValue(line: string, start: number): number | null {
+  const field = line.slice(start).trim().split(" ", 1)[0] ?? "";
+  const value = Number(field);
+  return field !== "" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * The text exposition format, read in one pass without backtracking: only the three families
+ * used, lines over MAX_LINE_LENGTH dropped unread, and at most MAX_LINES lines looked at.
+ */
 export function parseNodeExporterMetrics(text: string): NodeExporterMetrics {
   let idleSeconds = 0;
   let totalSeconds = 0;
   const cpus = new Set<string>();
   let availableMemoryBytes: number | null = null;
   let totalMemoryBytes: number | null = null;
-  for (const line of text.split("\n")) {
-    if (line.startsWith("#")) continue;
-    const match = SAMPLE.exec(line.trim());
-    if (match === null) continue;
-    const [, name, labels = "", raw = ""] = match;
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 0) continue;
-    if (name === "node_cpu_seconds_total") {
-      const label = new Map([...labels.matchAll(LABEL)].map(([, key, text]) => [key, text]));
-      const cpu = label.get("cpu");
-      const mode = label.get("mode");
-      if (cpu === undefined || mode === undefined) continue;
+  let lineStart = 0;
+  for (let lines = 0; lineStart < text.length && lines < MAX_LINES; lines++) {
+    const newline = text.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 ? text.length : newline;
+    const length = lineEnd - lineStart;
+    const line = length > MAX_LINE_LENGTH ? "" : text.slice(lineStart, lineEnd);
+    lineStart = lineEnd + 1;
+    if (line.startsWith(CPU_SECONDS + "{")) {
+      const labels = readLabels(line, CPU_SECONDS.length);
+      const value = labels === null ? null : readValue(line, labels.end);
+      const cpu = labels?.labels.get("cpu");
+      const mode = labels?.labels.get("mode");
+      if (value === null || cpu === undefined || mode === undefined) continue;
       cpus.add(cpu);
       totalSeconds += value;
       if (IDLE_MODES.has(mode)) idleSeconds += value;
-    } else if (name === "node_memory_MemAvailable_bytes") {
-      availableMemoryBytes = value;
-    } else if (name === "node_memory_MemTotal_bytes") {
-      totalMemoryBytes = value;
+    } else if (line.startsWith(MEMORY_AVAILABLE + " ")) {
+      availableMemoryBytes = readValue(line, MEMORY_AVAILABLE.length) ?? availableMemoryBytes;
+    } else if (line.startsWith(MEMORY_TOTAL + " ")) {
+      totalMemoryBytes = readValue(line, MEMORY_TOTAL.length) ?? totalMemoryBytes;
     }
   }
   return {
@@ -87,9 +136,9 @@ export function nodeExporterResources(
 }
 
 /**
- * Why the server will not read this URL, or null when it will. Only plain http to a Tailscale
- * address or MagicDNS name, without credentials, so the setting cannot point the server at the
- * internet or the machine's own network.
+ * Why the server will not read this URL, or null when it will. Only plain http to a literal
+ * Tailscale IP, without credentials: no name is resolved, so the setting cannot be pointed at
+ * the internet, this machine or its network, even by DNS that changes after it is checked.
  */
 export function nodeExporterUrlProblem(raw: string): string | null {
   let url: URL;
@@ -101,8 +150,12 @@ export function nodeExporterUrlProblem(raw: string): string | null {
   if (url.protocol !== "http:") return "Only http URLs are read.";
   if (url.username !== "" || url.password !== "") return "URLs with credentials are not read.";
   const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  if (isSharedAddressSpaceHost(host) || isTailnetHost(host)) return null;
-  return "Only Tailscale addresses (100.64.0.0/10) and MagicDNS names (.ts.net) are read.";
+  const tailnetIp =
+    (NodeNet.isIPv4(host) && isSharedAddressSpaceHost(host)) ||
+    (NodeNet.isIPv6(host) && isTailnetHost(host));
+  return tailnetIp
+    ? null
+    : "Only Tailscale IPs (100.64.0.0/10 or fd7a:115c:a1e0::/48) are read; use the machine's Tailscale IP.";
 }
 
 export function nodeExporterHost(raw: string): string {

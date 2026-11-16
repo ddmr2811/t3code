@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import * as HostResources from "../../resourceTelemetry/HostResources.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -30,17 +30,16 @@ import {
 export class ForkMachines extends Context.Service<
   ForkMachines,
   {
-    /** A fresh sample about every second, for as long as the caller listens. */
+    /** A fresh sample about every second, shared by every listener. */
     readonly hostResources: Stream.Stream<HostResourcesSnapshot>;
     /** Never fails: an exporter that does not answer reads as a problem. */
     readonly nodeExporters: Effect.Effect<ForkNodeExportersStatus>;
   }
 >()("t3/fork/machines/ForkMachines") {}
 
-class NodeExporterTooLarge extends Schema.TaggedError<NodeExporterTooLarge>()(
-  "NodeExporterTooLarge",
-  {},
-) {}
+class NodeExporterRefused extends Schema.TaggedError<NodeExporterRefused>()("NodeExporterRefused", {
+  reason: Schema.Literals(["too large", "compressed"]),
+}) {}
 
 // The sample itself takes 200 ms, so a sample starts about every second.
 const HOST_SAMPLE_SPACING = Duration.millis(800);
@@ -59,14 +58,30 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const baselines = new Map<string, { readonly counters: CpuCounters; readonly atMs: number }>();
 
+  // A redirect is an error, never followed: it could point at this machine or a metadata
+  // address. The body is counted as it streams and cut off past the limit, uncompressed only.
   const scrapeText = Effect.fn("ForkMachines.scrape")(function* (url: string) {
     const response = yield* httpClient
-      .get(url, { headers: { accept: "text/plain" } })
-      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+      .get(url, { headers: { accept: "text/plain", "accept-encoding": "identity" } })
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+      );
+    const encoding = response.headers["content-encoding"] ?? "identity";
+    if (encoding !== "identity") return yield* new NodeExporterRefused({ reason: "compressed" });
     if (Number(response.headers["content-length"] ?? 0) > MAX_SCRAPE_BYTES) {
-      return yield* new NodeExporterTooLarge();
+      return yield* new NodeExporterRefused({ reason: "too large" });
     }
-    return yield* response.text;
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    yield* Stream.runForEach(response.stream, (chunk) => {
+      bytes += chunk.byteLength;
+      if (bytes > MAX_SCRAPE_BYTES)
+        return Effect.fail(new NodeExporterRefused({ reason: "too large" }));
+      chunks.push(chunk);
+      return Effect.void;
+    });
+    return new TextDecoder().decode(Buffer.concat(chunks));
   }, Effect.timeout(SCRAPE_TIMEOUT));
 
   const read = Effect.fn("ForkMachines.readExporter")(function* (exporter: ForkNodeExporter) {
@@ -134,11 +149,15 @@ export const make = Effect.gen(function* () {
 
   const cachedExporters = yield* Effect.cachedWithTTL(readAll(), CACHE_TTL);
 
+  // One sampler while anyone listens, stopped when the last listener leaves; a late listener
+  // starts from the latest sample.
+  const sharedHostResources = yield* Stream.share(
+    Stream.fromEffectSchedule(hostResources.readFresh, Schedule.spaced(HOST_SAMPLE_SPACING)),
+    { capacity: 1, strategy: "sliding", replay: 1 },
+  );
+
   return ForkMachines.of({
-    hostResources: Stream.fromEffectSchedule(
-      hostResources.readFresh,
-      Schedule.spaced(HOST_SAMPLE_SPACING),
-    ),
+    hostResources: sharedHostResources,
     nodeExporters: cachedExporters,
   });
 });

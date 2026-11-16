@@ -81,6 +81,20 @@ describe("launchTarget", () => {
     );
   });
 
+  it("stops waiting once the primary's own snapshot is live without a welcome", () => {
+    const before = launchTarget({
+      expectsPrimary: true,
+      welcome: null,
+      primaryEnvironment: "cached",
+    });
+    const after = launchTarget({
+      expectsPrimary: true,
+      welcome: null,
+      primaryEnvironment: "ready",
+    });
+    expect([before, after]).toEqual(["pending", "none"]);
+  });
+
   it("does not wait for a welcome that cannot come", () => {
     expect(launchTarget({ expectsPrimary: false, welcome: null, primaryEnvironment: null })).toBe(
       "none",
