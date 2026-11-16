@@ -69,7 +69,7 @@ import {
 } from "react";
 
 import { useThreadNotificationsMuted } from "../../threadNotificationMute";
-import { useIsHomeThread } from "../../fork/homeThread";
+import { useIsHomeThread } from "../../fork/homeThreadSetting";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";

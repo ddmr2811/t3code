@@ -49,7 +49,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { getClientSettings, useClientSettings } from "./useSettings";
 import { isThreadNotificationsMuted } from "../components/ThreadNotificationCoordinator.logic";
 import { setThreadNotificationsMuted } from "../threadNotificationMute";
-import { setHomeThread } from "../fork/homeThread";
+import { setHomeThread } from "../fork/homeThreadSetting";
 import { isHomeThread } from "../fork/homeThread.logic";
 import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 

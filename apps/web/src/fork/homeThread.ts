@@ -1,20 +1,17 @@
-// Fork-only: the home thread, a client setting the app opens on start with the Dashboard beside it.
+// Fork-only: whether the home thread's environment can tell yet if the thread is there.
 import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
   connectionProjectionPhase,
 } from "@t3tools/client-runtime/connection";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { environmentCatalog } from "../connection/catalog";
-import { persistClientSettingsUpdate, useClientSettings } from "../hooks/useSettings";
 import { catalogIsComplete, environmentShell, expectsPrimaryEnvironment } from "../state/shell";
-import { type HomeEnvironmentState, isHomeThread } from "./homeThread.logic";
+import type { HomeEnvironmentState } from "./homeThread.logic";
 
 const NO_ENVIRONMENT_ATOM = Atom.make<HomeEnvironmentState>("unavailable").pipe(
   Atom.withLabel("fork-home-thread-environment:none"),
@@ -47,29 +44,4 @@ export function useHomeEnvironmentState(environmentId: EnvironmentId | null): Ho
   return useAtomValue(
     environmentId === null ? NO_ENVIRONMENT_ATOM : homeEnvironmentStateAtom(environmentId),
   );
-}
-
-export function useIsHomeThread(ref: ScopedThreadRef | null): boolean {
-  return useClientSettings(
-    (settings) => ref !== null && isHomeThread(settings.forkHomeThread, ref),
-  );
-}
-
-export async function setHomeThread(ref: ScopedThreadRef, home: boolean): Promise<void> {
-  const key = scopedThreadKey(ref);
-  try {
-    await persistClientSettingsUpdate((current) => ({
-      ...current,
-      // Unsetting only clears this thread, never one another device chose meanwhile.
-      forkHomeThread: home ? key : current.forkHomeThread === key ? null : current.forkHomeThread,
-    }));
-  } catch (error) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: home ? "Could not set the home thread" : "Could not unset the home thread",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      }),
-    );
-  }
 }

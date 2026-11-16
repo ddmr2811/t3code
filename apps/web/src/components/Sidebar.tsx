@@ -131,7 +131,7 @@ import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { setThreadNotificationsMuted } from "../threadNotificationMute";
-import { setHomeThread } from "../fork/homeThread";
+import { setHomeThread } from "../fork/homeThreadSetting";
 import { isHomeThread } from "../fork/homeThread.logic";
 import { isThreadNotificationsMuted } from "./ThreadNotificationCoordinator.logic";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";

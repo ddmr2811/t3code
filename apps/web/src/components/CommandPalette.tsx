@@ -195,7 +195,7 @@ import {
   setThreadNotificationsMuted,
   useThreadNotificationsMuted,
 } from "../threadNotificationMute";
-import { setHomeThread, useIsHomeThread } from "../fork/homeThread";
+import { setHomeThread, useIsHomeThread } from "../fork/homeThreadSetting";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
