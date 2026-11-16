@@ -6,11 +6,16 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type DashboardDraft,
   dashboardWriteTarget,
+  needsLastRead,
+  operationIsCurrent,
   type OwnerCandidate,
   ownerOptions,
+  planDraft,
   planOwnerSwitch,
   resolveDashboardSource,
+  reuseCandidates,
 } from "./dashboardOwner.logic";
 
 const PRIMARY = "env-pc" as EnvironmentId;
@@ -203,5 +208,77 @@ describe("planOwnerSwitch", () => {
         planOwnerSwitch({ choice: "copy", target, primaryId: PRIMARY, layout: onScreen }),
       ).toBeNull();
     }
+  });
+});
+
+describe("needsLastRead", () => {
+  it("reads the cache whenever the owner's own layout cannot be used", () => {
+    const needs = (
+      candidates: ReadonlyArray<OwnerCandidate>,
+      owner: EnvironmentId | null = SERVER,
+    ) => needsLastRead({ owner, primaryId: PRIMARY, candidates });
+    expect(needs(CANDIDATES)).toBe(false);
+    expect(needs([candidate(SERVER, { connected: false })])).toBe(true);
+    expect(needs([candidate(SERVER, { protocol: 2 })])).toBe(true);
+    expect(needs([candidate(SERVER, { layout: null })])).toBe(true);
+    expect(needs([])).toBe(true);
+    expect(needs([], null)).toBe(false);
+    expect(needs([], PRIMARY)).toBe(false);
+  });
+});
+
+describe("planDraft", () => {
+  const opened = (overrides: Partial<DashboardDraft> = {}): DashboardDraft => {
+    const base = layout(4, "a");
+    return { layout: base, base, ownerId: PRIMARY, ownerLabel: "PC", ...overrides };
+  };
+  const onB = { ownerId: SERVER, label: "cx53", layout: layout(7, "b") };
+
+  it("saves after the draft's own base while the owner holds", () => {
+    const draft = opened({ layout: layout(4, "edited") });
+    expect(planDraft(draft, { ...onB, ownerId: PRIMARY })).toEqual({
+      kind: "save",
+      base: draft.base,
+    });
+  });
+
+  it("closes an untouched draft when the owner moves", () => {
+    expect(planDraft(opened(), onB)).toEqual({ kind: "close" });
+    // Edited back to what it was is untouched too.
+    expect(planDraft(opened({ layout: layout(4, "a") }), onB)).toEqual({ kind: "close" });
+  });
+
+  it("never saves edits made for one owner on another unasked", () => {
+    const plan = planDraft(opened({ layout: layout(4, "edited") }), onB);
+    expect(plan).toEqual({
+      kind: "moved",
+      notice: "The dashboard is now saved on cx53; your edits were made for PC",
+      copyLabel: "Copy my edits to cx53",
+      copyConfirm: expect.stringContaining("Replace the dashboard saved on cx53?"),
+      copyBase: onB.layout,
+    });
+    const onDefault = planDraft(opened({ layout: layout(4, "edited") }), {
+      ...onB,
+      layout: layout(0),
+    });
+    expect(onDefault.kind === "moved" && onDefault.copyConfirm).toBeNull();
+  });
+});
+
+describe("operationIsCurrent", () => {
+  it("drops an answer once another switch started or the owner moved", () => {
+    const started = { id: 2, owner: null };
+    expect(operationIsCurrent(started, { id: 2, owner: null })).toBe(true);
+    expect(operationIsCurrent(started, { id: 3, owner: null })).toBe(false);
+    expect(operationIsCurrent(started, { id: 2, owner: SERVER })).toBe(false);
+  });
+});
+
+describe("reuseCandidates", () => {
+  it("keeps the previous list until something a consumer reads changes", () => {
+    const previous = [candidate(SERVER)];
+    expect(reuseCandidates(previous, [{ ...previous[0]! }])).toBe(previous);
+    const offline = [candidate(SERVER, { connected: false, layout: previous[0]!.layout })];
+    expect(reuseCandidates(previous, offline)).toBe(offline);
   });
 });

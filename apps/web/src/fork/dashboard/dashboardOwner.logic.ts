@@ -88,6 +88,30 @@ export function dashboardWriteTarget(
   }
 }
 
+/** The environment the layout on screen belongs to, whether or not it can be written now. */
+export function dashboardOwnerId(
+  source: DashboardSource,
+  primaryId: EnvironmentId | null,
+): EnvironmentId | null {
+  return source.kind === "primary" ? primaryId : source.environmentId;
+}
+
+/** Whether the chosen owner's own layout cannot be used, so the copy cached on this device is. */
+export function needsLastRead(input: {
+  readonly owner: EnvironmentId | null;
+  readonly primaryId: EnvironmentId | null;
+  readonly candidates: ReadonlyArray<OwnerCandidate>;
+}): boolean {
+  if (input.owner === null || input.owner === input.primaryId) return false;
+  const candidate = input.candidates.find((entry) => entry.environmentId === input.owner);
+  return (
+    candidate === undefined ||
+    !candidate.connected ||
+    candidate.protocol < DASHBOARD_OWNER_PROTOCOL ||
+    candidate.layout === null
+  );
+}
+
 const canKeepDashboard = (candidate: OwnerCandidate) =>
   candidate.connected &&
   candidate.canWrite &&
@@ -127,6 +151,12 @@ export function ownerOptions(input: {
   return options.toSorted((a, b) => Number(b.primary) - Number(a.primary));
 }
 
+/** Asked before a write replaces a layout someone arranged; null when it holds the defaults. */
+const replaceConfirm = (label: string, layout: ForkDashboardLayout) =>
+  isDefaultLayout(layout)
+    ? null
+    : `Replace the dashboard saved on ${label}?\nIts aliases, icons, colours, sections, order and hidden items are replaced by this layout on every client that uses it.`;
+
 export type OwnerSwitchChoice = "copy" | "use";
 
 export interface OwnerSwitch {
@@ -160,9 +190,82 @@ export function planOwnerSwitch(input: {
   return {
     owner,
     write: { environmentId: target.environmentId, layout: input.layout, base: target.layout },
-    confirm: isDefaultLayout(target.layout)
-      ? null
-      : `Replace the dashboard saved on ${target.label}?\nIts aliases, icons, colours, sections, order and hidden items are replaced by this layout on every client that uses it.`,
+    confirm: replaceConfirm(target.label, target.layout),
     next: { ...input.layout, revision: target.layout.revision + 1 },
   };
+}
+
+/** A layout being edited, tied to the owner it was opened from and the revision it starts at. */
+export interface DashboardDraft {
+  readonly layout: ForkDashboardLayout;
+  readonly base: ForkDashboardLayout;
+  readonly ownerId: EnvironmentId | null;
+  readonly ownerLabel: string;
+}
+
+const draftHasChanges = (draft: DashboardDraft) =>
+  draft.layout !== draft.base && JSON.stringify(draft.layout) !== JSON.stringify(draft.base);
+
+export type DraftPlan =
+  /** Same owner: save as the revision after the draft's base. */
+  | { readonly kind: "save"; readonly base: ForkDashboardLayout }
+  /** The owner moved and nothing was changed: leave edit mode. */
+  | { readonly kind: "close" }
+  /** The owner moved under unsaved edits: never save them there unasked. */
+  | {
+      readonly kind: "moved";
+      readonly notice: string;
+      readonly copyLabel: string;
+      readonly copyConfirm: string | null;
+      /** The base a copy is saved after: the new owner's own layout. */
+      readonly copyBase: ForkDashboardLayout;
+    };
+
+export function planDraft(
+  draft: DashboardDraft,
+  current: {
+    readonly ownerId: EnvironmentId | null;
+    readonly label: string;
+    readonly layout: ForkDashboardLayout;
+  },
+): DraftPlan {
+  if (draft.ownerId === current.ownerId) return { kind: "save", base: draft.base };
+  if (!draftHasChanges(draft)) return { kind: "close" };
+  return {
+    kind: "moved",
+    notice: `The dashboard is now saved on ${current.label}; your edits were made for ${draft.ownerLabel}`,
+    copyLabel: `Copy my edits to ${current.label}`,
+    copyConfirm: replaceConfirm(current.label, current.layout),
+    copyBase: current.layout,
+  };
+}
+
+/** An owner switch in flight: its answer only counts while it is the latest and the owner held. */
+export interface OwnerOperation {
+  readonly id: number;
+  readonly owner: EnvironmentId | null;
+}
+
+export const operationIsCurrent = (operation: OwnerOperation, now: OwnerOperation) =>
+  operation.id === now.id && operation.owner === now.owner;
+
+/** Keeps the previous list while nothing a consumer reads changed, so they skip a render. */
+export function reuseCandidates(
+  previous: ReadonlyArray<OwnerCandidate>,
+  next: ReadonlyArray<OwnerCandidate>,
+): ReadonlyArray<OwnerCandidate> {
+  if (previous.length !== next.length) return next;
+  const same = next.every((candidate, index) => {
+    const before = previous[index];
+    return (
+      before !== undefined &&
+      before.environmentId === candidate.environmentId &&
+      before.label === candidate.label &&
+      before.connected === candidate.connected &&
+      before.protocol === candidate.protocol &&
+      before.canWrite === candidate.canWrite &&
+      before.layout === candidate.layout
+    );
+  });
+  return same ? previous : next;
 }

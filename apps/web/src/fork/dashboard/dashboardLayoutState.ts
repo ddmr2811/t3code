@@ -17,31 +17,40 @@ import { toastManager } from "../../components/ui/toast";
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { useClientSettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { environmentPresentations } from "../../state/presentation";
+import { environmentPresentations, useEnvironmentPresentation } from "../../state/presentation";
 import { primaryServerSettingsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   type DashboardSource,
   dashboardWriteTarget,
+  needsLastRead,
   type OwnerCandidate,
   resolveDashboardSource,
+  reuseCandidates,
 } from "./dashboardOwner.logic";
 
 const PERMISSION_INPUT = { patch: { forkDashboard: DEFAULT_FORK_DASHBOARD_LAYOUT } };
 
-const ownerCandidatesAtom = Atom.make((get): ReadonlyArray<OwnerCandidate> =>
-  [...get(environmentPresentations.presentationsAtom)].map(([environmentId, presentation]) => ({
-    environmentId,
-    label: presentation.entry.target.label,
-    connected: presentation.connection.phase === "connected",
-    protocol: presentation.serverConfig?.environment.capabilities.forkDashboard ?? 0,
-    canWrite: get(serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT)),
-    layout: presentation.serverConfig?.settings.forkDashboard ?? null,
-  })),
-).pipe(Atom.withLabel("fork-dashboard-owner-candidates"));
+let previousCandidates: ReadonlyArray<OwnerCandidate> = [];
+const ownerCandidatesAtom = Atom.make((get): ReadonlyArray<OwnerCandidate> => {
+  const next = [...get(environmentPresentations.presentationsAtom)].map(
+    ([environmentId, presentation]) => ({
+      environmentId,
+      label: presentation.entry.target.label,
+      connected: presentation.connection.phase === "connected",
+      protocol: presentation.serverConfig?.environment.capabilities.forkDashboard ?? 0,
+      canWrite: get(
+        serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT),
+      ),
+      layout: presentation.serverConfig?.settings.forkDashboard ?? null,
+    }),
+  );
+  previousCandidates = reuseCandidates(previousCandidates, next);
+  return previousCandidates;
+}).pipe(Atom.withLabel("fork-dashboard-owner-candidates"));
 
-const lastReadKey = (environmentId: EnvironmentId) =>
-  `t3code:fork-dashboard-last-layout:${environmentId}`;
+/** Versioned, so a layout cached in an older shape is never read as the current one. */
+const lastReadKey = (environmentId: EnvironmentId) => `t3code:forkDashboard:v1:${environmentId}`;
 
 function readLastRead(environmentId: EnvironmentId): ForkDashboardLayout | null {
   try {
@@ -62,10 +71,9 @@ export function useDashboardOwner(): DashboardOwnerState {
   const primaryId = usePrimaryEnvironmentId();
   const candidates = useAtomValue(ownerCandidatesAtom);
   const primaryLayout = useAtomValue(primaryServerSettingsAtom).forkDashboard;
-  const ownerConnected =
-    candidates.find((candidate) => candidate.environmentId === owner)?.connected ?? false;
-  // Read again when the owner drops, so it shows what was saved there up to that moment.
-  const lastRead = owner === null || ownerConnected ? null : readLastRead(owner);
+  // Read whenever the owner's own layout cannot be used, so it shows what was last read there.
+  const lastRead =
+    owner !== null && needsLastRead({ owner, primaryId, candidates }) ? readLastRead(owner) : null;
   const source = resolveDashboardSource({ owner, primaryId, candidates, lastRead, primaryLayout });
   const liveLayout = source.kind === "chosen" ? source.layout : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the owner's layout into localStorage so it still shows while that server is offline
@@ -141,8 +149,7 @@ export interface DashboardLayoutWriter {
 export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardLayoutWriter {
   const { source } = state;
   const environmentId = dashboardWriteTarget(source, state.primaryId);
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const presentation = environmentId === null ? undefined : presentations.get(environmentId);
+  const { presentation } = useEnvironmentPresentation(environmentId);
   const allowed = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT),
   );

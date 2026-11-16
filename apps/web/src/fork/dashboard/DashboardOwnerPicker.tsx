@@ -2,7 +2,7 @@
 // layout on screen there or taking the one it already keeps.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
 import { CloudOffIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Alert, AlertAction, AlertDescription } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -15,9 +15,10 @@ import {
 } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
 import { requestConfirmDialog } from "../../confirmDialog";
-import { updateClientSettings } from "../../hooks/useSettings";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import type { DashboardLayoutWriter, DashboardOwnerState } from "./dashboardLayoutState";
 import {
+  operationIsCurrent,
   ownerOptions,
   type OwnerSwitch,
   type OwnerSwitchChoice,
@@ -32,9 +33,10 @@ export function DashboardOwnerPicker(props: {
   readonly disabled: boolean;
   readonly onBusy?: (busy: boolean) => void;
   /** Called once switched, with what the Dashboard shows from now on. */
-  readonly onSwitched: (next: ForkDashboardLayout) => void;
+  readonly onSwitched: (next: ForkDashboardLayout, ownerId: EnvironmentId, label: string) => void;
 }) {
   const { owner, writer } = props;
+  const operations = useRef(0);
   const { source, primaryId, candidates } = owner;
   const current = source.kind === "primary" ? primaryId : source.environmentId;
   const options = ownerOptions({ candidates, primaryId, current });
@@ -47,22 +49,33 @@ export function DashboardOwnerPicker(props: {
     return option.primary ? `${option.label} · primary` : option.label;
   };
 
+  const locked = props.disabled || busy;
   const finish = async (choice: OwnerSwitchChoice) => {
-    if (chosen == null) return;
+    if (chosen == null || locked) return;
     const plan = planOwnerSwitch({ choice, target: chosen, primaryId, layout: props.layout });
     if (plan === null) return;
     if (plan.confirm !== null) {
       const confirmed = await requestConfirmDialog(plan.confirm, { variant: "destructive" });
       if (!confirmed) return;
     }
+    operations.current += 1;
+    const operation = { id: operations.current, owner: getClientSettings().forkDashboardOwner };
+    const isCurrent = (owner: EnvironmentId | null) =>
+      operationIsCurrent(
+        { id: operation.id, owner },
+        { id: operations.current, owner: getClientSettings().forkDashboardOwner },
+      );
     setBusy(true);
     props.onBusy?.(true);
-    const done = await applyOwnerSwitch(plan, writer, chosen.label).catch(() => false);
+    const done = await applyOwnerSwitch(plan, writer, chosen.label, () =>
+      isCurrent(operation.owner),
+    ).catch(() => false);
     setBusy(false);
     props.onBusy?.(false);
-    if (!done) return;
+    // Another switch, here or on another device, answered meanwhile: its result stands.
+    if (!done || !isCurrent(plan.owner)) return;
     setTarget(null);
-    props.onSwitched(plan.next);
+    props.onSwitched(plan.next, chosen.environmentId, chosen.label);
   };
 
   return (
@@ -70,7 +83,7 @@ export function DashboardOwnerPicker(props: {
       <span className="text-muted-foreground text-sm">Saved on</span>
       <Select
         value={target ?? current ?? ""}
-        disabled={props.disabled || busy}
+        disabled={locked}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
           setTarget(value === current ? null : (value as EnvironmentId));
@@ -103,7 +116,7 @@ export function DashboardOwnerPicker(props: {
             type="button"
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={locked}
             onClick={() => void finish("copy")}
           >
             Copy this layout there
@@ -112,7 +125,7 @@ export function DashboardOwnerPicker(props: {
             type="button"
             size="sm"
             variant="outline"
-            disabled={busy}
+            disabled={locked}
             onClick={() => void finish("use")}
           >
             Use the one there
@@ -121,7 +134,7 @@ export function DashboardOwnerPicker(props: {
             type="button"
             size="sm"
             variant="ghost"
-            disabled={busy}
+            disabled={locked}
             onClick={() => setTarget(null)}
           >
             Keep {nameOf(current)}
@@ -137,6 +150,7 @@ async function applyOwnerSwitch(
   plan: OwnerSwitch,
   writer: DashboardLayoutWriter,
   targetLabel: string,
+  stillCurrent: () => boolean,
 ): Promise<boolean> {
   if (plan.write !== null) {
     const outcome = await writer.copyTo(
@@ -153,6 +167,8 @@ async function applyOwnerSwitch(
     }
     if (outcome !== "saved") return false;
   }
+  // The owner moved while the copy was in flight: keep the newer choice.
+  if (!stillCurrent()) return false;
   await updateClientSettings({ forkDashboardOwner: plan.owner });
   return true;
 }
@@ -162,7 +178,7 @@ export function DashboardOwnerNotice(props: {
   readonly owner: DashboardOwnerState;
   readonly writer: DashboardLayoutWriter;
   readonly layout: ForkDashboardLayout;
-  readonly onSwitched: (next: ForkDashboardLayout) => void;
+  readonly onSwitched: (next: ForkDashboardLayout, ownerId: EnvironmentId, label: string) => void;
 }) {
   const { source } = props.owner;
   if (source.kind !== "unavailable") return null;

@@ -1,6 +1,6 @@
 // Fork-only: one page with every machine, the tailnet, the subscriptions and the active threads,
 // arranged as saved in the settings of the server chosen to keep it, and editable in place.
-import type { ForkDashboardLayout } from "@t3tools/contracts";
+import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -29,6 +29,7 @@ import {
   setPanelHidden,
 } from "./dashboardLayout.logic";
 import { useDashboardLayoutWriter, useDashboardOwner } from "./dashboardLayoutState";
+import { type DashboardDraft, dashboardOwnerId, planDraft } from "./dashboardOwner.logic";
 import { DashboardOwnerNotice, DashboardOwnerPicker } from "./DashboardOwnerPicker";
 
 function Section(props: {
@@ -122,30 +123,38 @@ export function DashboardPage() {
   const owner = useDashboardOwner();
   const saved = owner.source.layout;
   const writer = useDashboardLayoutWriter(owner);
-  const [draft, setDraft] = useState<ForkDashboardLayout | null>(null);
-  /** What the draft was edited from: a save is its revision plus one. */
-  const [base, setBase] = useState<ForkDashboardLayout>(saved);
+  const [opened, setOpened] = useState<DashboardDraft | null>(null);
   const [pending, setPending] = useState<Saved | null>(null);
   const [saving, setSaving] = useState(false);
   const [stale, setStale] = useState(false);
+  const ownerId = dashboardOwnerId(owner.source, owner.primaryId);
+  const ownerLabel = writer.serverLabel ?? "this server";
+  const plan =
+    opened === null ? null : planDraft(opened, { ownerId, label: ownerLabel, layout: saved });
+  // The owner moved under a draft with nothing changed: edit mode closes with it.
+  const draft = plan?.kind === "close" ? null : opened;
+  // Dropped too, so moving back to that owner does not reopen it.
+  if (plan?.kind === "close") setOpened(null);
+  const moved = plan?.kind === "moved" ? plan : null;
   const shown = pending !== null && pending.before === saved ? pending.layout : saved;
-  const layout = draft ?? shown;
+  const layout = draft?.layout ?? shown;
   const editing = draft !== null;
   const panels = resolvePanels(layout);
   const machineData = useDashboardMachineData(
     panels.some((panel) => panel.id === "machines" && (editing || !panel.hidden)),
   );
 
-  const edit = (from: ForkDashboardLayout) => {
-    setBase(from);
-    setDraft(from);
+  const edit = (from: ForkDashboardLayout, at = ownerId, label = ownerLabel) => {
+    setOpened({ layout: from, base: from, ownerId: at, ownerLabel: label });
     setStale(false);
   };
-  const switched = (next: ForkDashboardLayout) => {
+  const switched = (next: ForkDashboardLayout, at: EnvironmentId, label: string) => {
     setPending(null);
-    if (editing) edit(next);
+    if (editing) edit(next, at, label);
   };
-  const save = async (next: ForkDashboardLayout) => {
+  /** Saves `next` as the revision after `base`, to the owner the writer targets now. */
+  const write = async (next: ForkDashboardLayout, base: ForkDashboardLayout) => {
+    if (draft === null) return;
     // The save records the identities each machine has now, not only the ones it was saved with.
     const toSave = consolidateLayout(next, machineData.live);
     setSaving(true);
@@ -162,7 +171,21 @@ export function DashboardPage() {
     }
     if (outcome !== "saved") return;
     setPending({ layout: { ...toSave, revision: base.revision + 1 }, before: saved });
-    setDraft(null);
+    // Only the draft this save started from closes; one opened meanwhile stays.
+    setOpened((current) => (current === draft ? null : current));
+  };
+  const save = async (next: ForkDashboardLayout) => {
+    // A draft for another owner never lands on this one unasked: the notice offers it instead.
+    if (plan?.kind !== "save") return;
+    await write(next, plan.base);
+  };
+  const copyMoved = async () => {
+    if (moved === null || draft === null) return;
+    if (moved.copyConfirm !== null) {
+      const confirmed = await requestConfirmDialog(moved.copyConfirm, { variant: "destructive" });
+      if (!confirmed) return;
+    }
+    await write(draft.layout, moved.copyBase);
   };
   const reset = async () => {
     const confirmed = await requestConfirmDialog(
@@ -173,7 +196,7 @@ export function DashboardPage() {
   };
   // Edits wait while a save is in flight, so none is lost between the request and its answer.
   const change = (next: ForkDashboardLayout) => {
-    if (!saving) setDraft(next);
+    if (!saving) setOpened((current) => (current === null ? null : { ...current, layout: next }));
   };
   const panelBody = (id: DashboardPanelId) => {
     const onLayoutChange = editing ? change : undefined;
@@ -213,59 +236,90 @@ export function DashboardPage() {
               <div className="mx-auto flex w-full max-w-[100rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-8">
                 <div className="flex min-w-0 flex-col">
                   <span className="font-medium text-sm">Editing the dashboard</span>
-                  <span className="text-muted-foreground text-xs">
-                    {stale
-                      ? "Changed on another device since you started. Reload to start from it; your edits stay until then."
-                      : "Changes show on every client that saves its Dashboard there."}
+                  <span
+                    className={cn(
+                      "text-xs",
+                      moved === null ? "text-muted-foreground" : "text-warning-foreground",
+                    )}
+                  >
+                    {moved !== null
+                      ? moved.notice
+                      : stale
+                        ? "Changed on another device since you started. Reload to start from it; your edits stay until then."
+                        : "Changes show on every client that saves its Dashboard there."}
                   </span>
                 </div>
-                <DashboardOwnerPicker
-                  owner={owner}
-                  writer={writer}
-                  layout={layout}
-                  disabled={saving}
-                  onBusy={setSaving}
-                  onSwitched={switched}
-                />
-                <span className="ms-auto flex items-center gap-2">
-                  {stale ? (
+                {moved === null ? (
+                  <DashboardOwnerPicker
+                    owner={owner}
+                    writer={writer}
+                    layout={layout}
+                    disabled={saving}
+                    onBusy={setSaving}
+                    onSwitched={switched}
+                  />
+                ) : null}
+                {moved !== null ? (
+                  <span className="ms-auto flex items-center gap-2">
                     <Button
                       type="button"
-                      variant="warning-outline"
+                      variant="outline"
                       size="sm"
                       disabled={saving}
-                      onClick={() => edit(saved)}
+                      onClick={() => setOpened(null)}
                     >
-                      Reload
+                      Discard
                     </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="destructive-outline"
-                    size="sm"
-                    disabled={saving || (isDefaultLayout(saved) && isDefaultLayout(layout))}
-                    onClick={() => void reset()}
-                  >
-                    Reset
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={saving}
-                    onClick={() => setDraft(null)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={saving || stale}
-                    onClick={() => void save(layout)}
-                  >
-                    {saving ? "Saving…" : "Save"}
-                  </Button>
-                </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving || writer.blocked !== null}
+                      onClick={() => void copyMoved()}
+                    >
+                      {saving ? "Copying…" : moved.copyLabel}
+                    </Button>
+                  </span>
+                ) : (
+                  <span className="ms-auto flex items-center gap-2">
+                    {stale ? (
+                      <Button
+                        type="button"
+                        variant="warning-outline"
+                        size="sm"
+                        disabled={saving}
+                        onClick={() => edit(saved)}
+                      >
+                        Reload
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="destructive-outline"
+                      size="sm"
+                      disabled={saving || (isDefaultLayout(saved) && isDefaultLayout(layout))}
+                      onClick={() => void reset()}
+                    >
+                      Reset
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={saving}
+                      onClick={() => setOpened(null)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving || stale}
+                      onClick={() => void save(layout)}
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </Button>
+                  </span>
+                )}
               </div>
             </div>
           ) : null}
