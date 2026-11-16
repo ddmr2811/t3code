@@ -1,7 +1,11 @@
 // Fork-only: the Dashboard's subscriptions: each account's 5-hour and weekly windows, and the
 // last 7 days' spend at list price, from the same atoms as the Usage page.
 import { useAtomValue } from "@effect/atom-react";
-import type { ServerProviderUsageWindow, UsageProviderKind } from "@t3tools/contracts";
+import type {
+  ForkDashboardLayout,
+  ServerProviderUsageWindow,
+  UsageProviderKind,
+} from "@t3tools/contracts";
 import { formatCount, formatTokens, formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
 import {
   collectLimitAccounts,
@@ -11,6 +15,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { Toggle } from "../../components/ui/toggle";
 import { cn } from "../../lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "../../components/usage/usageProviders";
 import { environmentPresentations } from "../../state/presentation";
@@ -23,6 +28,7 @@ import {
   USAGE_DAYS,
   windowRemaining,
 } from "./dashboard.logic";
+import { setProviderHidden, visibleProviders } from "./dashboardLayout.logic";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useVisibleInterval } from "./visibleInterval";
 
@@ -171,12 +177,51 @@ function ProviderPanel(props: {
   );
 }
 
+/** In edit mode: which providers the Dashboard shows, as a row of toggles. */
+function ProviderChoice(props: {
+  readonly providers: ReadonlyArray<UsageProviderKind>;
+  readonly layout: ForkDashboardLayout;
+  readonly onChange: (layout: ForkDashboardLayout) => void;
+}) {
+  const hidden = new Set(props.layout.hiddenProviders);
+  return (
+    <div role="group" aria-label="Providers shown" className="flex flex-wrap items-center gap-1.5">
+      <span className="me-1 text-muted-foreground text-xs">Shown</span>
+      {props.providers.map((provider) => {
+        const presentation = PROVIDER_PRESENTATION[provider];
+        return (
+          <Toggle
+            key={provider}
+            variant="outline"
+            size="xs"
+            pressed={!hidden.has(provider)}
+            onPressedChange={(pressed) =>
+              props.onChange(setProviderHidden(props.layout, provider, !pressed))
+            }
+          >
+            <span
+              aria-hidden
+              className="size-1.5 rounded-full"
+              style={{ backgroundColor: presentation.color }}
+            />
+            {presentation.label}
+          </Toggle>
+        );
+      })}
+    </div>
+  );
+}
+
 /** `compact` is the Dashboard column beside a chat: one provider per row, the totals in brief. */
 export function DashboardSubscriptions({
   nowMs,
+  layout,
+  onLayoutChange,
   compact = false,
 }: {
   readonly nowMs: number;
+  readonly layout: ForkDashboardLayout;
+  readonly onLayoutChange?: ((layout: ForkDashboardLayout) => void) | undefined;
   readonly compact?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
@@ -202,36 +247,63 @@ export function DashboardSubscriptions({
     accountsByProvider.set(provider, [...(accountsByProvider.get(provider) ?? []), account]);
   }
   const spendByProvider = new Map(spend.providers.map((entry) => [entry.provider, entry]));
-  const providers = PROVIDER_ORDER.filter(
+  const reported = PROVIDER_ORDER.filter(
     (provider) => accountsByProvider.has(provider) || spendByProvider.has(provider),
   ).toSorted(
     (left, right) =>
       (spendByProvider.get(right)?.costUsd ?? 0) - (spendByProvider.get(left)?.costUsd ?? 0),
   );
+  const providers = visibleProviders(reported, layout);
+  // With providers hidden, the totals add up the ones shown, so the line matches the panels.
+  const totals =
+    providers.length === reported.length
+      ? spend
+      : providers.reduce(
+          (sum, provider) => {
+            const entry = spendByProvider.get(provider);
+            return entry
+              ? {
+                  costUsd: sum.costUsd + entry.costUsd,
+                  requests: sum.requests + entry.requests,
+                  tokens: sum.tokens + entry.tokens,
+                }
+              : sum;
+          },
+          { costUsd: 0, requests: 0, tokens: 0 },
+        );
+  const hiddenCount = reported.length - providers.length;
   const loading = usage.isPending && usage.shown === null;
   const readAt = spendReadAt(usage.environments);
 
   return (
     <div className="flex flex-col gap-3">
+      {onLayoutChange && reported.length > 0 ? (
+        <ProviderChoice providers={reported} layout={layout} onChange={onLayoutChange} />
+      ) : null}
       <p className="flex flex-wrap items-baseline gap-x-1.5 text-muted-foreground text-sm">
         {loading ? (
           "Reading the last 7 days…"
         ) : (
           <>
             <span className="font-mono text-foreground tabular-nums">
-              {formatUsd(spend.costUsd)}
+              {formatUsd(totals.costUsd)}
             </span>
             {compact ? "last 7 days" : "over the last 7 days"} ·{" "}
-            <span className="font-mono tabular-nums">{formatCount(spend.requests)}</span> requests
+            <span className="font-mono tabular-nums">{formatCount(totals.requests)}</span> requests
             {compact ? null : (
               <>
                 {" "}
-                · <span className="font-mono tabular-nums">{formatTokens(spend.tokens)}</span>{" "}
+                · <span className="font-mono tabular-nums">{formatTokens(totals.tokens)}</span>{" "}
                 tokens
               </>
             )}
             {spend.machines.length > 0 && !compact ? (
               <span className="text-xs">· from {spend.machines.join(", ")}</span>
+            ) : null}
+            {hiddenCount > 0 ? (
+              <span className="text-xs">
+                · {hiddenCount} {hiddenCount === 1 ? "provider" : "providers"} hidden
+              </span>
             ) : null}
             {usage.isPartial ? (
               <span className="text-xs">· some machines still counting</span>
@@ -246,9 +318,19 @@ export function DashboardSubscriptions({
         </Link>
       </p>
       {providers.length === 0 && !loading ? (
-        <p className="text-muted-foreground text-sm">No provider reports usage or limits yet.</p>
+        <p className="text-muted-foreground text-sm">
+          {reported.length === 0
+            ? "No provider reports usage or limits yet."
+            : "Every provider is hidden. Edit the dashboard to show one."}
+        </p>
       ) : (
-        <div className={cn("grid", compact ? "gap-2" : "gap-3 xl:grid-cols-2")}>
+        <div
+          className={cn(
+            "grid",
+            compact ? "gap-2" : "gap-3",
+            !compact && providers.length > 1 && "xl:grid-cols-2",
+          )}
+        >
           {providers.map((provider) => (
             <ProviderPanel
               key={provider}

@@ -9,6 +9,8 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { DashboardMachines } from "./DashboardMachines";
 import { DashboardSubscriptions } from "./DashboardSubscriptions";
 import { DashboardThreads } from "./DashboardThreads";
+import { type DashboardPanelId, resolvePanels } from "./dashboardLayout.logic";
+import { useSavedDashboardLayout } from "./dashboardLayoutState";
 
 function Section(props: {
   readonly title: string;
@@ -54,18 +56,38 @@ export function DashboardRail({ visible }: { readonly visible: boolean }) {
 function DashboardRailContent() {
   // The minute tick is UTC without a zone suffix; it refreshes reset and relative labels.
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
+  const layout = useSavedDashboardLayout();
+  const panels = resolvePanels(layout).filter((panel) => !panel.hidden);
+  const body = (id: DashboardPanelId) => {
+    switch (id) {
+      case "machines":
+        return <DashboardMachines nowMs={nowMs} layout={layout} compact />;
+      case "subscriptions":
+        return <DashboardSubscriptions nowMs={nowMs} layout={layout} compact />;
+      case "threads":
+        return <DashboardThreads nowMs={nowMs} compact />;
+    }
+  };
   return (
     <div className="h-full min-h-0 overflow-y-auto bg-background">
       <div className="flex flex-col gap-6 px-3 pt-3 pb-6">
-        <Section title="Machines" action={<OpenFullDashboard />}>
-          <DashboardMachines nowMs={nowMs} compact />
-        </Section>
-        <Section title="Subscriptions">
-          <DashboardSubscriptions nowMs={nowMs} compact />
-        </Section>
-        <Section title="Active threads">
-          <DashboardThreads nowMs={nowMs} compact />
-        </Section>
+        {panels.length === 0 ? (
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground text-sm">Every section is hidden.</p>
+            <span className="ms-auto flex">
+              <OpenFullDashboard />
+            </span>
+          </div>
+        ) : null}
+        {panels.map((panel, index) => (
+          <Section
+            key={panel.id}
+            title={panel.title}
+            action={index === 0 ? <OpenFullDashboard /> : undefined}
+          >
+            {body(panel.id)}
+          </Section>
+        ))}
       </div>
     </div>
   );

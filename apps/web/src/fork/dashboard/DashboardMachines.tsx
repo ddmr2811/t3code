@@ -4,13 +4,14 @@ import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection
 import {
   AuthDiagnosticsReadScope,
   type EnvironmentId,
+  type ForkDashboardLayout,
   type ForkNodeExporterReading,
   type ForkTailnetPeer,
   type ForkTailnetStatus,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { MonitorIcon } from "lucide-react";
-import { Fragment, type ReactNode, useContext } from "react";
+import { type ReactNode, useContext } from "react";
 
 import { isElectron } from "../../env";
 import { formatBytes } from "../../lib/formatBytes";
@@ -32,9 +33,23 @@ import {
   splitAroundHub,
   tailnetEndpointHosts,
   type TailnetEnvironment,
+  tailnetNodesByEnvironment,
   tailnetOnlyPeers,
   type TailnetReading,
 } from "./dashboard.logic";
+import {
+  environmentIdentity,
+  exporterIdentity,
+  type LiveMachine,
+  type PlacedMachine,
+  type PlacedSection,
+  placeMachines,
+  TAILNET_SECTION,
+  T3_SECTION,
+  tailnetIdentity,
+} from "./dashboardLayout.logic";
+import { DashboardMachinesEditor, type MachineStatus } from "./DashboardMachinesEditor";
+import { MachineGlyph } from "./machineAppearance";
 import {
   dashboardHostProbe,
   dashboardHostStream,
@@ -95,6 +110,7 @@ function StatusDot({ tone }: { readonly tone: "online" | "offline" | "idle" }) {
 
 interface MachineCardViewProps {
   readonly label: string;
+  readonly glyph?: ReactNode;
   readonly connected: boolean;
   readonly load: MachineLoad;
   /** "56 ms", "…" while it is measured, or null when the machine is offline. */
@@ -123,6 +139,7 @@ function MachineCardView(props: MachineCardViewProps) {
     >
       <div className="flex min-w-0 items-center gap-2">
         <StatusDot tone={props.connected ? "online" : "offline"} />
+        {props.glyph}
         <span className="min-w-0 flex-1 truncate font-medium text-sm">{props.label}</span>
         {props.source ? (
           <span className="shrink-0 font-mono text-2xs text-muted-foreground">{props.source}</span>
@@ -146,8 +163,16 @@ function MachineCardView(props: MachineCardViewProps) {
   );
 }
 
+interface Appearance {
+  readonly label: string;
+  readonly glyph: ReactNode;
+}
+
 /** A fork server streams its load about every second; the latency is a probe on that socket. */
-function LiveMachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
+function LiveMachineCard({
+  environment,
+  ...appearance
+}: Appearance & { readonly environment: DashboardEnvironment }) {
   const pageVisible = usePageVisible();
   const stream = useEnvironmentQuery(
     environment.connected && pageVisible ? dashboardHostStream(environment.environmentId) : null,
@@ -159,7 +184,7 @@ function LiveMachineCard({ environment }: { readonly environment: DashboardEnvir
   const unreachable = environment.connected && stream.data === null && stream.error !== null;
   return (
     <MachineCardView
-      label={environment.label}
+      {...appearance}
       connected={environment.connected}
       load={machineLoad(stream.data)}
       latency={
@@ -172,7 +197,10 @@ function LiveMachineCard({ environment }: { readonly environment: DashboardEnvir
 }
 
 /** Older and upstream servers: the load sample the server keeps, read on a timer. */
-function PolledMachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
+function PolledMachineCard({
+  environment,
+  ...appearance
+}: Appearance & { readonly environment: DashboardEnvironment }) {
   const probe = useEnvironmentQuery(
     environment.connected ? dashboardHostProbe(environment.environmentId) : null,
   );
@@ -181,7 +209,7 @@ function PolledMachineCard({ environment }: { readonly environment: DashboardEnv
   const unreachable = environment.connected && probe.data === null && probe.error !== null;
   return (
     <MachineCardView
-      label={environment.label}
+      {...appearance}
       connected={environment.connected}
       load={probe.data ? machineLoad(probe.data.host) : NO_LOAD}
       latency={environment.connected ? (probe.data ? `${probe.data.roundTripMs} ms` : "…") : null}
@@ -191,18 +219,13 @@ function PolledMachineCard({ environment }: { readonly environment: DashboardEnv
   );
 }
 
-function MachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
-  return environment.liveLoad ? (
-    <LiveMachineCard environment={environment} />
-  ) : (
-    <PolledMachineCard environment={environment} />
-  );
-}
-
-function ExporterCard({ reading }: { readonly reading: ForkNodeExporterReading }) {
+function ExporterCard({
+  reading,
+  ...appearance
+}: Appearance & { readonly reading: ForkNodeExporterReading }) {
   return (
     <MachineCardView
-      label={reading.name}
+      {...appearance}
       connected={reading.resources !== null}
       load={machineLoad(reading.resources)}
       latency={reading.latencyMs === null ? null : `${Math.round(reading.latencyMs)} ms`}
@@ -215,7 +238,7 @@ function ExporterCard({ reading }: { readonly reading: ForkNodeExporterReading }
 
 /** A wing of the map: each machine with its link to the hub drawn on the hub's side. */
 function Wing(props: {
-  readonly machines: ReadonlyArray<MachineEntry>;
+  readonly machines: ReadonlyArray<ShownMachine>;
   readonly side: "left" | "right";
 }) {
   return (
@@ -259,10 +282,15 @@ const connectionLabel = (peer: ForkTailnetPeer) => {
   }
 };
 
-function PeerCard({ peer, nowMs }: { readonly peer: ForkTailnetPeer; readonly nowMs: number }) {
+function PeerCard({
+  peer,
+  nowMs,
+  label,
+  glyph,
+}: Appearance & { readonly peer: ForkTailnetPeer; readonly nowMs: number }) {
   return (
     <article
-      aria-label={peer.hostName}
+      aria-label={label}
       className={cn(
         "flex min-w-0 flex-col gap-1 rounded-md border border-dashed px-3 py-2",
         !peer.online && "opacity-60",
@@ -270,7 +298,8 @@ function PeerCard({ peer, nowMs }: { readonly peer: ForkTailnetPeer; readonly no
     >
       <div className="flex min-w-0 items-center gap-2">
         <StatusDot tone={peer.online ? "online" : "offline"} />
-        <span className="min-w-0 flex-1 truncate font-medium text-sm">{peer.hostName}</span>
+        {glyph}
+        <span className="min-w-0 flex-1 truncate font-medium text-sm">{label}</span>
         <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
           {peer.latencyMs !== null ? `${Math.round(peer.latencyMs)} ms` : peer.online ? "–" : ""}
         </span>
@@ -289,7 +318,7 @@ function PeerCard({ peer, nowMs }: { readonly peer: ForkTailnetPeer; readonly no
 }
 
 /** The Dashboard column's peer: its name and latency, in a row of chips. */
-function PeerChip({ peer }: { readonly peer: ForkTailnetPeer }) {
+function PeerChip({ peer, label, glyph }: Appearance & { readonly peer: ForkTailnetPeer }) {
   return (
     <span
       className={cn(
@@ -298,7 +327,8 @@ function PeerChip({ peer }: { readonly peer: ForkTailnetPeer }) {
       )}
     >
       <StatusDot tone={peer.online ? "online" : "offline"} />
-      <span className="truncate">{peer.hostName}</span>
+      {glyph}
+      <span className="truncate">{label}</span>
       {peer.latencyMs !== null ? (
         <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
           {Math.round(peer.latencyMs)} ms
@@ -324,22 +354,32 @@ const tailnetReadingsAtom = Atom.family((key: string) =>
   }).pipe(Atom.withLabel(`fork-dashboard:tailnet:${key}`)),
 );
 
-function TailnetPeers(props: {
-  readonly environments: ReadonlyArray<TailnetEnvironment>;
-  /** node_exporter machines count as identified by their scrape host. */
-  readonly exporters: ReadonlyArray<ForkNodeExporterReading>;
-  readonly presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>;
-  readonly nowMs: number;
-  readonly compact: boolean;
-}) {
+interface TailnetView {
+  /** False when no machine here can read the tailnet: the box is left out. */
+  readonly readable: boolean;
+  readonly sourceLabel: string | null;
+  /** The peers without T3 Code, or null until a reading lists them. */
+  readonly peers: ReadonlyArray<ForkTailnetPeer> | null;
+  /** Why there are no peers to list, or null while the first reading loads. */
+  readonly problem: string | null;
+  /** The tailnet nodes each machine is, for the identities its saved look is kept under. */
+  readonly nodes: ReadonlyMap<EnvironmentId, ReadonlyArray<string>>;
+}
+
+/** The tailnet as the best placed machine reads it, and which of its nodes run T3 Code. */
+function useTailnet(
+  environments: ReadonlyArray<TailnetEnvironment>,
+  exporters: ReadonlyArray<ForkNodeExporterReading>,
+  presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>,
+): TailnetView {
   const registry = useContext(RegistryContext);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const canRead = useEnvironmentsWithScope(props.environments, AuthDiagnosticsReadScope);
-  const candidates = props.environments
+  const canRead = useEnvironmentsWithScope(environments, AuthDiagnosticsReadScope);
+  const candidates = environments
     .filter(
       (environment) =>
         environment.connected &&
-        (props.presentations.get(environment.environmentId)?.serverConfig?.environment.capabilities
+        (presentations.get(environment.environmentId)?.serverConfig?.environment.capabilities
           .forkTailnet ?? 0) >= 1 &&
         canRead.has(environment.environmentId),
     )
@@ -363,72 +403,32 @@ function TailnetPeers(props: {
       registry.refresh(dashboardTailnetStatus(sourceEnvironmentId, true));
     }
   }, TAILNET_INTERVAL_MS);
-  if (candidates.length === 0) return null;
   const plain = readings.find((reading) => reading.environmentId === sourceEnvironmentId)?.status;
   // The pinged reading adds latencies; until it answers, the plain one already lists the peers.
   const sourceStatus = pinged?.available ? pinged : (plain ?? null);
-  const peers = tailnetOnlyPeers({
-    source: sourceStatus,
-    readings,
-    environments: [...props.environments, ...exporterEnvironments(props.exporters)],
-  });
-  const view = peers === null ? null : { peers };
-  const sourceLabel =
-    sourceEnvironmentId === null
-      ? null
-      : (props.environments.find((environment) => environment.environmentId === sourceEnvironmentId)
-          ?.label ?? "");
-  // With no machine able to read the tailnet, say why the first one could not.
-  const problem =
-    sourceEnvironmentId === null
-      ? (readings[0]?.status?.problem ?? "No data")
-      : sourceStatus === null
+  const identified = [...environments, ...exporterEnvironments(exporters)];
+  const peers = tailnetOnlyPeers({ source: sourceStatus, readings, environments: identified });
+  return {
+    readable: candidates.length > 0,
+    sourceLabel:
+      sourceEnvironmentId === null
         ? null
-        : (sourceStatus.problem ?? "No data");
-
-  return (
-    <section
-      aria-label="Tailnet machines without T3 Code"
-      className={cn(
-        "flex flex-col gap-2 rounded-md border border-dashed",
-        props.compact ? "px-2.5 py-2" : "p-3",
-      )}
-    >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={caption}>Tailnet · without T3 Code</span>
-        {sourceLabel !== null ? (
-          <span className="font-mono text-2xs text-muted-foreground">via {sourceLabel}</span>
-        ) : null}
-        {view ? (
-          <span className="ms-auto font-mono text-2xs text-muted-foreground">
-            {view.peers.filter((peer) => peer.online).length} of {view.peers.length} online
-          </span>
-        ) : null}
-      </div>
-      {view === null ? (
-        <p className="text-muted-foreground text-xs">{problem ?? "Reading the tailnet…"}</p>
-      ) : view.peers.length === 0 ? (
-        <p className="text-muted-foreground text-xs">Every machine on the tailnet runs T3 Code.</p>
-      ) : props.compact ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {view.peers.map((peer) => (
-            <PeerChip key={peer.id} peer={peer} />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
-          {view.peers.map((peer) => (
-            <PeerCard key={peer.id} peer={peer} nowMs={props.nowMs} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-interface MachineEntry {
-  readonly key: string;
-  readonly card: ReactNode;
+        : (environments.find((environment) => environment.environmentId === sourceEnvironmentId)
+            ?.label ?? ""),
+    peers,
+    // With no machine able to read the tailnet, say why the first one could not.
+    problem:
+      sourceEnvironmentId === null
+        ? (readings[0]?.status?.problem ?? "No data")
+        : sourceStatus === null
+          ? null
+          : (sourceStatus.problem ?? "No data"),
+    nodes: tailnetNodesByEnvironment({
+      peers: sourceStatus?.available ? sourceStatus.peers : [],
+      readings,
+      environments: identified,
+    }),
+  };
 }
 
 const nodeExporterReadingsAtom = Atom.family((key: string) =>
@@ -470,12 +470,213 @@ function useNodeExporters(
   return readings;
 }
 
-/** `compact` is the Dashboard column beside a chat: a grid of machines, without the map. */
+type MachineData =
+  | { readonly type: "environment"; readonly environment: TailnetEnvironment }
+  | { readonly type: "exporter"; readonly reading: ForkNodeExporterReading }
+  | { readonly type: "peer"; readonly peer: ForkTailnetPeer };
+
+interface ShownMachine {
+  readonly key: string;
+  readonly card: ReactNode;
+}
+
+function liveMachines(input: {
+  readonly environments: ReadonlyArray<TailnetEnvironment>;
+  readonly exporters: ReadonlyArray<ForkNodeExporterReading>;
+  readonly tailnet: TailnetView;
+}): ReadonlyArray<LiveMachine<MachineData>> {
+  const nodeIds = (id: EnvironmentId) => (input.tailnet.nodes.get(id) ?? []).map(tailnetIdentity);
+  const exporterIds = new Map(
+    exporterEnvironments(input.exporters).map((environment, index) => [
+      input.exporters[index]!,
+      environment.environmentId,
+    ]),
+  );
+  return [
+    ...input.environments.map((environment): LiveMachine<MachineData> => ({
+      ids: [environmentIdentity(environment.environmentId), ...nodeIds(environment.environmentId)],
+      kind: "environment",
+      name: environment.label,
+      data: { type: "environment", environment },
+    })),
+    ...input.exporters.map((reading): LiveMachine<MachineData> => ({
+      ids: [exporterIdentity(reading.name, reading.host), ...nodeIds(exporterIds.get(reading)!)],
+      kind: "exporter",
+      name: reading.name,
+      data: { type: "exporter", reading },
+    })),
+    ...(input.tailnet.peers ?? []).map((peer): LiveMachine<MachineData> => ({
+      ids: [tailnetIdentity(peer.id)],
+      kind: "peer",
+      name: peer.hostName,
+      data: { type: "peer", peer },
+    })),
+  ];
+}
+
+const isOnline = (data: MachineData) =>
+  data.type === "environment"
+    ? data.environment.connected
+    : data.type === "exporter"
+      ? data.reading.resources !== null
+      : data.peer.online;
+
+function machineStatus(nowMs: number) {
+  return (machine: PlacedMachine<MachineData>): MachineStatus => {
+    const data = machine.live?.data;
+    if (data === undefined) return { online: false, detail: "No longer reported" };
+    if (data.type === "peer") {
+      return {
+        online: data.peer.online,
+        detail: data.peer.lastSeen
+          ? `seen ${formatRelativeTimeLabel(data.peer.lastSeen, nowMs)}`
+          : data.peer.os || null,
+      };
+    }
+    if (data.type === "exporter") return { online: isOnline(data), detail: "node_exporter" };
+    return { online: data.environment.connected, detail: "T3 Code" };
+  };
+}
+
+function MachineTile(props: {
+  readonly machine: PlacedMachine<MachineData>;
+  readonly nowMs: number;
+  readonly chip?: boolean;
+}) {
+  const { machine } = props;
+  const data = machine.live!.data;
+  const appearance = {
+    label: machine.label,
+    glyph: <MachineGlyph icon={machine.icon} color={machine.color} kind={machine.live!.kind} />,
+  };
+  switch (data.type) {
+    case "environment":
+      return data.environment.liveLoad ? (
+        <LiveMachineCard {...appearance} environment={data.environment} />
+      ) : (
+        <PolledMachineCard {...appearance} environment={data.environment} />
+      );
+    case "exporter":
+      return <ExporterCard {...appearance} reading={data.reading} />;
+    case "peer":
+      return props.chip ? (
+        <PeerChip {...appearance} peer={data.peer} />
+      ) : (
+        <PeerCard {...appearance} peer={data.peer} nowMs={props.nowMs} />
+      );
+  }
+}
+
+/** What the view shows of a section: live machines that are not hidden. */
+const shownOf = (section: PlacedSection<MachineData>) =>
+  section.machines.filter((machine) => machine.live !== null && !machine.hidden);
+
+const onlineCount = (machines: ReadonlyArray<PlacedMachine<MachineData>>) =>
+  `${machines.filter((machine) => isOnline(machine.live!.data)).length} of ${machines.length} online`;
+
+function CustomSection(props: {
+  readonly section: PlacedSection<MachineData>;
+  readonly nowMs: number;
+  readonly compact: boolean;
+}) {
+  const machines = shownOf(props.section);
+  if (machines.length === 0) return null;
+  return (
+    <section
+      aria-label={props.section.name}
+      className={cn("flex flex-col gap-2 rounded-lg border", props.compact ? "p-2" : "p-3")}
+    >
+      <div className="flex items-baseline gap-3">
+        <span className={caption}>{props.section.name}</span>
+        <span className="ms-auto font-mono text-2xs text-muted-foreground">
+          {onlineCount(machines)}
+        </span>
+      </div>
+      <div
+        className={cn(
+          "grid gap-2",
+          props.compact
+            ? "grid-cols-1 @xs:grid-cols-2"
+            : "grid-cols-[repeat(auto-fill,minmax(16rem,1fr))]",
+        )}
+      >
+        {machines.map((machine) => (
+          <MachineTile key={machine.key} machine={machine} nowMs={props.nowMs} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TailnetBox(props: {
+  readonly tailnet: TailnetView;
+  readonly section: PlacedSection<MachineData>;
+  readonly nowMs: number;
+  readonly compact: boolean;
+}) {
+  const { tailnet } = props;
+  if (!tailnet.readable) return null;
+  const machines = shownOf(props.section);
+  const listed = tailnet.peers !== null;
+  return (
+    <section
+      aria-label="Tailnet machines without T3 Code"
+      className={cn(
+        "flex flex-col gap-2 rounded-md border border-dashed",
+        props.compact ? "px-2.5 py-2" : "p-3",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className={caption}>Tailnet · without T3 Code</span>
+        {tailnet.sourceLabel !== null ? (
+          <span className="font-mono text-2xs text-muted-foreground">
+            via {tailnet.sourceLabel}
+          </span>
+        ) : null}
+        {listed ? (
+          <span className="ms-auto font-mono text-2xs text-muted-foreground">
+            {onlineCount(machines)}
+          </span>
+        ) : null}
+      </div>
+      {!listed ? (
+        <p className="text-muted-foreground text-xs">{tailnet.problem ?? "Reading the tailnet…"}</p>
+      ) : machines.length === 0 ? (
+        <p className="text-muted-foreground text-xs">
+          {tailnet.peers!.length === 0
+            ? "Every machine on the tailnet runs T3 Code."
+            : "Every machine here is hidden or moved to another section."}
+        </p>
+      ) : props.compact ? (
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {machines.map((machine) => (
+            <MachineTile key={machine.key} machine={machine} nowMs={props.nowMs} chip />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
+          {machines.map((machine) => (
+            <MachineTile key={machine.key} machine={machine} nowMs={props.nowMs} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * `compact` is the Dashboard column beside a chat: a grid of machines, without the map. With
+ * `onLayoutChange` it shows the editor, which writes every change to the layout it was given.
+ */
 export function DashboardMachines({
   nowMs,
+  layout,
+  onLayoutChange,
   compact = false,
 }: {
   readonly nowMs: number;
+  readonly layout: ForkDashboardLayout;
+  readonly onLayoutChange?: ((layout: ForkDashboardLayout) => void) | undefined;
   readonly compact?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
@@ -497,42 +698,65 @@ export function DashboardMachines({
       }),
   );
   const exporters = useNodeExporters(environments);
-  const machines: ReadonlyArray<MachineEntry> = [
-    ...environments.map((environment) => ({
-      key: environment.environmentId,
-      card: <MachineCard environment={environment} />,
-    })),
-    ...exporters.map((reading) => ({
-      key: `exporter:${reading.name}:${reading.host}`,
-      card: <ExporterCard reading={reading} />,
-    })),
-  ];
-  const tailnet = (
-    <TailnetPeers
-      environments={environments}
-      exporters={exporters}
-      presentations={presentations}
-      nowMs={nowMs}
-      compact={compact}
-    />
+  const tailnet = useTailnet(environments, exporters, presentations);
+  const sections = placeMachines(layout, liveMachines({ environments, exporters, tailnet }));
+
+  if (onLayoutChange) {
+    return (
+      <DashboardMachinesEditor
+        sections={sections}
+        layout={layout}
+        onChange={onLayoutChange}
+        status={machineStatus(nowMs)}
+      />
+    );
+  }
+
+  const mapSection = sections.find((section) => section.id === T3_SECTION)!;
+  const tailnetSection = sections.find((section) => section.id === TAILNET_SECTION)!;
+  const custom = sections
+    .filter((section) => section.custom)
+    .map((section) => (
+      <CustomSection key={section.id} section={section} nowMs={nowMs} compact={compact} />
+    ));
+  const tailnetBox = (
+    <TailnetBox tailnet={tailnet} section={tailnetSection} nowMs={nowMs} compact={compact} />
   );
+  const mapMachines: ReadonlyArray<ShownMachine> = shownOf(mapSection).map((machine) => ({
+    key: machine.key,
+    card: <MachineTile machine={machine} nowMs={nowMs} />,
+  }));
+
   if (compact) {
     return (
       <div className="@container flex flex-col gap-2 rounded-lg border p-2">
-        <div className="grid grid-cols-1 gap-2 @xs:grid-cols-2">
-          {machines.map((machine) => (
-            <Fragment key={machine.key}>{machine.card}</Fragment>
-          ))}
-        </div>
-        {tailnet}
+        {mapMachines.length > 0 ? (
+          <div className="grid grid-cols-1 gap-2 @xs:grid-cols-2">
+            {mapMachines.map((machine) => (
+              <div key={machine.key} className="min-w-0">
+                {machine.card}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {custom}
+        {tailnetBox}
       </div>
     );
   }
-  const { left, right } = splitAroundHub(machines);
+  const { left, right } = splitAroundHub(mapMachines);
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid items-center gap-2 rounded-lg border p-3 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-0">
+      <div
+        className={cn(
+          "grid items-center gap-2 rounded-lg border p-3 lg:gap-0",
+          // A lone machine has no right wing; it should not leave half the map empty.
+          right.length === 0
+            ? "lg:grid-cols-[minmax(0,1fr)_auto]"
+            : "lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+        )}
+      >
         <div className="lg:order-2">
           <Hub environments={environments} />
         </div>
@@ -543,7 +767,8 @@ export function DashboardMachines({
           <Wing machines={right} side="right" />
         </div>
       </div>
-      {tailnet}
+      {custom}
+      {tailnetBox}
     </div>
   );
 }

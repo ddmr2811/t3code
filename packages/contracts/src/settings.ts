@@ -23,6 +23,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
+import { DEFAULT_FORK_DASHBOARD_LAYOUT, ForkDashboardLayout } from "./forkDashboard.ts";
 import { ForkNodeExporter } from "./forkNodeExporter.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
@@ -1495,6 +1496,10 @@ export const ServerSettings = Schema.Struct({
   forkNodeExporters: Schema.Array(ForkNodeExporter).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Fork: the Dashboard's arrangement, shared by every client of this server. */
+  forkDashboard: ForkDashboardLayout.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FORK_DASHBOARD_LAYOUT)),
+  ),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1928,6 +1933,7 @@ export const ServerSettingsPatch = Schema.Struct({
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   forkNodeExporters: Schema.optionalKey(Schema.Array(ForkNodeExporter)),
+  forkDashboard: Schema.optionalKey(ForkDashboardLayout),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

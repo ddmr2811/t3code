@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  FORK_DASHBOARD_PROTOCOL_VERSION,
   FORK_EXTENSIONS_PROTOCOL_VERSION,
   FORK_MACHINES_PROTOCOL_VERSION,
   FORK_TAILNET_PROTOCOL_VERSION,
@@ -306,6 +307,8 @@ export const make = Effect.gen(function* () {
       forkTailnet: FORK_TAILNET_PROTOCOL_VERSION,
       // Fork: Dashboard live machine load and node_exporter readings.
       forkMachines: FORK_MACHINES_PROTOCOL_VERSION,
+      // Fork: Dashboard layout setting.
+      forkDashboard: FORK_DASHBOARD_PROTOCOL_VERSION,
       shellThreadFamilies: true,
       shellOlderSettled: true,
     },

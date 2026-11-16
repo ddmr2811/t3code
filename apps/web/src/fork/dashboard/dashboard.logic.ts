@@ -137,10 +137,53 @@ export function tailnetEndpointHosts(
 }
 
 /**
- * The tailnet's machines without T3 Code. A T3 machine is a peer a fork server reports as itself,
- * or one holding the exact Tailscale IP or MagicDNS name a server advertises as its endpoint.
- * Exact names stand in only for machines neither identifies, so a known one never hides another.
+ * The tailnet nodes each machine is. A server's own reading names it; otherwise a peer holding the
+ * exact Tailscale IP or MagicDNS name it advertises as its endpoint. Exact names stand in only for
+ * machines neither identifies, so a known one never claims another.
  */
+export function tailnetNodesByEnvironment(input: {
+  readonly peers: ReadonlyArray<ForkTailnetPeer>;
+  readonly readings: ReadonlyArray<TailnetReading>;
+  readonly environments: ReadonlyArray<TailnetEnvironment>;
+}): ReadonlyMap<EnvironmentId, ReadonlyArray<string>> {
+  const nodes = new Map<EnvironmentId, string[]>();
+  const add = (environmentId: EnvironmentId, nodeId: string) => {
+    const list = nodes.get(environmentId) ?? [];
+    if (!list.includes(nodeId)) list.push(nodeId);
+    nodes.set(environmentId, list);
+  };
+  for (const reading of input.readings) {
+    if (reading.status?.self) add(reading.environmentId, reading.status.self.id);
+  }
+  const unidentified: TailnetEnvironment[] = [];
+  for (const environment of input.environments) {
+    if (nodes.has(environment.environmentId)) continue;
+    const hosts = new Set(environment.tailnetHosts ?? []);
+    const owned = input.peers.filter(
+      (peer) =>
+        peer.addresses.some((address) => hosts.has(address.toLowerCase())) ||
+        (peer.dnsName !== "" && hosts.has(hostKey(peer.dnsName))),
+    );
+    if (owned.length === 0) unidentified.push(environment);
+    for (const peer of owned) add(environment.environmentId, peer.id);
+  }
+  const byName = new Map<string, EnvironmentId[]>();
+  for (const environment of unidentified) {
+    // The machine's own name when the server reports one; the label is a user's choice.
+    const name = hostKey(environment.hostname || environment.label);
+    if (name === "") continue;
+    byName.set(name, [...(byName.get(name) ?? []), environment.environmentId]);
+  }
+  for (const peer of input.peers) {
+    const names = [hostKey(peer.hostName)];
+    if (peer.dnsName !== "") names.push(hostKey(peer.dnsName.split(".")[0] ?? ""));
+    const owners = new Set(names.flatMap((name) => byName.get(name) ?? []));
+    for (const environmentId of owners) add(environmentId, peer.id);
+  }
+  return nodes;
+}
+
+/** The tailnet's machines without T3 Code: every peer no machine above turns out to be. */
 export function tailnetOnlyPeers(input: {
   /** The source's reading: with latencies once its pings answer, without them until then. */
   readonly source: ForkTailnetStatus | null;
@@ -149,41 +192,16 @@ export function tailnetOnlyPeers(input: {
 }): ReadonlyArray<ForkTailnetPeer> | null {
   if (!input.source?.available) return null;
   const peers = input.source.peers;
-  const selfByEnvironment = new Map(
-    input.readings.flatMap((reading) =>
-      reading.status?.self ? [[reading.environmentId, reading.status.self.id] as const] : [],
-    ),
+  const t3 = new Set(
+    [
+      ...tailnetNodesByEnvironment({
+        peers,
+        readings: input.readings,
+        environments: input.environments,
+      }).values(),
+    ].flat(),
   );
-  const t3PeerIds = new Set(selfByEnvironment.values());
-  const identified = new Set(selfByEnvironment.keys());
-  for (const environment of input.environments) {
-    if (identified.has(environment.environmentId)) continue;
-    const hosts = new Set(environment.tailnetHosts ?? []);
-    const owned = peers.filter(
-      (peer) =>
-        peer.addresses.some((address) => hosts.has(address.toLowerCase())) ||
-        (peer.dnsName !== "" && hosts.has(hostKey(peer.dnsName))),
-    );
-    if (owned.length === 0) continue;
-    identified.add(environment.environmentId);
-    for (const peer of owned) t3PeerIds.add(peer.id);
-  }
-  const unidentifiedNames = new Set(
-    input.environments
-      .flatMap((environment) =>
-        identified.has(environment.environmentId)
-          ? []
-          : // The machine's own name when the server reports one; the label is a user's choice.
-            [environment.hostname || environment.label],
-      )
-      .map(hostKey)
-      .filter((name) => name !== ""),
-  );
-  const isT3Machine = (peer: ForkTailnetPeer) =>
-    t3PeerIds.has(peer.id) ||
-    unidentifiedNames.has(hostKey(peer.hostName)) ||
-    (peer.dnsName !== "" && unidentifiedNames.has(hostKey(peer.dnsName.split(".")[0] ?? "")));
-  return peers.filter((peer) => !isT3Machine(peer));
+  return peers.filter((peer) => !t3.has(peer.id));
 }
 
 /**
