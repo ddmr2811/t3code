@@ -19,11 +19,14 @@ import {
   currentUsageWindow,
   dashboardSpend,
   type ProviderSpend,
+  spendReadAt,
   USAGE_DAYS,
+  windowRemaining,
 } from "./dashboard.logic";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useVisibleInterval } from "./visibleInterval";
 
-/** The transcript scan behind the spend is costly, so it repeats rarely. */
+/** The transcript scan behind the spend is costly, so it repeats rarely; the limits are pushed. */
 const USAGE_REFRESH_MS = 10 * 60_000;
 
 const SHOWN_WINDOW_KINDS = new Set<ServerProviderUsageWindow["kind"]>(["session", "weekly"]);
@@ -32,13 +35,14 @@ function providerOfDriver(driver: LimitAccount["driver"]): UsageProviderKind | n
   return PROVIDER_ORDER.find((kind) => PROVIDER_PRESENTATION[kind].driverKind === driver) ?? null;
 }
 
+/** Room left in the window: the filled bar is what remains, warned once little does. */
 function WindowMeter(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string;
   readonly nowMs: number;
   readonly compact: boolean;
 }) {
-  const used = Math.min(100, Math.max(0, props.window.usedPercent));
+  const { percent, low } = windowRemaining(props.window);
   const resets = formatResetsIn(props.window, props.nowMs);
   return (
     <div
@@ -49,15 +53,15 @@ function WindowMeter(props: {
     >
       <div className="flex justify-between gap-1">
         <span className="truncate text-muted-foreground">{props.window.label}</span>
-        <span className={cn(used >= 90 && "text-destructive")}>{Math.round(used)}%</span>
+        <span className={cn("shrink-0", low && "text-warning-foreground")}>{percent}% left</span>
       </div>
       <span className="h-1 overflow-hidden rounded-full bg-muted">
         <span
-          className={cn("block h-full rounded-full", used >= 90 && "bg-destructive")}
-          style={{ width: `${used}%`, ...(used >= 90 ? {} : { backgroundColor: props.color }) }}
+          className={cn("block h-full rounded-full", low && "bg-warning")}
+          style={{ width: `${percent}%`, ...(low ? {} : { backgroundColor: props.color }) }}
         />
       </span>
-      <span className="truncate text-muted-foreground">{resets ?? " "}</span>
+      <span className="truncate text-muted-foreground">{resets ?? " "}</span>
     </div>
   );
 }
@@ -205,6 +209,7 @@ export function DashboardSubscriptions({
       (spendByProvider.get(right)?.costUsd ?? 0) - (spendByProvider.get(left)?.costUsd ?? 0),
   );
   const loading = usage.isPending && usage.shown === null;
+  const readAt = spendReadAt(usage.environments);
 
   return (
     <div className="flex flex-col gap-3">
@@ -230,6 +235,9 @@ export function DashboardSubscriptions({
             ) : null}
             {usage.isPartial ? (
               <span className="text-xs">· some machines still counting</span>
+            ) : null}
+            {readAt !== null ? (
+              <span className="text-xs">· updated {formatRelativeTimeLabel(readAt, nowMs)}</span>
             ) : null}
           </>
         )}

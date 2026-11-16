@@ -427,6 +427,7 @@ import {
   ForkUninstallInput,
 } from "./forkExtensions.ts";
 import { ForkTailnetStatus, ForkTailnetStatusInput } from "./forkTailnet.ts";
+import { ForkNodeExportersStatus } from "./forkMachines.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -457,6 +458,8 @@ export const WS_METHODS = {
   forkExtensionsAuthorizeComplete: "forkExtensions.authorizeComplete",
   // Fork: Dashboard.
   forkTailnetStatus: "forkTailnet.status",
+  forkMachinesHostResources: "forkMachines.hostResources",
+  forkMachinesNodeExporters: "forkMachines.nodeExporters",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1551,6 +1554,20 @@ const WsForkTailnetStatusRpc = Rpc.make(WS_METHODS.forkTailnetStatus, {
   error: EnvironmentAuthorizationError,
 });
 
+/** A fresh sample of the whole machine about every second, while subscribed. */
+const WsForkMachinesHostResourcesRpc = Rpc.make(WS_METHODS.forkMachinesHostResources, {
+  payload: Schema.Struct({}),
+  success: HostResourcesSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsForkMachinesNodeExportersRpc = Rpc.make(WS_METHODS.forkMachinesNodeExporters, {
+  payload: Schema.Struct({}),
+  success: ForkNodeExportersStatus,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2341,6 +2358,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsForkExtensionsAuthorizeRpc,
   WsForkExtensionsAuthorizeCompleteRpc,
   WsForkTailnetStatusRpc,
+  WsForkMachinesHostResourcesRpc,
+  WsForkMachinesNodeExportersRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

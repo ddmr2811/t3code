@@ -4,12 +4,13 @@ import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection
 import {
   AuthDiagnosticsReadScope,
   type EnvironmentId,
+  type ForkNodeExporterReading,
   type ForkTailnetPeer,
   type ForkTailnetStatus,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { MonitorIcon } from "lucide-react";
-import { useContext } from "react";
+import { Fragment, type ReactNode, useContext } from "react";
 
 import { isElectron } from "../../env";
 import { formatBytes } from "../../lib/formatBytes";
@@ -21,6 +22,8 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
   type DashboardEnvironment,
+  exporterEnvironments,
+  type MachineLoad,
   machineLoad,
   NO_LOAD,
   onlineSummary,
@@ -34,10 +37,16 @@ import {
 } from "./dashboard.logic";
 import {
   dashboardHostProbe,
+  dashboardHostStream,
+  dashboardLatency,
+  dashboardNodeExporters,
   dashboardTailnetStatus,
+  LATENCY_INTERVAL_MS,
+  NODE_EXPORTER_INTERVAL_MS,
   HOST_PROBE_INTERVAL_MS,
   TAILNET_INTERVAL_MS,
 } from "./dashboardState";
+import { usePageVisible } from "./pageVisible";
 import { useVisibleInterval } from "./visibleInterval";
 
 const BUSY_SHARE = 0.85;
@@ -84,37 +93,44 @@ function StatusDot({ tone }: { readonly tone: "online" | "offline" | "idle" }) {
   );
 }
 
-function MachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
-  const probe = useEnvironmentQuery(
-    environment.connected ? dashboardHostProbe(environment.environmentId) : null,
-  );
-  useVisibleInterval(probe.refresh, HOST_PROBE_INTERVAL_MS);
-  const load = probe.data ? machineLoad(probe.data.host) : NO_LOAD;
-  // A failed refresh keeps the last sample; dim it rather than pass it off as current.
-  const stale = probe.data !== null && probe.error !== null;
-  const unreachable = environment.connected && probe.data === null && probe.error !== null;
+interface MachineCardViewProps {
+  readonly label: string;
+  readonly connected: boolean;
+  readonly load: MachineLoad;
+  /** "56 ms", "…" while it is measured, or null when the machine is offline. */
+  readonly latency: string | null;
+  /** Dims a sample the last refresh could not renew. */
+  readonly stale: boolean;
+  /** Takes the meters' place when the machine cannot be read. */
+  readonly problem: string | null;
+  /** What reports the machine when it is not T3 Code, such as "node_exporter". */
+  readonly source?: string;
+}
+
+function MachineCardView(props: MachineCardViewProps) {
+  const { load } = props;
   const specs = [
     load.cores === null ? null : `${load.cores} cores`,
     load.totalMemoryBytes === null ? null : formatBytes(load.totalMemoryBytes),
+    props.source ?? null,
   ].filter((value) => value !== null);
-
   return (
     <article
-      aria-label={environment.label}
+      aria-label={props.label}
       className={cn(
         "flex min-w-0 flex-col gap-1.5 rounded-md border bg-card px-3 py-2.5",
-        (stale || !environment.connected) && "opacity-60",
+        (props.stale || !props.connected) && "opacity-60",
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <StatusDot tone={environment.connected ? "online" : "offline"} />
-        <span className="min-w-0 flex-1 truncate font-medium text-sm">{environment.label}</span>
+        <StatusDot tone={props.connected ? "online" : "offline"} />
+        <span className="min-w-0 flex-1 truncate font-medium text-sm">{props.label}</span>
         <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
-          {environment.connected ? (probe.data ? `${probe.data.roundTripMs} ms` : "…") : "offline"}
+          {props.latency ?? "offline"}
         </span>
       </div>
-      {unreachable ? (
-        <span className="truncate text-muted-foreground text-xs">{probe.error}</span>
+      {props.problem !== null ? (
+        <span className="truncate text-muted-foreground text-xs">{props.problem}</span>
       ) : (
         <div className="flex flex-col gap-1">
           <Meter label="CPU" share={load.cpuShare} />
@@ -122,27 +138,92 @@ function MachineCard({ environment }: { readonly environment: DashboardEnvironme
         </div>
       )}
       <span className="truncate font-mono text-2xs text-muted-foreground">
-        {specs.length > 0 ? specs.join(" · ") : environment.connected ? "…" : "Not connected"}
+        {specs.length > 0 ? specs.join(" · ") : props.connected ? "…" : "Not connected"}
       </span>
     </article>
   );
 }
 
+/** A fork server streams its load about every second; the latency is a probe on that socket. */
+function LiveMachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
+  const pageVisible = usePageVisible();
+  const stream = useEnvironmentQuery(
+    environment.connected && pageVisible ? dashboardHostStream(environment.environmentId) : null,
+  );
+  const latency = useEnvironmentQuery(
+    environment.connected ? dashboardLatency(environment.environmentId) : null,
+  );
+  useVisibleInterval(latency.refresh, LATENCY_INTERVAL_MS);
+  const unreachable = environment.connected && stream.data === null && stream.error !== null;
+  return (
+    <MachineCardView
+      label={environment.label}
+      connected={environment.connected}
+      load={machineLoad(stream.data)}
+      latency={
+        environment.connected ? (latency.data ? `${Math.min(...latency.data)} ms` : "…") : null
+      }
+      stale={stream.data !== null && stream.error !== null}
+      problem={unreachable ? stream.error : null}
+    />
+  );
+}
+
+/** Older and upstream servers: the load sample the server keeps, read on a timer. */
+function PolledMachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
+  const probe = useEnvironmentQuery(
+    environment.connected ? dashboardHostProbe(environment.environmentId) : null,
+  );
+  useVisibleInterval(probe.refresh, HOST_PROBE_INTERVAL_MS);
+  // A failed refresh keeps the last sample; dim it rather than pass it off as current.
+  const unreachable = environment.connected && probe.data === null && probe.error !== null;
+  return (
+    <MachineCardView
+      label={environment.label}
+      connected={environment.connected}
+      load={probe.data ? machineLoad(probe.data.host) : NO_LOAD}
+      latency={environment.connected ? (probe.data ? `${probe.data.roundTripMs} ms` : "…") : null}
+      stale={probe.data !== null && probe.error !== null}
+      problem={unreachable ? probe.error : null}
+    />
+  );
+}
+
+function MachineCard({ environment }: { readonly environment: DashboardEnvironment }) {
+  return environment.liveLoad ? (
+    <LiveMachineCard environment={environment} />
+  ) : (
+    <PolledMachineCard environment={environment} />
+  );
+}
+
+function ExporterCard({ reading }: { readonly reading: ForkNodeExporterReading }) {
+  return (
+    <MachineCardView
+      label={reading.name}
+      connected={reading.resources !== null}
+      load={machineLoad(reading.resources)}
+      latency={reading.latencyMs === null ? null : `${Math.round(reading.latencyMs)} ms`}
+      stale={false}
+      problem={reading.problem}
+      source="node_exporter"
+    />
+  );
+}
+
 /** A wing of the map: each machine with its link to the hub drawn on the hub's side. */
 function Wing(props: {
-  readonly machines: ReadonlyArray<DashboardEnvironment>;
+  readonly machines: ReadonlyArray<MachineEntry>;
   readonly side: "left" | "right";
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      {props.machines.map((environment) => (
+      {props.machines.map((machine) => (
         <div
-          key={environment.environmentId}
+          key={machine.key}
           className={cn("flex items-center", props.side === "right" && "flex-row-reverse")}
         >
-          <div className="min-w-0 flex-1">
-            <MachineCard environment={environment} />
-          </div>
+          <div className="min-w-0 flex-1">{machine.card}</div>
           <span aria-hidden className="hidden h-px w-6 shrink-0 bg-border lg:block" />
         </div>
       ))}
@@ -243,6 +324,8 @@ const tailnetReadingsAtom = Atom.family((key: string) =>
 
 function TailnetPeers(props: {
   readonly environments: ReadonlyArray<TailnetEnvironment>;
+  /** node_exporter machines count as identified by their scrape host. */
+  readonly exporters: ReadonlyArray<ForkNodeExporterReading>;
   readonly presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>;
   readonly nowMs: number;
   readonly compact: boolean;
@@ -285,7 +368,7 @@ function TailnetPeers(props: {
   const peers = tailnetOnlyPeers({
     source: sourceStatus,
     readings,
-    environments: props.environments,
+    environments: [...props.environments, ...exporterEnvironments(props.exporters)],
   });
   const view = peers === null ? null : { peers };
   const sourceLabel =
@@ -341,6 +424,50 @@ function TailnetPeers(props: {
   );
 }
 
+interface MachineEntry {
+  readonly key: string;
+  readonly card: ReactNode;
+}
+
+const nodeExporterReadingsAtom = Atom.family((key: string) =>
+  Atom.make((get): ReadonlyArray<ForkNodeExporterReading> => {
+    const seen = new Set<string>();
+    const readings: ForkNodeExporterReading[] = [];
+    for (const environmentId of JSON.parse(key) as ReadonlyArray<EnvironmentId>) {
+      const status = AsyncResult.getOrElse(get(dashboardNodeExporters(environmentId)), () => null);
+      for (const reading of status?.exporters ?? []) {
+        // Two servers may read the same exporter; the first, nearest the user, counts.
+        const id = `${reading.name}\u0000${reading.host}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        readings.push(reading);
+      }
+    }
+    return readings;
+  }).pipe(Atom.withLabel(`fork-dashboard:node-exporters:${key}`)),
+);
+
+/** The machines each fork server reads through a node_exporter, from every server that may. */
+function useNodeExporters(
+  environments: ReadonlyArray<DashboardEnvironment>,
+): ReadonlyArray<ForkNodeExporterReading> {
+  const registry = useContext(RegistryContext);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const canRead = useEnvironmentsWithScope(environments, AuthDiagnosticsReadScope);
+  const sources = environments
+    .filter((environment) => environment.liveLoad && canRead.has(environment.environmentId))
+    .map((environment) => environment.environmentId)
+    .toSorted(
+      (left, right) =>
+        Number(right === primaryEnvironmentId) - Number(left === primaryEnvironmentId),
+    );
+  const readings = useAtomValue(nodeExporterReadingsAtom(JSON.stringify(sources)));
+  useVisibleInterval(() => {
+    for (const environmentId of sources) registry.refresh(dashboardNodeExporters(environmentId));
+  }, NODE_EXPORTER_INTERVAL_MS);
+  return readings;
+}
+
 /** `compact` is the Dashboard column beside a chat: a grid of machines, without the map. */
 export function DashboardMachines({
   nowMs,
@@ -353,17 +480,35 @@ export function DashboardMachines({
   const environments = orderMachines(
     [...presentations]
       .filter(([, presentation]) => presentation.entry.enabled)
-      .map(([environmentId, presentation]): TailnetEnvironment => ({
-        environmentId,
-        label: presentation.entry.target.label,
-        connected: presentation.connection.phase === "connected",
-        hostname: presentation.serverConfig?.hostname ?? null,
-        tailnetHosts: tailnetEndpointHosts(presentation.serverConfig?.directEndpoints),
-      })),
+      .map(([environmentId, presentation]): TailnetEnvironment => {
+        const connected = presentation.connection.phase === "connected";
+        return {
+          environmentId,
+          label: presentation.entry.target.label,
+          connected,
+          liveLoad:
+            connected &&
+            (presentation.serverConfig?.environment.capabilities.forkMachines ?? 0) >= 1,
+          hostname: presentation.serverConfig?.hostname ?? null,
+          tailnetHosts: tailnetEndpointHosts(presentation.serverConfig?.directEndpoints),
+        };
+      }),
   );
+  const exporters = useNodeExporters(environments);
+  const machines: ReadonlyArray<MachineEntry> = [
+    ...environments.map((environment) => ({
+      key: environment.environmentId,
+      card: <MachineCard environment={environment} />,
+    })),
+    ...exporters.map((reading) => ({
+      key: `exporter:${reading.name}:${reading.host}`,
+      card: <ExporterCard reading={reading} />,
+    })),
+  ];
   const tailnet = (
     <TailnetPeers
       environments={environments}
+      exporters={exporters}
       presentations={presentations}
       nowMs={nowMs}
       compact={compact}
@@ -373,15 +518,15 @@ export function DashboardMachines({
     return (
       <div className="@container flex flex-col gap-2 rounded-lg border p-2">
         <div className="grid grid-cols-1 gap-2 @xs:grid-cols-2">
-          {environments.map((environment) => (
-            <MachineCard key={environment.environmentId} environment={environment} />
+          {machines.map((machine) => (
+            <Fragment key={machine.key}>{machine.card}</Fragment>
           ))}
         </div>
         {tailnet}
       </div>
     );
   }
-  const { left, right } = splitAroundHub(environments);
+  const { left, right } = splitAroundHub(machines);
 
   return (
     <div className="flex flex-col gap-3">

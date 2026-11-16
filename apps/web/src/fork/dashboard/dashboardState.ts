@@ -4,6 +4,7 @@ import { request } from "@t3tools/client-runtime/rpc";
 import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type HostResourcesSnapshot, WS_METHODS } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -49,7 +50,57 @@ const hostProbe = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
 });
 
 export const HOST_PROBE_INTERVAL_MS = 2_500;
-export const TAILNET_INTERVAL_MS = 45_000;
+export const TAILNET_INTERVAL_MS = 15_000;
+export const LATENCY_INTERVAL_MS = 3_000;
+export const NODE_EXPORTER_INTERVAL_MS = 3_000;
+
+/** Fork servers stream a fresh sample about every second while someone listens. */
+const hostStream = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:fork-dashboard:host-stream",
+  tag: WS_METHODS.forkMachinesHostResources,
+  idleTtlMs: 0,
+});
+
+export const dashboardHostStream = (environmentId: EnvironmentId) =>
+  hostStream({ environmentId, input: {} });
+
+/**
+ * The round trip of an empty request over the connection the stream already holds: the
+ * latency, without waiting on the server's own work.
+ */
+const latencyProbe = createEnvironmentQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:fork-dashboard:latency",
+  idleTtlMs: 0,
+  staleTimeMs: 1_000,
+  execute: (
+    input: Record<string, never>,
+    _emit: (value: ReadonlyArray<number>) => Effect.Effect<void>,
+    previous: Option.Option<ReadonlyArray<number>>,
+  ) =>
+    request(WS_METHODS.serverProbe, input).pipe(
+      Effect.timeout("5 seconds"),
+      Effect.timed,
+      Effect.map(([elapsed]) =>
+        nextRoundTrips(
+          Option.getOrElse(previous, (): ReadonlyArray<number> => []),
+          Duration.toMillis(elapsed),
+        ),
+      ),
+    ),
+});
+
+export const dashboardLatency = (environmentId: EnvironmentId) =>
+  latencyProbe({ environmentId, input: {} });
+
+const nodeExporters = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:fork-dashboard:node-exporters",
+  tag: WS_METHODS.forkMachinesNodeExporters,
+  idleTtlMs: 0,
+  staleTimeMs: 2_000,
+});
+
+export const dashboardNodeExporters = (environmentId: EnvironmentId) =>
+  nodeExporters({ environmentId, input: {} });
 
 export const dashboardHostProbe = (environmentId: EnvironmentId) =>
   hostProbe({ environmentId, input: {} });

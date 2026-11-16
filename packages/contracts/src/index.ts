@@ -56,6 +56,8 @@ export * from "./filesystem.ts";
 export * from "./agentSessions.ts";
 export * from "./forkExtensions.ts";
 export * from "./forkTailnet.ts";
+export * from "./forkMachines.ts";
+export * from "./forkNodeExporter.ts";
 export * from "./assets.ts";
 export * from "./review.ts";
 export * from "./mcpApps.ts";

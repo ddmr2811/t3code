@@ -48,6 +48,7 @@ import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
 import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
+import * as ForkMachines from "./fork/machines/ForkMachines.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
@@ -723,6 +724,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ForkExtensions.layer,
   // Fork: one per server, so Dashboards on several devices share one Tailscale read.
   ForkTailnet.layer,
+  // Fork: one per server, so node_exporter readings and CPU baselines are shared by every client.
+  ForkMachines.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),

@@ -714,6 +714,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["dashboard panel start screen home thread startup launch machines"],
   },
   {
+    id: "fork-node-exporters",
+    title: "Dashboard exporters",
+    to: "/settings/general",
+    scope: "environment",
+    searchTerms: ["dashboard node exporter prometheus machines prod tailscale metrics"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/threads",

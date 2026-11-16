@@ -12,7 +12,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export class HostResources extends Context.Service<
   HostResources,
-  { readonly read: Effect.Effect<HostResourcesSnapshot> }
+  {
+    readonly read: Effect.Effect<HostResourcesSnapshot>;
+    /** Fork: an uncached sample, for the Dashboard's live stream. */
+    readonly readFresh: Effect.Effect<HostResourcesSnapshot>;
+  }
 >()("t3/resourceTelemetry/HostResources") {}
 
 // Linux CPU list syntax, as in Cpus_allowed_list: "0-3,8,10-11".
@@ -186,7 +190,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+  return HostResources.of({ read: Cache.get(cache, "host"), readFresh: sample() });
 });
 
 export const layer = Layer.effect(HostResources, make());

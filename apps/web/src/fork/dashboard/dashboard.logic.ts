@@ -1,13 +1,13 @@
 // Fork-only: what the Dashboard derives from client state, kept pure so it can be tested.
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
-import type {
+import {
   EnvironmentId,
-  ForkTailnetPeer,
-  ForkTailnetStatus,
-  HostResourcesSnapshot,
-  UsageProviderKind,
-  UsageSummaryInput,
+  type ForkTailnetPeer,
+  type ForkTailnetStatus,
+  type HostResourcesSnapshot,
+  type UsageProviderKind,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
 import type { MergedUsage } from "@t3tools/shared/usageMerge";
@@ -63,6 +63,8 @@ export interface DashboardEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connected: boolean;
+  /** A fork server that streams its load; others are read on a timer. */
+  readonly liveLoad?: boolean;
 }
 
 /** The map's two wings around the client: the first half left, the rest right. */
@@ -105,6 +107,18 @@ export interface TailnetEnvironment extends DashboardEnvironment {
   readonly hostname?: string | null;
   /** Hosts of the server's advertised tailnet endpoints: Tailscale IPs or its MagicDNS name. */
   readonly tailnetHosts?: ReadonlyArray<string>;
+}
+
+/** node_exporter machines, as stand-in environments identified by the host they are read at. */
+export function exporterEnvironments(
+  readings: ReadonlyArray<{ readonly name: string; readonly host: string }>,
+): ReadonlyArray<TailnetEnvironment> {
+  return readings.map((reading) => ({
+    environmentId: EnvironmentId.make(`node-exporter:${reading.name}:${reading.host}`),
+    label: reading.name,
+    connected: true,
+    tailnetHosts: reading.host === "" ? [] : [reading.host.toLowerCase()],
+  }));
 }
 
 /** The host of each tailnet endpoint a server advertises, lowercased, without IPv6 brackets. */
@@ -193,6 +207,28 @@ export function pickTailnetSource(
 }
 
 export const USAGE_DAYS = 7;
+
+/** Below this share of a window left, its bar turns to the theme's warning colour. */
+export const LOW_REMAINING_PERCENT = 15;
+
+/** A limit window as room left, the way the composer shows it. */
+export function windowRemaining(window: { readonly usedPercent: number }): {
+  readonly percent: number;
+  readonly low: boolean;
+} {
+  const percent = Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+  return { percent, low: percent < LOW_REMAINING_PERCENT };
+}
+
+/** When the spend was counted: the oldest machine's reading, so the label never flatters it. */
+export function spendReadAt(
+  environments: ReadonlyArray<{ readonly summary: { readonly readAt: string } | null }>,
+): string | null {
+  const times = environments.flatMap((environment) =>
+    environment.summary === null ? [] : [environment.summary.readAt],
+  );
+  return times.length === 0 ? null : times.toSorted()[0]!;
+}
 
 /** The last 7 days as of `now`: the same window, by reference, until the day changes. */
 export function currentUsageWindow(previous: UsageSummaryInput, now: Date): UsageSummaryInput {

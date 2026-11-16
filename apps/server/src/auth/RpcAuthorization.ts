@@ -174,6 +174,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
   // Fork: Dashboard. Reads the tailnet's machines, as diagnostics read this one.
   [WS_METHODS.forkTailnetStatus]: AuthDiagnosticsReadScope,
+  // The same reading as serverGetHostResources, so the same scope.
+  [WS_METHODS.forkMachinesHostResources]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkMachinesNodeExporters]: AuthDiagnosticsReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,

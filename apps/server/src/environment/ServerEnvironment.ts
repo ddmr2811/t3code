@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   FORK_EXTENSIONS_PROTOCOL_VERSION,
+  FORK_MACHINES_PROTOCOL_VERSION,
   FORK_TAILNET_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -303,6 +304,8 @@ export const make = Effect.gen(function* () {
       forkExtensions: FORK_EXTENSIONS_PROTOCOL_VERSION,
       // Fork: Dashboard tailnet status.
       forkTailnet: FORK_TAILNET_PROTOCOL_VERSION,
+      // Fork: Dashboard live machine load and node_exporter readings.
+      forkMachines: FORK_MACHINES_PROTOCOL_VERSION,
       shellThreadFamilies: true,
       shellOlderSettled: true,
     },

@@ -18,8 +18,11 @@ import {
   orderMachines,
   pickTailnetSource,
   splitAroundHub,
+  exporterEnvironments,
+  spendReadAt,
   tailnetEndpointHosts,
   tailnetOnlyPeers,
+  windowRemaining,
 } from "./dashboard.logic";
 
 const dev = EnvironmentId.make("env-dev");
@@ -197,6 +200,19 @@ describe("tailnetOnlyPeers", () => {
     expect(hidden(base)).toEqual(["jarvis", "prod-box"]);
   });
 
+  it("counts a node_exporter machine as identified by the host it is read at", () => {
+    const tailnet = [
+      peer({ id: "nProd", hostName: "prod-cx43", addresses: ["100.96.210.49"] }),
+      peer({ id: "nPs5", hostName: "ps5" }),
+    ];
+    const list = tailnetOnlyPeers({
+      source: status("nDev", tailnet),
+      readings: [],
+      environments: exporterEnvironments([{ name: "prod", host: "100.96.210.49" }]),
+    });
+    expect(list?.map((entry) => entry.hostName)).toEqual(["ps5"]);
+  });
+
   it("reads the host of each advertised tailnet endpoint and skips LAN ones", () => {
     expect(
       tailnetEndpointHosts([
@@ -361,5 +377,28 @@ describe("activeThreads", () => {
       ["woke", "waiting", "Asks a question"],
       ["working", "working", "Working"],
     ]);
+  });
+});
+
+describe("windowRemaining", () => {
+  it("reads a window as room left and warns below 15%", () => {
+    expect(windowRemaining({ usedPercent: 67 })).toEqual({ percent: 33, low: false });
+    expect(windowRemaining({ usedPercent: 85 })).toEqual({ percent: 15, low: false });
+    expect(windowRemaining({ usedPercent: 85.6 })).toEqual({ percent: 14, low: true });
+    expect(windowRemaining({ usedPercent: 120 })).toEqual({ percent: 0, low: true });
+    expect(windowRemaining({ usedPercent: -3 })).toEqual({ percent: 100, low: false });
+  });
+});
+
+describe("spendReadAt", () => {
+  it("is the oldest machine's count, so the label never flatters the totals", () => {
+    expect(
+      spendReadAt([
+        { summary: { readAt: "2026-11-16T10:05:00.000Z" } },
+        { summary: null },
+        { summary: { readAt: "2026-11-16T10:01:00.000Z" } },
+      ]),
+    ).toBe("2026-11-16T10:01:00.000Z");
+    expect(spendReadAt([{ summary: null }])).toBe(null);
   });
 });
