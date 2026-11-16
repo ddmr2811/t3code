@@ -15,7 +15,11 @@ import {
 } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
 import { requestConfirmDialog } from "../../confirmDialog";
-import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  getClientSettings,
+  subscribeClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import type { DashboardLayoutWriter, DashboardOwnerState } from "./dashboardLayoutState";
 import {
   operationIsCurrent,
@@ -23,6 +27,7 @@ import {
   type OwnerSwitch,
   type OwnerSwitchChoice,
   planOwnerSwitch,
+  watchOwner,
 } from "./dashboardOwner.logic";
 
 export function DashboardOwnerPicker(props: {
@@ -65,11 +70,20 @@ export function DashboardOwnerPicker(props: {
         { id: operation.id, owner },
         { id: operations.current, owner: getClientSettings().forkDashboardOwner },
       );
+    // Any owner change seen before this switch writes makes it stale, even one that comes back.
+    const watch = watchOwner(operation.owner);
+    const unsubscribe = subscribeClientSettings(() =>
+      watch.observe(getClientSettings().forkDashboardOwner),
+    );
     setBusy(true);
     props.onBusy?.(true);
-    const done = await applyOwnerSwitch(plan, writer, chosen.label, () =>
-      isCurrent(operation.owner),
-    ).catch(() => false);
+    const done = await applyOwnerSwitch(plan, writer, chosen.label, () => {
+      const current = !watch.moved && isCurrent(operation.owner);
+      if (current) unsubscribe();
+      return current;
+    })
+      .catch(() => false)
+      .finally(unsubscribe);
     setBusy(false);
     props.onBusy?.(false);
     // Another switch, here or on another device, answered meanwhile: its result stands.

@@ -10,6 +10,7 @@ import {
   dashboardWriteTarget,
   needsLastRead,
   operationIsCurrent,
+  watchOwner,
   type OwnerCandidate,
   ownerOptions,
   planDraft,
@@ -262,6 +263,17 @@ describe("planDraft", () => {
       layout: layout(0),
     });
     expect(onDefault.kind === "moved" && onDefault.copyConfirm).toBeNull();
+  });
+});
+
+describe("watchOwner", () => {
+  it("goes stale on any owner change, even one that comes back to the start", () => {
+    const watch = watchOwner(SERVER);
+    watch.observe(SERVER);
+    expect(watch.moved).toBe(false);
+    watch.observe(null);
+    watch.observe(SERVER);
+    expect(watch.moved).toBe(true);
   });
 });
 

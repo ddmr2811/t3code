@@ -249,6 +249,24 @@ export interface OwnerOperation {
 export const operationIsCurrent = (operation: OwnerOperation, now: OwnerOperation) =>
   operation.id === now.id && operation.owner === now.owner;
 
+/**
+ * Watches the owner while a switch is in flight. Any change seen, even one that comes back to the
+ * starting owner (A, then B, then A from another tab), makes the switch stale.
+ */
+export function watchOwner(start: EnvironmentId | null) {
+  let last = start;
+  let moved = false;
+  return {
+    observe(now: EnvironmentId | null) {
+      if (now !== last) moved = true;
+      last = now;
+    },
+    get moved() {
+      return moved;
+    },
+  };
+}
+
 /** Keeps the previous list while nothing a consumer reads changed, so they skip a render. */
 export function reuseCandidates(
   previous: ReadonlyArray<OwnerCandidate>,
