@@ -184,6 +184,19 @@ describe("seriesForAccount", () => {
     expect(seriesForAccount(account, histories).map((entry) => entry.key)).toEqual(["p"]);
   });
 
+  it("leaves out another login's history kept by the same provider instance", () => {
+    const switched = seriesForAccount({ ...account, email: "b@example.com" }, [
+      {
+        environmentId: "env-a",
+        history: history([
+          series({ email: "a@example.com", key: "old" }),
+          series({ email: "b@example.com", key: "new" }),
+        ]),
+      },
+    ]);
+    expect(switched.map((entry) => entry.key)).toEqual(["new"]);
+  });
+
   it("falls back to the provider instance the account came from", () => {
     const anonymous = { ...account, email: undefined };
     const found = seriesForAccount(anonymous, [

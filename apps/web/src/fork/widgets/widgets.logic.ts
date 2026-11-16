@@ -133,6 +133,11 @@ export function seriesForAccount(
         sameText(series.email, account.email) ||
         (!!fingerprint && series.credentialFingerprint === fingerprint);
       if (sameLogin) return (series.workspaceId ?? null) === workspace;
+      // The instance stands in only when neither side names a login: a known, different login
+      // on the same instance is another account's history.
+      const seriesKnown = !!series.email || !!series.credentialFingerprint;
+      const accountKnown = !!account.email || !!fingerprint;
+      if (seriesKnown && accountKnown) return false;
       return series.instanceId !== null && account.key === `${environmentId}:${series.instanceId}`;
     }),
   );
