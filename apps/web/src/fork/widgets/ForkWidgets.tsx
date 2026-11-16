@@ -12,6 +12,8 @@ import {
 import { ActivityIcon, ChartColumnBigIcon, ChartSplineIcon, GaugeIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { observeResize } from "../../lib/observeResize";
+
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "../../components/usage/usageProviders";
 import {
   Select,
@@ -42,6 +44,8 @@ import {
   collectingSince,
   dotRows,
   heatGrid,
+  type HeroFit,
+  heroFit,
   lastDays,
   monthDays,
   primaryWindow,
@@ -194,7 +198,13 @@ function LimitCard(props: { readonly nowMs: number }) {
   );
   const { histories, unsupported } = useLimitHistories();
   const [chosen, setChosen] = useState<string | null>(null);
-  const account = accounts.find((entry) => entry.key === chosen) ?? accounts[0] ?? null;
+  // Until one is picked, the account closest to its limit.
+  const tightest = accounts.toSorted(
+    (left, right) =>
+      windowRemaining(primaryWindow(left.limits.windows)!).percent -
+      windowRemaining(primaryWindow(right.limits.windows)!).percent,
+  )[0];
+  const account = accounts.find((entry) => entry.key === chosen) ?? tightest ?? null;
   const limitWindow = account ? primaryWindow(account.limits.windows) : null;
 
   if (account === null || limitWindow === null) {
@@ -209,7 +219,7 @@ function LimitCard(props: { readonly nowMs: number }) {
   const sinceMs = props.nowMs - LIMIT_HISTORY_HOURS * 60 * 60_000;
   const line = remainingLine(
     seriesForAccount(account, histories),
-    limitWindow.kind,
+    limitWindow.id,
     sinceMs,
     props.nowMs,
   );
@@ -264,13 +274,18 @@ function LimitCard(props: { readonly nowMs: number }) {
         caption={limitWindow.label}
         side={<span>Updated {formatRelativeTimeLabel(account.limits.checkedAt, props.nowMs)}</span>}
       />
-      <div ref={ref} className="mt-auto">
+      <div ref={ref} className="relative mt-auto">
         <DotLine
           points={line}
           width={width}
           height={SPEND_ROWS * PITCH}
           tone={low ? "warning" : "accent"}
         />
+        {line.length < 2 && !unsupported ? (
+          <span className={cn("absolute inset-0 flex items-center justify-center", caption)}>
+            {started === null ? "Collecting from the next sample" : "Collecting…"}
+          </span>
+        ) : null}
       </div>
     </WidgetCard>
   );
@@ -363,17 +378,26 @@ function ActivityCard(props: { readonly today: string }) {
   );
 }
 
-/** `hero` sits under a new thread's composer; `panel` fills a Dashboard row. */
-export function ForkWidgetGrid(props: { readonly variant: "hero" | "panel" }) {
+/** `hero` sits under a new thread's composer, laid out by `fit`; `panel` fills a Dashboard row. */
+export function ForkWidgetGrid(props: {
+  readonly variant: "hero" | "panel";
+  readonly fit?: HeroFit;
+}) {
   // The minute tick is UTC without a zone suffix; it refreshes the relative labels.
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   const data = useWidgetUsage();
+  const cards = props.fit?.cards ?? 4;
   return (
     <div
       className={cn(
         "relative grid gap-3",
-        props.variant === "hero" ? "grid-cols-2" : "md:grid-cols-2 2xl:grid-cols-4",
+        props.variant === "panel" && "md:grid-cols-2 2xl:grid-cols-4",
       )}
+      style={
+        props.fit
+          ? { gridTemplateColumns: `repeat(${props.fit.columns}, minmax(0, 1fr))` }
+          : undefined
+      }
     >
       {props.variant === "hero" ? (
         <div className="-inset-x-24 -inset-y-10 absolute -z-10">
@@ -382,19 +406,56 @@ export function ForkWidgetGrid(props: { readonly variant: "hero" | "panel" }) {
       ) : null}
       <SpendCard data={data} nowMs={nowMs} />
       <LimitCard nowMs={nowMs} />
-      <ActivityCard today={data.untilDay} />
-      <UsageCard data={data} />
+      {cards === 4 ? <ActivityCard today={data.untilDay} /> : null}
+      {cards === 4 ? <UsageCard data={data} /> : null}
     </div>
   );
 }
 
-/** Under a new thread's composer, out of its way: below it, and only where the window has room. */
+/** The room under the composer and the lane's width, kept current as either changes. */
+function useHeroFit(): readonly [(element: HTMLElement | null) => () => void, HeroFit | null] {
+  const [fit, setFit] = useState<HeroFit | null>(null);
+  const ref = (element: HTMLElement | null) => {
+    const composer = element?.parentElement;
+    const overlay = element?.closest("[data-chat-composer-overlay]");
+    const lane = element?.closest(".chat-composer-lane");
+    if (!element || !composer || !overlay || !lane) return () => undefined;
+    const measure = () => {
+      const style = getComputedStyle(lane);
+      const laneWidth =
+        lane.clientWidth -
+        parseFloat(style.paddingInlineStart) -
+        parseFloat(style.paddingInlineEnd);
+      const next = heroFit({
+        below: overlay.getBoundingClientRect().bottom - composer.getBoundingClientRect().bottom,
+        laneWidth,
+        composerWidth: composer.clientWidth,
+      });
+      setFit((previous) =>
+        previous?.columns === next?.columns &&
+        previous?.cards === next?.cards &&
+        previous?.width === next?.width
+          ? previous
+          : next,
+      );
+    };
+    return observeResize([overlay, composer], measure);
+  };
+  return [ref, fit] as const;
+}
+
+/** Under a new thread's composer, out of its way: below it, and only as much as the window holds. */
 export function ForkNewThreadWidgets() {
   const enabled = useClientSettings((settings) => settings.forkNewThreadWidgets);
+  const [ref, fit] = useHeroFit();
   if (!enabled) return null;
   return (
-    <div className="absolute inset-x-0 top-full hidden pt-8 md:block [@media(max-height:50rem)]:hidden">
-      <ForkWidgetGrid variant="hero" />
+    <div
+      ref={ref}
+      className="absolute start-1/2 top-full hidden -translate-x-1/2 pt-8 md:block rtl:translate-x-1/2"
+      style={{ width: fit?.width ?? "100%" }}
+    >
+      {fit ? <ForkWidgetGrid variant="hero" fit={fit} /> : null}
     </div>
   );
 }

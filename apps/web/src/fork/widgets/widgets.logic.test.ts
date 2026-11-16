@@ -11,6 +11,7 @@ import {
   collectingSince,
   dotRows,
   heatGrid,
+  heroFit,
   lastDays,
   monthDays,
   primaryWindow,
@@ -178,7 +179,7 @@ describe("seriesForAccount", () => {
 
 describe("remainingLine", () => {
   const hour = 60 * 60_000;
-  it("merges servers by time, starts at the edge and reads room left", () => {
+  it("merges servers by time within one window, starts at the edge and reads room left", () => {
     const line = remainingLine(
       [
         series({
@@ -198,10 +199,11 @@ describe("remainingLine", () => {
           windows: [
             { id: "w", kind: "weekly", label: "Weekly", points: [[30 * hour, 60]] },
             { id: "s", kind: "session", label: "5h", points: [[20 * hour, 99]] },
+            { id: "w-fable", kind: "weekly", label: "Weekly · Fable", points: [[20 * hour, 99]] },
           ],
         }),
       ],
-      "weekly",
+      "w",
       6 * hour,
       30 * hour,
     );
@@ -213,8 +215,8 @@ describe("remainingLine", () => {
   });
 
   it("draws nothing without samples or with an empty range", () => {
-    expect(remainingLine([], "weekly", 0, 10)).toEqual([]);
-    expect(remainingLine([series({})], "weekly", 10, 10)).toEqual([]);
+    expect(remainingLine([], "w", 0, 10)).toEqual([]);
+    expect(remainingLine([series({})], "w", 10, 10)).toEqual([]);
   });
 
   it("names the earliest machine collecting", () => {
@@ -274,5 +276,27 @@ describe("activity", () => {
     const quiet = heatGrid(new Map(), "2026-11-16", 1);
     expect(quiet.weeks[0]![0]).toEqual({ day: "2026-11-16", count: 0, level: 0 });
     expect(quiet.total).toBe(0);
+  });
+});
+
+describe("heroFit", () => {
+  const composerWidth = 736;
+  it("uses two rows when they fit, else one wide row, else two cards, else none", () => {
+    expect(heroFit({ below: 700, laneWidth: 2000, composerWidth })).toEqual({
+      columns: 2,
+      cards: 4,
+      width: composerWidth,
+    });
+    expect(heroFit({ below: 420, laneWidth: 2000, composerWidth })).toEqual({
+      columns: 4,
+      cards: 4,
+      width: 1440,
+    });
+    expect(heroFit({ below: 420, laneWidth: 1000, composerWidth })).toEqual({
+      columns: 2,
+      cards: 2,
+      width: composerWidth,
+    });
+    expect(heroFit({ below: 200, laneWidth: 2000, composerWidth })).toBeNull();
   });
 });

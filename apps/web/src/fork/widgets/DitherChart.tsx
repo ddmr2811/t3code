@@ -9,8 +9,9 @@ import type { HeatGrid, LinePoint } from "./widgets.logic";
 
 export type DotTone = "accent" | "ink" | "muted" | "info" | "success" | "warning";
 
+// The theme's accent (amber in T3 Clawd Solar); `--primary` is its action colour.
 const TONE_COLOR: Record<DotTone, string> = {
-  accent: "var(--primary)",
+  accent: "var(--app-theme-accent, var(--primary))",
   ink: "var(--foreground)",
   muted: "var(--muted-foreground)",
   info: "var(--info)",
@@ -343,7 +344,7 @@ export function DitherBackdrop() {
     >
       <defs>
         <pattern id={id} width={4} height={4} patternUnits="userSpaceOnUse">
-          <circle cx={2} cy={2} r={0.7} style={{ fill: TONE_COLOR.ink, fillOpacity: 0.1 }} />
+          <circle cx={2} cy={2} r={0.75} style={{ fill: TONE_COLOR.ink, fillOpacity: 0.13 }} />
         </pattern>
       </defs>
       <rect width="100%" height="100%" fill={`url(#${id})`} />

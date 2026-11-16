@@ -50,7 +50,7 @@ import {
 } from "./dashboardLayout.logic";
 import { DashboardMachinesEditor, type MachineStatus } from "./DashboardMachinesEditor";
 import { MachineGlyph } from "./machineAppearance";
-import { DotMeter } from "../widgets/DitherChart";
+import { DotMeter, toneColor } from "../widgets/DitherChart";
 import {
   dashboardHostProbe,
   dashboardHostStream,
@@ -74,7 +74,7 @@ function shareColor(share: number | null): string {
   if (share === null) return "var(--muted-foreground)";
   if (share >= SATURATED_SHARE) return "var(--destructive)";
   if (share >= BUSY_SHARE) return "var(--warning)";
-  return "var(--primary)";
+  return toneColor("accent");
 }
 
 const percent = (share: number | null) => (share === null ? "–" : `${Math.round(share * 100)}%`);

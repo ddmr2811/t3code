@@ -145,19 +145,20 @@ export interface LinePoint {
 }
 
 /**
- * Room left over `[sinceMs, untilMs]` from every series' samples of windows of `kind`, merged by
- * time. A sample before the range starts the line at its left edge.
+ * Room left over `[sinceMs, untilMs]` in the window `windowId` (ids are the provider's, so the
+ * same on every server), from every series' samples merged by time. A sample before the range
+ * starts the line at its left edge.
  */
 export function remainingLine(
   series: ReadonlyArray<ForkLimitHistorySeries>,
-  kind: string,
+  windowId: string,
   sinceMs: number,
   untilMs: number,
 ): ReadonlyArray<LinePoint> {
   const span = untilMs - sinceMs;
   if (!(span > 0)) return [];
   const points = series
-    .flatMap((entry) => entry.windows.filter((window) => window.kind === kind))
+    .flatMap((entry) => entry.windows.filter((window) => window.id === windowId))
     .flatMap((window) => window.points)
     .filter((point) => point[0] <= untilMs)
     .toSorted((left, right) => left[0] - right[0]);
@@ -246,4 +247,38 @@ export function heatGrid(
     weeks.push(column);
   }
   return { weeks, months, total };
+}
+
+export interface HeroFit {
+  readonly columns: 2 | 4;
+  readonly cards: 2 | 4;
+  /** The grid's width in pixels; wider than the composer for a single row of four. */
+  readonly width: number;
+}
+
+const HERO_TOP = 32;
+const HERO_ROW = 236;
+const HERO_GAP = 12;
+const HERO_BOTTOM = 16;
+const HERO_MAX_WIDTH = 1440;
+const HERO_MIN_CARD = 300;
+
+/**
+ * How the cards fit under a new thread's composer without covering anything or running off the
+ * window: two rows at the composer's width, else one row of four as wide as the lane allows,
+ * else one row of two, else none.
+ */
+export function heroFit(input: {
+  readonly below: number;
+  readonly laneWidth: number;
+  readonly composerWidth: number;
+}): HeroFit | null {
+  const room = input.below - HERO_TOP - HERO_BOTTOM;
+  if (room >= 2 * HERO_ROW + HERO_GAP) {
+    return { columns: 2, cards: 4, width: input.composerWidth };
+  }
+  if (room < HERO_ROW) return null;
+  const wide = Math.min(input.laneWidth, HERO_MAX_WIDTH);
+  if (wide >= 4 * HERO_MIN_CARD + 3 * HERO_GAP) return { columns: 4, cards: 4, width: wide };
+  return { columns: 2, cards: 2, width: input.composerWidth };
 }
