@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
@@ -129,6 +130,8 @@ const shortDay = (day: string) =>
 type WidgetUsage = ReturnType<typeof useWidgetUsage>;
 
 const SPEND_ROWS = 22;
+/** Servers sample limits this often. */
+const LINE_STEP_MS = 5 * 60_000;
 
 function SpendCard(props: { readonly data: WidgetUsage; readonly nowMs: number }) {
   const [ref, width] = useMeasuredWidth();
@@ -216,12 +219,14 @@ function LimitCard(props: { readonly nowMs: number }) {
   }
   const { percent, low } = windowRemaining(limitWindow);
   const resets = formatResetsIn(limitWindow, props.nowMs);
-  const sinceMs = props.nowMs - LIMIT_HISTORY_HOURS * 60 * 60_000;
+  // The range moves on the sample grid, not each minute, so the line redraws only when a sample can land.
+  const untilMs = Math.ceil(props.nowMs / LINE_STEP_MS) * LINE_STEP_MS;
+  const sinceMs = untilMs - LIMIT_HISTORY_HOURS * 60 * 60_000;
   const line = remainingLine(
     seriesForAccount(account, histories),
     limitWindow.id,
     sinceMs,
-    props.nowMs,
+    untilMs,
   );
   const started = collectingSince(histories.map((entry) => entry.history));
   const collecting = started !== null && started > sinceMs;
@@ -350,11 +355,11 @@ function UsageCard(props: { readonly data: WidgetUsage }) {
   );
 }
 
-function ActivityCard(props: { readonly today: string }) {
+function ActivityCard(props: { readonly today: string; readonly timeZone: string }) {
   const [ref, width] = useMeasuredWidth();
   const { readings, pending, unsupported } = useActivity();
   const weeks = heatWeeksFor(width);
-  const grid = heatGrid(sumActivity(readings), props.today, weeks);
+  const grid = heatGrid(sumActivity(readings, props.timeZone), props.today, weeks);
   return (
     <WidgetCard
       icon={<ActivityIcon />}
@@ -406,7 +411,7 @@ export function ForkWidgetGrid(props: {
       ) : null}
       <SpendCard data={data} nowMs={nowMs} />
       <LimitCard nowMs={nowMs} />
-      {cards === 4 ? <ActivityCard today={data.untilDay} /> : null}
+      {cards === 4 ? <ActivityCard today={data.untilDay} timeZone={data.timeZone} /> : null}
       {cards === 4 ? <UsageCard data={data} /> : null}
     </div>
   );
@@ -447,12 +452,14 @@ function useHeroFit(): readonly [(element: HTMLElement | null) => () => void, He
 /** Under a new thread's composer, out of its way: below it, and only as much as the window holds. */
 export function ForkNewThreadWidgets() {
   const enabled = useClientSettings((settings) => settings.forkNewThreadWidgets);
+  // Not mounted at all on narrow windows, so hidden cards never ask for data.
+  const wide = useMediaQuery("md");
   const [ref, fit] = useHeroFit();
-  if (!enabled) return null;
+  if (!enabled || !wide) return null;
   return (
     <div
       ref={ref}
-      className="absolute start-1/2 top-full hidden -translate-x-1/2 pt-8 md:block rtl:translate-x-1/2"
+      className="absolute start-1/2 top-full -translate-x-1/2 pt-8 rtl:translate-x-1/2"
       style={{ width: fit?.width ?? "100%" }}
     >
       {fit ? <ForkWidgetGrid variant="hero" fit={fit} /> : null}

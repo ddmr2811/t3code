@@ -5,7 +5,7 @@ import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { activitySince, makeActivityReader, makeLimitSampler } from "./ForkInsights.ts";
+import { activityRange, makeActivityReader, makeLimitSampler } from "./ForkInsights.ts";
 import {
   EMPTY_LIMIT_HISTORY,
   LIMIT_HISTORY_RETENTION_MS,
@@ -21,6 +21,7 @@ const reading = (usedPercent: number): ReadonlyArray<LimitSample> => [
     email: "dev@example.com",
     credentialFingerprint: null,
     workspaceId: null,
+    instanceId: "codex",
     windows: [{ id: "secondary", kind: "weekly", label: "Weekly", usedPercent }],
   },
 ];
@@ -87,60 +88,54 @@ describe("makeLimitSampler", () => {
   );
 });
 
-describe("activitySince", () => {
-  it("starts at the client's midnight, the given number of days back", () => {
+describe("activityRange", () => {
+  it("covers whole UTC hours, the current one included", () => {
     const now = Date.parse("2026-11-16T23:30:00.000Z");
-    expect(activitySince(now, { days: 1, utcOffsetMinutes: 0 })).toBe("2026-11-16T00:00:00.000Z");
-    // 00:30 on the 17th in UTC+1: that day began at 23:00 UTC on the 16th.
-    expect(activitySince(now, { days: 2, utcOffsetMinutes: 60 })).toBe("2026-11-15T23:00:00.000Z");
-    expect(activitySince(now, { days: 1, utcOffsetMinutes: -300 })).toBe(
-      "2026-11-16T05:00:00.000Z",
-    );
+    expect(activityRange(now, { days: 1 })).toEqual({
+      since: "2026-11-16T00:00:00.000Z",
+      until: "2026-11-17T00:00:00.000Z",
+    });
+    expect(activityRange(now, { days: 2 }).since).toBe("2026-11-15T00:00:00.000Z");
   });
 });
 
 describe("makeActivityReader", () => {
-  it.effect("counts turns per day at the client's offset, from the asked days only", () =>
+  it.effect("counts turns per UTC hour within the asked days, and caches the count", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, requested_at TEXT)`;
       const insert = (id: string, at: string) =>
         sql`INSERT INTO orchestration_v2_projection_runs VALUES (${id}, ${at})`;
-      yield* insert("old", "2026-10-01T10:00:00.000Z");
-      yield* insert("a", "2026-11-15T10:00:00.000Z");
-      yield* insert("b", "2026-11-15T23:30:00.000Z");
+      yield* insert("old", "2026-11-14T10:00:00.000Z");
+      yield* insert("a", "2026-11-15T23:10:00.000Z");
+      yield* insert("b", "2026-11-15T23:50:00.000Z");
       yield* insert("c", "2026-11-16T09:00:00.000Z");
       yield* TestClock.setTime(Date.parse("2026-11-16T12:00:00.000Z"));
       const activity = yield* makeActivityReader;
 
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 0 })).days).toEqual([
-        { day: "2026-11-15", turns: 2 },
-        { day: "2026-11-16", turns: 1 },
-      ]);
-      // In UTC+1 the late turn belongs to the 16th.
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 60 })).days).toEqual([
-        { day: "2026-11-15", turns: 1 },
-        { day: "2026-11-16", turns: 2 },
+      expect((yield* activity({ days: 2 })).hours).toEqual([
+        { hour: "2026-11-15T23", turns: 2 },
+        { hour: "2026-11-16T09", turns: 1 },
       ]);
 
-      // Answers come from the cache until it expires.
       yield* insert("d", "2026-11-16T11:00:00.000Z");
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 0 })).days.at(-1)!.turns).toBe(1);
-      yield* TestClock.adjust("5 minutes");
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 0 })).days.at(-1)!.turns).toBe(2);
+      expect((yield* activity({ days: 2 })).hours).toHaveLength(2);
+      yield* TestClock.adjust("30 minutes");
+      expect((yield* activity({ days: 2 })).hours.at(-1)).toEqual({
+        hour: "2026-11-16T11",
+        turns: 1,
+      });
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("answers no days when the count fails, and tries again next time", () =>
+  it.effect("answers no hours when the count fails, and tries again next time", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const activity = yield* makeActivityReader;
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 0 })).days).toEqual([]);
+      expect((yield* activity({ days: 7 })).hours).toEqual([]);
       yield* sql`CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, requested_at TEXT)`;
       yield* sql`INSERT INTO orchestration_v2_projection_runs VALUES ('a', '1970-01-01T00:00:00.000Z')`;
-      expect((yield* activity({ days: 7, utcOffsetMinutes: 0 })).days).toEqual([
-        { day: "1970-01-01", turns: 1 },
-      ]);
+      expect((yield* activity({ days: 7 })).hours).toEqual([{ hour: "1970-01-01T00", turns: 1 }]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

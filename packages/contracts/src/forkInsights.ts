@@ -20,12 +20,17 @@ export type ForkLimitHistoryWindow = typeof ForkLimitHistoryWindow.Type;
 
 /** One account's limits as one server reads them: a provider instance or a hub account. */
 export const ForkLimitHistorySeries = Schema.Struct({
-  /** `native:<instance id>` or `hub:<source id>:<account id>`, local to the server. */
+  /**
+   * Local to the server: the instance or hub account plus the login, so signing in as someone
+   * else starts a new series.
+   */
   key: Schema.String,
   driver: Schema.String,
   email: Schema.NullOr(Schema.String),
   credentialFingerprint: Schema.NullOr(Schema.String),
   workspaceId: Schema.NullOr(Schema.String),
+  /** The provider instance, for a login that reports no e-mail or credential; null for hubs. */
+  instanceId: Schema.NullOr(Schema.String),
   windows: Schema.Array(ForkLimitHistoryWindow),
 });
 export type ForkLimitHistorySeries = typeof ForkLimitHistorySeries.Type;
@@ -44,22 +49,22 @@ export const ForkLimitHistory = Schema.Struct({
 export type ForkLimitHistory = typeof ForkLimitHistory.Type;
 
 export const ForkActivityInput = Schema.Struct({
+  /** Counted back from the current UTC hour, a day of hours each. */
   days: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 371 })),
-  /** The client's offset from UTC, so days split at its midnight. */
-  utcOffsetMinutes: Schema.Int.check(Schema.isBetween({ minimum: -840, maximum: 840 })),
 });
 export type ForkActivityInput = typeof ForkActivityInput.Type;
 
-export const ForkActivityDay = Schema.Struct({
-  /** `YYYY-MM-DD` at the client's offset. */
-  day: Schema.String,
+/** By UTC hour, so each client splits days at its own midnight, daylight saving included. */
+export const ForkActivityHour = Schema.Struct({
+  /** `YYYY-MM-DDTHH`, UTC. */
+  hour: Schema.String,
   turns: Schema.Int,
 });
-export type ForkActivityDay = typeof ForkActivityDay.Type;
+export type ForkActivityHour = typeof ForkActivityHour.Type;
 
 export const ForkActivity = Schema.Struct({
-  /** Only days with turns, oldest first. */
-  days: Schema.Array(ForkActivityDay),
+  /** Only hours with turns, oldest first. */
+  hours: Schema.Array(ForkActivityHour),
   readAt: Schema.String,
 });
 export type ForkActivity = typeof ForkActivity.Type;

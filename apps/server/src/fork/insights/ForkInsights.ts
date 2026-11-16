@@ -20,6 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as ServerConfig from "../../config.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
@@ -45,9 +46,8 @@ export class ForkInsights extends Context.Service<
 >()("t3/fork/insights/ForkInsights") {}
 
 const HISTORY_FILE = "fork-limit-history.json";
-const DAY_MS = 24 * 60 * 60_000;
-/** Turns change slowly next to a few months of days; every open chart shares one count. */
-const ACTIVITY_CACHE_MS = 5 * 60_000;
+/** Turns change slowly next to months of days; every open chart shares one count. */
+const ACTIVITY_CACHE_MS = 30 * 60_000;
 
 const decodeHistory = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredLimitHistory));
 
@@ -85,42 +85,50 @@ export const makeLimitSampler = Effect.fn("ForkInsights.makeLimitSampler")(funct
   return { sampleOnce, read };
 });
 
-/** The first instant of the oldest day asked for, at the client's offset. */
-export function activitySince(nowMs: number, input: ForkActivityInput): string {
-  const offsetMs = input.utcOffsetMinutes * 60_000;
-  const todayStart = Math.floor((nowMs + offsetMs) / DAY_MS) * DAY_MS - offsetMs;
-  return DateTime.formatIso(DateTime.makeUnsafe(todayStart - (input.days - 1) * DAY_MS));
+const HOUR_MS = 60 * 60_000;
+
+/** The UTC hours asked for: `days` of them back from the current hour, inclusive. */
+export function activityRange(
+  nowMs: number,
+  input: ForkActivityInput,
+): { readonly since: string; readonly until: string } {
+  const hourStart = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
+  return {
+    since: DateTime.formatIso(DateTime.makeUnsafe(hourStart - (input.days * 24 - 1) * HOUR_MS)),
+    until: DateTime.formatIso(DateTime.makeUnsafe(hourStart + HOUR_MS)),
+  };
 }
 
-const offsetModifier = (minutes: number) =>
-  `${minutes >= 0 ? "+" : "-"}${Math.abs(minutes)} minutes`;
-
-/** Turns started per day, read once per few minutes for every chart that asks. */
+/**
+ * Turns started per UTC hour, counted on a read-only connection and kept a while for every chart
+ * that asks. The count scans runs in the range; the upstream table has no index on the time.
+ */
 export const makeActivityReader = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const cache = new Map<string, { readonly atMs: number; readonly value: ForkActivity }>();
+  const cache = new Map<number, { readonly atMs: number; readonly value: ForkActivity }>();
   const activity = Effect.fn("ForkInsights.activity")(function* (input: ForkActivityInput) {
-    const key = `${input.days}:${input.utcOffsetMinutes}`;
     const nowMs = yield* Clock.currentTimeMillis;
-    const cached = cache.get(key);
+    const cached = cache.get(input.days);
     if (cached !== undefined && nowMs - cached.atMs < ACTIVITY_CACHE_MS) return cached.value;
-    const rows = yield* sql<{ readonly day: string; readonly turns: number }>`
-      SELECT strftime('%Y-%m-%d', requested_at, ${offsetModifier(input.utcOffsetMinutes)}) AS day,
-        COUNT(*) AS turns
+    const range = activityRange(nowMs, input);
+    const rows = yield* sql<{ readonly hour: string; readonly turns: number }>`
+      SELECT substr(requested_at, 1, 13) AS hour, COUNT(*) AS turns
       FROM orchestration_v2_projection_runs
-      WHERE requested_at >= ${activitySince(nowMs, input)}
-      GROUP BY day
-      ORDER BY day
-    `.pipe(Effect.option);
+      WHERE requested_at >= ${range.since} AND requested_at < ${range.until}
+      GROUP BY hour
+      ORDER BY hour
+    `.pipe(NodeSqliteClient.readOnly, Effect.option);
     const readAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
-    if (rows._tag === "None") return { days: [], readAt };
+    if (rows._tag === "None") return { hours: [], readAt };
     const value: ForkActivity = {
-      days: rows.value.flatMap((row) =>
-        typeof row.day === "string" ? [{ day: row.day, turns: Number(row.turns) }] : [],
+      hours: rows.value.flatMap((row) =>
+        typeof row.hour === "string" && row.hour.length === 13
+          ? [{ hour: row.hour, turns: Number(row.turns) }]
+          : [],
       ),
       readAt,
     };
-    cache.set(key, { atMs: nowMs, value });
+    cache.set(input.days, { atMs: nowMs, value });
     return value;
   });
   return activity;

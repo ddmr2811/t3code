@@ -52,6 +52,7 @@ const sample = (key: string, usedPercent: number): LimitSample => ({
   email: null,
   credentialFingerprint: null,
   workspaceId: null,
+  instanceId: null,
   windows: [weekly(usedPercent)],
 });
 
@@ -88,8 +89,51 @@ describe("limitSamples", () => {
       [source],
       now,
     );
-    expect(samples.map((entry) => entry.key)).toEqual(["native:codex", "hub:hub:a.json"]);
+    expect(samples.map((entry) => entry.key)).toEqual([
+      "native:codex|dev@example.com|",
+      "hub:hub:a.json||",
+    ]);
     expect(samples[0]).toMatchObject({ email: "dev@example.com", windows: [weekly(40)] });
+  });
+});
+
+describe("limitSamples keys", () => {
+  it("starts a new series when another login, or another workspace, takes the instance", () => {
+    const limits = { checkedAt: "2026-11-16T11:58:00.000Z", windows: [weekly(40)] };
+    const keyFor = (auth: ServerProvider["auth"]) =>
+      limitSamples([provider({ auth, usageLimits: limits })], [], now)[0]!.key;
+    const first = keyFor({ status: "authenticated", email: "Dev@Example.com" });
+    expect(keyFor({ status: "authenticated", email: "dev@example.com" })).toBe(first);
+    expect(keyFor({ status: "authenticated", email: "other@example.com" })).not.toBe(first);
+    expect(
+      keyFor({ status: "authenticated", email: "dev@example.com", workspaceId: "team" }),
+    ).not.toBe(first);
+
+    let history = appendLimitSamples(
+      EMPTY_LIMIT_HISTORY,
+      limitSamples([provider({ usageLimits: limits })], [], now),
+      now,
+    );
+    history = appendLimitSamples(
+      history,
+      limitSamples(
+        [
+          provider({
+            auth: { status: "authenticated", email: "b@example.com" },
+            usageLimits: limits,
+          }),
+        ],
+        [],
+        now,
+      ),
+      now + LIMIT_SAMPLE_INTERVAL_MS,
+    );
+    expect(
+      history.series.map((series) => [series.email, series.windows[0]!.points.length]),
+    ).toEqual([
+      ["b@example.com", 1],
+      ["dev@example.com", 1],
+    ]);
   });
 });
 

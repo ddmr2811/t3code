@@ -25,7 +25,8 @@ import { useVisibleInterval } from "../dashboard/visibleInterval";
 const WIDGET_USAGE_REFRESH_MS = 10 * 60_000;
 /** Servers sample limits every five minutes; reading faster would show nothing new. */
 const LIMIT_HISTORY_REFRESH_MS = 5 * 60_000;
-const ACTIVITY_REFRESH_MS = 15 * 60_000;
+/** The server keeps its count half an hour; asking sooner reads the same one. */
+const ACTIVITY_REFRESH_MS = 30 * 60_000;
 export const LIMIT_HISTORY_HOURS = 24;
 /** A year of weeks; the grid shows as many as fit. */
 const ACTIVITY_DAYS = 371;
@@ -50,8 +51,8 @@ const activityQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime,
 const limitHistoryOf = (environmentId: EnvironmentId) =>
   limitHistoryQuery({ environmentId, input: { hours: LIMIT_HISTORY_HOURS } });
 
-const activityOf = (environmentId: EnvironmentId, utcOffsetMinutes: number) =>
-  activityQuery({ environmentId, input: { days: ACTIVITY_DAYS, utcOffsetMinutes } });
+const activityOf = (environmentId: EnvironmentId) =>
+  activityQuery({ environmentId, input: { days: ACTIVITY_DAYS } });
 
 export interface EnvironmentLimitHistory {
   readonly environmentId: EnvironmentId;
@@ -78,13 +79,10 @@ interface ActivityReadings {
 
 const activitiesAtom = Atom.family((key: string) =>
   Atom.make((get): ActivityReadings => {
-    const { ids, offset } = JSON.parse(key) as {
-      readonly ids: ReadonlyArray<EnvironmentId>;
-      readonly offset: number;
-    };
+    const ids = JSON.parse(key) as ReadonlyArray<EnvironmentId>;
     let pending = 0;
     const readings = ids.flatMap((environmentId) => {
-      const result = get(activityOf(environmentId, offset));
+      const result = get(activityOf(environmentId));
       const value = AsyncResult.getOrElse(result, (): ForkActivity | null => null);
       if (value === null && result.waiting) pending += 1;
       return value === null ? [] : [value];
@@ -128,13 +126,9 @@ export function useLimitHistories(): {
 export function useActivity(): ActivityReadings & { readonly unsupported: boolean } {
   const registry = useContext(RegistryContext);
   const environmentIds = useInsightEnvironments();
-  // Fixed for the chart's life, so a daylight-saving change does not refetch mid-view.
-  const [offset] = useState(() => -new Date().getTimezoneOffset());
-  const activity = useAtomValue(activitiesAtom(JSON.stringify({ ids: environmentIds, offset })));
+  const activity = useAtomValue(activitiesAtom(JSON.stringify(environmentIds)));
   useVisibleInterval(() => {
-    for (const environmentId of environmentIds) {
-      registry.refresh(activityOf(environmentId, offset));
-    }
+    for (const environmentId of environmentIds) registry.refresh(activityOf(environmentId));
   }, ACTIVITY_REFRESH_MS);
   return { ...activity, unsupported: environmentIds.length === 0 };
 }
@@ -156,5 +150,5 @@ export function useWidgetUsage() {
       setUsageWindow(next);
     } else void usage.refresh();
   }, WIDGET_USAGE_REFRESH_MS);
-  return { usage, untilDay: usageWindow.untilDay };
+  return { usage, untilDay: usageWindow.untilDay, timeZone: usageWindow.timeZone };
 }

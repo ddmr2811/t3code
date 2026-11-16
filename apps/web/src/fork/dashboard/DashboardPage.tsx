@@ -59,15 +59,19 @@ function PanelControls(props: {
   readonly count: number;
   readonly onHidden: (hidden: boolean) => void;
   readonly onMove: (steps: number) => void;
+  /** Why this panel cannot be changed here, or null. */
+  readonly locked: string | null;
 }) {
   const { panel } = props;
-  return (
+  const locked = props.locked !== null;
+  const controls = (
     <span className="ms-auto flex items-center gap-1">
       <Button
         type="button"
         variant="outline"
         size="xs"
         aria-pressed={panel.hidden}
+        disabled={locked}
         onClick={() => props.onHidden(!panel.hidden)}
       >
         {panel.hidden ? <EyeOffIcon /> : <EyeIcon />}
@@ -77,7 +81,7 @@ function PanelControls(props: {
         type="button"
         size="icon-xs"
         variant="ghost-muted"
-        disabled={props.index === 0}
+        disabled={locked || props.index === 0}
         aria-label={`Move ${panel.title} up`}
         onClick={() => props.onMove(-1)}
       >
@@ -87,13 +91,20 @@ function PanelControls(props: {
         type="button"
         size="icon-xs"
         variant="ghost-muted"
-        disabled={props.index === props.count - 1}
+        disabled={locked || props.index === props.count - 1}
         aria-label={`Move ${panel.title} down`}
         onClick={() => props.onMove(1)}
       >
         <ArrowDownIcon />
       </Button>
     </span>
+  );
+  if (props.locked === null) return controls;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="ms-auto flex" />}>{controls}</TooltipTrigger>
+      <TooltipPopup side="bottom">{props.locked}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -260,6 +271,7 @@ export function DashboardPage() {
                       count={visiblePanels.length}
                       onHidden={(hidden) => change(setPanelHidden(layout, panel.id, hidden))}
                       onMove={(steps) => change(movePanel(layout, panel.id, steps))}
+                      locked={panel.id === "charts" ? writer.chartsBlocked : null}
                     />
                   ) : index === 0 ? (
                     <EditButton blocked={writer.blocked} onEdit={() => edit(shown)} />

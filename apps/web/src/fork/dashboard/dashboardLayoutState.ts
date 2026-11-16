@@ -23,6 +23,8 @@ export interface DashboardLayoutWriter {
   readonly serverLabel: string | null;
   /** Why the layout cannot be changed from here, or null when it can. */
   readonly blocked: string | null;
+  /** Why the Charts panel cannot be moved or hidden: a server that drops its setting. */
+  readonly chartsBlocked: string | null;
   /** Saves `layout` as the revision after `base`; "stale" when another device saved since. */
   readonly save: (
     layout: ForkDashboardLayout,
@@ -52,21 +54,17 @@ export function useDashboardLayoutWriter(): DashboardLayoutWriter {
   return {
     serverLabel,
     blocked,
+    chartsBlocked:
+      protocol >= 3
+        ? null
+        : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide Charts.`,
     save: async (layout, base) => {
       if (environmentId === null || blocked !== null) return "failed";
       const result = await update({
         environmentId,
         input: {
           patch: {
-            forkDashboard: {
-              ...layout,
-              // A protocol 2 server refuses a panel id it does not know.
-              panels:
-                protocol >= 3
-                  ? layout.panels
-                  : layout.panels.filter((panel) => panel.id !== "charts"),
-              revision: base.revision + 1,
-            },
+            forkDashboard: { ...layout, revision: base.revision + 1 },
           },
         },
       });

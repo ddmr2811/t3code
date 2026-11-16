@@ -2,9 +2,11 @@
 // entries are found by any identity they share with a live machine, never by order or label, so
 // a tailnet peer that becomes a T3 environment keeps its alias, icon, colour and section.
 import {
+  DEFAULT_FORK_DASHBOARD_CHARTS,
   DEFAULT_FORK_DASHBOARD_LAYOUT,
   type ForkDashboardLayout,
   type ForkDashboardMachine,
+  type ForkDashboardPanelId,
 } from "@t3tools/contracts";
 
 export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads";
@@ -25,31 +27,57 @@ export interface ResolvedPanel {
   readonly hidden: boolean;
 }
 
-/** Saved panels in their order, unknown ones dropped and missing ones after them as defaults. */
+const CHARTS = DASHBOARD_PANELS.find((panel) => panel.id === "charts")!;
+const SAVED_PANELS = DASHBOARD_PANELS.filter(
+  (panel): panel is { readonly id: ForkDashboardPanelId; readonly title: string } =>
+    panel.id !== "charts",
+);
+
+/**
+ * Saved panels in their order, unknown ones dropped and missing ones after them as defaults, with
+ * Charts after the panel it is saved to follow (it lives apart from `panels`; see contracts).
+ */
 export function resolvePanels(layout: ForkDashboardLayout): ReadonlyArray<ResolvedPanel> {
   const seen = new Set<string>();
   const saved = layout.panels.flatMap((setting) => {
-    const panel = DASHBOARD_PANELS.find((entry) => entry.id === setting.id);
+    const panel = SAVED_PANELS.find((entry) => entry.id === setting.id);
     if (panel === undefined || seen.has(panel.id)) return [];
     seen.add(panel.id);
     return [{ ...panel, hidden: setting.hidden }];
   });
-  return [
+  const panels: ResolvedPanel[] = [
     ...saved,
-    ...DASHBOARD_PANELS.filter((panel) => !seen.has(panel.id)).map((panel) => ({
+    ...SAVED_PANELS.filter((panel) => !seen.has(panel.id)).map((panel) => ({
       ...panel,
       hidden: false,
     })),
   ];
+  const after = layout.charts.after;
+  const found = after === null ? -1 : panels.findIndex((panel) => panel.id === after);
+  panels.splice(after === null ? 0 : found === -1 ? panels.length : found + 1, 0, {
+    ...CHARTS,
+    hidden: layout.charts.hidden,
+  });
+  return panels;
 }
 
 const writePanels = (
   layout: ForkDashboardLayout,
   panels: ReadonlyArray<ResolvedPanel>,
-): ForkDashboardLayout => ({
-  ...layout,
-  panels: panels.map((panel) => ({ id: panel.id, hidden: panel.hidden })),
-});
+): ForkDashboardLayout => {
+  const chartsAt = panels.findIndex((panel) => panel.id === "charts");
+  const before = chartsAt > 0 ? panels[chartsAt - 1]!.id : null;
+  return {
+    ...layout,
+    panels: panels.flatMap((panel) =>
+      panel.id === "charts" ? [] : [{ id: panel.id, hidden: panel.hidden }],
+    ),
+    charts: {
+      hidden: panels[chartsAt]?.hidden ?? false,
+      after: before === "charts" ? null : before,
+    },
+  };
+};
 
 function moveItem<T>(items: ReadonlyArray<T>, from: number, to: number): ReadonlyArray<T> {
   if (from < 0 || from >= items.length) return items;
@@ -100,9 +128,9 @@ export function setProviderHidden(
 }
 
 export const isDefaultLayout = (layout: ForkDashboardLayout) =>
-  layout.panels.every(
-    (panel, index) => panel.id === DASHBOARD_PANELS[index]?.id && !panel.hidden,
-  ) &&
+  layout.panels.every((panel, index) => panel.id === SAVED_PANELS[index]?.id && !panel.hidden) &&
+  layout.charts.hidden === DEFAULT_FORK_DASHBOARD_CHARTS.hidden &&
+  layout.charts.after === DEFAULT_FORK_DASHBOARD_CHARTS.after &&
   layout.sections.length === 0 &&
   layout.machines.length === 0 &&
   layout.hiddenProviders.length === 0;

@@ -331,6 +331,20 @@ describe("panels", () => {
   });
 });
 
+describe("charts panel", () => {
+  it("keeps Charts out of panels and saves where it sits and whether it shows", () => {
+    const first = movePanel(movePanel(empty, "charts", -1), "charts", -1);
+    expect(first.panels.map((panel) => panel.id)).toEqual(["machines", "subscriptions", "threads"]);
+    expect(first.charts).toEqual({ hidden: false, after: null });
+    expect(resolvePanels(first)[0]!.id).toBe("charts");
+
+    const hidden = setPanelHidden(movePanel(empty, "charts", 1), "charts", true);
+    expect(hidden.charts).toEqual({ hidden: true, after: "threads" });
+    expect(hidden.panels.some((panel) => panel.hidden)).toBe(false);
+    expect(isDefaultLayout(hidden)).toBe(false);
+  });
+});
+
 describe("providers", () => {
   it("shows the providers that are not hidden", () => {
     const layout = setProviderHidden(setProviderHidden(empty, "grok", true), "opencode", true);

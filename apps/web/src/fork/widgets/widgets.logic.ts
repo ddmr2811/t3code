@@ -116,23 +116,24 @@ const sameText = (left: string | null | undefined, right: string | null | undefi
   !!left && !!right && left.trim().toLowerCase() === right.trim().toLowerCase();
 
 /**
- * The series that belong to an account, from every server that reads it: the same login by
- * e-mail or credential, else the very provider instance the account came from.
+ * The series that belong to an account, from every server that reads it: the same login (e-mail
+ * or credential) in the same workspace, as `collectLimitAccounts` joins them, else the very
+ * provider instance the account came from.
  */
 export function seriesForAccount(
-  account: Pick<LimitAccount, "driver" | "email" | "key" | "limits">,
+  account: Pick<LimitAccount, "driver" | "email" | "key" | "limits" | "workspaceId">,
   histories: ReadonlyArray<{ readonly environmentId: string; readonly history: ForkLimitHistory }>,
 ): ReadonlyArray<ForkLimitHistorySeries> {
   const fingerprint = account.limits.credentialFingerprint;
+  const workspace = account.workspaceId ?? null;
   return histories.flatMap(({ environmentId, history }) =>
     history.series.filter((series) => {
       if (series.driver !== account.driver) return false;
-      if (sameText(series.email, account.email)) return true;
-      if (fingerprint && series.credentialFingerprint === fingerprint) return true;
-      return (
-        series.key.startsWith("native:") &&
-        account.key === `${environmentId}:${series.key.slice(7)}`
-      );
+      const sameLogin =
+        sameText(series.email, account.email) ||
+        (!!fingerprint && series.credentialFingerprint === fingerprint);
+      if (sameLogin) return (series.workspaceId ?? null) === workspace;
+      return series.instanceId !== null && account.key === `${environmentId}:${series.instanceId}`;
     }),
   );
 }
@@ -178,12 +179,34 @@ export function collectingSince(histories: ReadonlyArray<ForkLimitHistory>): num
   return starts.length === 0 ? null : Math.min(...starts);
 }
 
-/** Turns per day added up across machines. */
-export function sumActivity(readings: ReadonlyArray<ForkActivity>): ReadonlyMap<string, number> {
+/** The day an instant falls on in `timeZone`, as `YYYY-MM-DD`. */
+function localDayFormatter(timeZone: string): (atMs: number) => string {
+  const options = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-CA", { ...options, timeZone });
+  } catch {
+    format = new Intl.DateTimeFormat("en-CA", { ...options, timeZone: "UTC" });
+  }
+  return (atMs) => format.format(atMs);
+}
+
+/**
+ * Turns per local day, added up across machines. Servers count by UTC hour, so each hour lands on
+ * the day it was in `timeZone` then, either side of a daylight-saving change.
+ */
+export function sumActivity(
+  readings: ReadonlyArray<ForkActivity>,
+  timeZone: string,
+): ReadonlyMap<string, number> {
+  const dayOf = localDayFormatter(timeZone);
   const totals = new Map<string, number>();
   for (const reading of readings) {
-    for (const entry of reading.days) {
-      totals.set(entry.day, (totals.get(entry.day) ?? 0) + finite(entry.turns));
+    for (const entry of reading.hours) {
+      const atMs = Date.parse(`${entry.hour}:00:00Z`);
+      if (!Number.isFinite(atMs)) continue;
+      const day = dayOf(atMs);
+      totals.set(day, (totals.get(day) ?? 0) + finite(entry.turns));
     }
   }
   return totals;

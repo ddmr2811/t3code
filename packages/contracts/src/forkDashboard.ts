@@ -8,7 +8,7 @@ import { NonNegativeInt } from "./baseSchemas.ts";
 
 /**
  * Fork: the server keeps `forkDashboard` in its settings and refuses a save made from an older
- * revision (2), and knows the `charts` panel (3); older servers drop it or overwrite blindly.
+ * revision (2), and keeps `charts` (3); older servers drop it or overwrite blindly.
  */
 export const FORK_DASHBOARD_PROTOCOL_VERSION = 3;
 
@@ -39,12 +39,7 @@ export type ForkDashboardMachine = typeof ForkDashboardMachine.Type;
 export const ForkDashboardSection = Schema.Struct({ id: Text, name: Text });
 export type ForkDashboardSection = typeof ForkDashboardSection.Type;
 
-export const ForkDashboardPanelId = Schema.Literals([
-  "machines",
-  "subscriptions",
-  "charts",
-  "threads",
-]);
+export const ForkDashboardPanelId = Schema.Literals(["machines", "subscriptions", "threads"]);
 export type ForkDashboardPanelId = typeof ForkDashboardPanelId.Type;
 
 export const ForkDashboardPanelSetting = Schema.Struct({
@@ -52,6 +47,24 @@ export const ForkDashboardPanelSetting = Schema.Struct({
   hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ForkDashboardPanelSetting = typeof ForkDashboardPanelSetting.Type;
+
+/**
+ * The Charts panel, kept apart from `panels`: clients from before it decode `panels` as a closed
+ * set, while a key they do not know is dropped.
+ */
+export const ForkDashboardChartsSetting = Schema.Struct({
+  hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The panel it follows; null puts it first. */
+  after: Schema.NullOr(ForkDashboardPanelId).pipe(
+    Schema.withDecodingDefault(Effect.succeed("subscriptions" as const)),
+  ),
+});
+export type ForkDashboardChartsSetting = typeof ForkDashboardChartsSetting.Type;
+
+export const DEFAULT_FORK_DASHBOARD_CHARTS: ForkDashboardChartsSetting = {
+  hidden: false,
+  after: "subscriptions",
+};
 
 /** Arrays only, so a settings patch replaces each one whole; their order is the Dashboard's. */
 export const ForkDashboardLayout = Schema.Struct({
@@ -72,6 +85,9 @@ export const ForkDashboardLayout = Schema.Struct({
   hiddenProviders: Schema.Array(Text)
     .check(Schema.isMaxLength(FORK_DASHBOARD_LIMITS.providers))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  charts: ForkDashboardChartsSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FORK_DASHBOARD_CHARTS)),
+  ),
 });
 export type ForkDashboardLayout = typeof ForkDashboardLayout.Type;
 
@@ -81,4 +97,5 @@ export const DEFAULT_FORK_DASHBOARD_LAYOUT: ForkDashboardLayout = {
   sections: [],
   machines: [],
   hiddenProviders: [],
+  charts: DEFAULT_FORK_DASHBOARD_CHARTS,
 };

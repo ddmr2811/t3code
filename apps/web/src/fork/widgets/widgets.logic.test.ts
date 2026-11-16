@@ -128,6 +128,7 @@ const series = (overrides: Partial<ForkLimitHistorySeries>): ForkLimitHistorySer
   email: null,
   credentialFingerprint: null,
   workspaceId: null,
+  instanceId: "codex",
   windows: [],
   ...overrides,
 });
@@ -165,6 +166,22 @@ describe("seriesForAccount", () => {
       [{ environmentId: "env-b", history: history([series({ credentialFingerprint: "fp" })]) }],
     );
     expect(byCredential).toHaveLength(1);
+  });
+
+  it("keeps workspaces of one login apart", () => {
+    const histories = [
+      {
+        environmentId: "env-b",
+        history: history([
+          series({ email: "dev@example.com", workspaceId: "team", instanceId: null, key: "t" }),
+          series({ email: "dev@example.com", workspaceId: null, instanceId: null, key: "p" }),
+        ]),
+      },
+    ];
+    expect(
+      seriesForAccount({ ...account, workspaceId: "team" }, histories).map((entry) => entry.key),
+    ).toEqual(["t"]);
+    expect(seriesForAccount(account, histories).map((entry) => entry.key)).toEqual(["p"]);
   });
 
   it("falls back to the provider instance the account came from", () => {
@@ -226,20 +243,47 @@ describe("remainingLine", () => {
 });
 
 describe("activity", () => {
-  it("adds up the turns of every machine per day", () => {
-    const totals = sumActivity([
-      { readAt: "", days: [{ day: "2026-11-15", turns: 2 }] },
-      {
-        readAt: "",
-        days: [
-          { day: "2026-11-15", turns: 3 },
-          { day: "2026-11-16", turns: 1 },
-        ],
-      },
-    ]);
+  it("adds up the turns of every machine per local day", () => {
+    const totals = sumActivity(
+      [
+        { readAt: "", hours: [{ hour: "2026-11-15T10", turns: 2 }] },
+        {
+          readAt: "",
+          hours: [
+            { hour: "2026-11-15T12", turns: 3 },
+            { hour: "2026-11-16T01", turns: 1 },
+            { hour: "garbage", turns: 9 },
+          ],
+        },
+      ],
+      "UTC",
+    );
     expect([...totals]).toEqual([
       ["2026-11-15", 5],
       ["2026-11-16", 1],
+    ]);
+  });
+
+  it("splits days at Madrid's midnight on both sides of the October clock change", () => {
+    // Clocks go back at 01:00 UTC on 25 October 2026: midnight is 22:00 UTC before, 23:00 after.
+    const totals = sumActivity(
+      [
+        {
+          readAt: "",
+          hours: [
+            { hour: "2026-10-24T21", turns: 1 },
+            { hour: "2026-10-24T22", turns: 2 },
+            { hour: "2026-10-25T22", turns: 4 },
+            { hour: "2026-10-25T23", turns: 8 },
+          ],
+        },
+      ],
+      "Europe/Madrid",
+    );
+    expect([...totals]).toEqual([
+      ["2026-10-24", 1],
+      ["2026-10-25", 6],
+      ["2026-10-26", 8],
     ]);
   });
 

@@ -38,6 +38,7 @@ export interface LimitSample {
   readonly email: string | null;
   readonly credentialFingerprint: string | null;
   readonly workspaceId: string | null;
+  readonly instanceId: string | null;
   readonly windows: ReadonlyArray<{
     readonly id: string;
     readonly kind: string;
@@ -61,6 +62,22 @@ const windowsOf = (limits: ServerProviderUsageLimits) =>
     usedPercent: window.usedPercent,
   }));
 
+/**
+ * Where the samples come from plus who is signed in there, so a different login, or the same one
+ * in another workspace, starts its own series instead of continuing someone else's.
+ */
+function seriesKey(
+  source: string,
+  login: {
+    readonly email?: string | undefined;
+    readonly credentialFingerprint?: string | undefined;
+    readonly workspaceId?: string | undefined;
+  },
+): string {
+  const who = login.email?.trim().toLowerCase() || login.credentialFingerprint || "";
+  return `${source}|${who}|${login.workspaceId ?? ""}`;
+}
+
 /** Every account this server reads limits for right now: its own logins and its hubs'. */
 export function limitSamples(
   providers: ReadonlyArray<ServerProvider>,
@@ -72,11 +89,16 @@ export function limitSamples(
     if (!provider.enabled || limits === undefined || !readable(limits, nowMs)) return [];
     return [
       {
-        key: `native:${provider.instanceId}`,
+        key: seriesKey(`native:${provider.instanceId}`, {
+          email: provider.auth.email,
+          credentialFingerprint: limits.credentialFingerprint,
+          workspaceId: provider.auth.workspaceId,
+        }),
         driver: provider.driver,
         email: provider.auth.email ?? null,
         credentialFingerprint: limits.credentialFingerprint ?? null,
         workspaceId: provider.auth.workspaceId ?? null,
+        instanceId: provider.instanceId,
         windows: windowsOf(limits),
       },
     ];
@@ -84,14 +106,18 @@ export function limitSamples(
   const hubs = sources.flatMap((source) =>
     source.accounts.flatMap((account): LimitSample[] => {
       if (!readable(account.usageLimits, nowMs)) return [];
-      const workspace = account.workspaceId ? `:${account.workspaceId}` : "";
       return [
         {
-          key: `hub:${source.id}:${account.id}${workspace}`,
+          key: seriesKey(`hub:${source.id}:${account.id}`, {
+            email: account.email,
+            credentialFingerprint: account.usageLimits.credentialFingerprint,
+            workspaceId: account.workspaceId,
+          }),
           driver: account.driver,
           email: account.email ?? null,
           credentialFingerprint: account.usageLimits.credentialFingerprint ?? null,
           workspaceId: account.workspaceId ?? null,
+          instanceId: null,
           windows: windowsOf(account.usageLimits),
         },
       ];
@@ -165,6 +191,7 @@ export function appendLimitSamples(
       email: sample.email,
       credentialFingerprint: sample.credentialFingerprint,
       workspaceId: sample.workspaceId,
+      instanceId: sample.instanceId,
       windows: [...windows.values()],
     });
   }
