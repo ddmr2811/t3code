@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   FORK_DASHBOARD_PROTOCOL_VERSION,
   FORK_EXTENSIONS_PROTOCOL_VERSION,
+  FORK_INSIGHTS_PROTOCOL_VERSION,
   FORK_MACHINES_PROTOCOL_VERSION,
   FORK_TAILNET_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -309,6 +310,8 @@ export const make = Effect.gen(function* () {
       forkMachines: FORK_MACHINES_PROTOCOL_VERSION,
       // Fork: Dashboard layout setting.
       forkDashboard: FORK_DASHBOARD_PROTOCOL_VERSION,
+      // Fork: limit history and daily activity for the charts.
+      forkInsights: FORK_INSIGHTS_PROTOCOL_VERSION,
       shellThreadFamilies: true,
       shellOlderSettled: true,
     },

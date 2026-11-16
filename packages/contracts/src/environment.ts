@@ -206,6 +206,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   forkMachines: Schema.optionalKey(Schema.Int),
   /** Fork: the server saves the Dashboard layout setting; absent on older servers. */
   forkDashboard: Schema.optionalKey(Schema.Int),
+  /** Fork: limit history and daily activity for the charts; absent on older servers. */
+  forkInsights: Schema.optionalKey(Schema.Int),
   /** Fork: target branch setting; absent on upstream servers. */
   forkTargetBranch: Schema.optionalKey(Schema.Int),
   /**

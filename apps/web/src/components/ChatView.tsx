@@ -284,6 +284,7 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { ForkNewThreadWidgets } from "../fork/widgets/ForkWidgets";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -3857,6 +3858,10 @@ export default function ChatView(props: ChatViewProps) {
                         <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4 [@media(max-height:34rem)]:static">
                           <ComposerBannerStack items={composerBannerItems} detached />
                         </div>
+                      ) : null}
+                      {/* Fork: chart cards under a new thread's composer, where no notice is. */}
+                      {isDraftHeroState && composerBannerItems.length === 0 ? (
+                        <ForkNewThreadWidgets />
                       ) : null}
                     </div>
                     <div

@@ -39,7 +39,8 @@ export function useDashboardLayoutWriter(): DashboardLayoutWriter {
   );
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const serverLabel = presentation?.entry.target.label ?? null;
-  const supported = (presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0) >= 2;
+  const protocol = presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0;
+  const supported = protocol >= 2;
   const blocked =
     environmentId === null
       ? "Connect to a server to arrange the Dashboard."
@@ -55,7 +56,19 @@ export function useDashboardLayoutWriter(): DashboardLayoutWriter {
       if (environmentId === null || blocked !== null) return "failed";
       const result = await update({
         environmentId,
-        input: { patch: { forkDashboard: { ...layout, revision: base.revision + 1 } } },
+        input: {
+          patch: {
+            forkDashboard: {
+              ...layout,
+              // A protocol 2 server refuses a panel id it does not know.
+              panels:
+                protocol >= 3
+                  ? layout.panels
+                  : layout.panels.filter((panel) => panel.id !== "charts"),
+              revision: base.revision + 1,
+            },
+          },
+        },
       });
       if (result._tag === "Success") return "saved";
       const error =

@@ -49,6 +49,7 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
 import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
 import * as ForkMachines from "./fork/machines/ForkMachines.ts";
+import * as ForkInsights from "./fork/insights/ForkInsights.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
@@ -726,6 +727,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ForkTailnet.layer,
   // Fork: one per server, so node_exporter readings and CPU baselines are shared by every client.
   ForkMachines.layer,
+  // Fork: one per server, so the limit history has one sampler and one file.
+  ForkInsights.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),

@@ -31,6 +31,7 @@ import {
 import { setProviderHidden, visibleProviders } from "./dashboardLayout.logic";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useVisibleInterval } from "./visibleInterval";
+import { DotMeter } from "../widgets/DitherChart";
 
 /** The transcript scan behind the spend is costly, so it repeats rarely; the limits are pushed. */
 const USAGE_REFRESH_MS = 10 * 60_000;
@@ -61,12 +62,7 @@ function WindowMeter(props: {
         <span className="truncate text-muted-foreground">{props.window.label}</span>
         <span className={cn("shrink-0", low && "text-warning-foreground")}>{percent}% left</span>
       </div>
-      <span className="h-1 overflow-hidden rounded-full bg-muted">
-        <span
-          className={cn("block h-full rounded-full", low && "bg-warning")}
-          style={{ width: `${percent}%`, ...(low ? {} : { backgroundColor: props.color }) }}
-        />
-      </span>
+      <DotMeter share={percent / 100} color={low ? "var(--warning)" : props.color} />
       <span className="truncate text-muted-foreground">{resets ?? " "}</span>
     </div>
   );

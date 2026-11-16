@@ -99,6 +99,12 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.forkMachinesNodeExporters)).toBe(
       AuthDiagnosticsReadScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkInsightsLimitHistory)).toBe(
+      AuthDiagnosticsReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkInsightsActivity)).toBe(
+      AuthDiagnosticsReadScope,
+    );
   });
 
   it("still lets readers load settings the way installed Swift clients ask", () => {

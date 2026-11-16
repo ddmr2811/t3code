@@ -714,6 +714,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["dashboard panel start screen home thread startup launch machines"],
   },
   {
+    id: "fork-new-thread-widgets",
+    title: "Charts under new threads",
+    to: "/settings/general",
+    searchTerms: ["widgets charts graphs spend limits usage activity heatmap new thread composer"],
+  },
+  {
     id: "fork-node-exporters",
     title: "Dashboard exporters",
     to: "/settings/general",

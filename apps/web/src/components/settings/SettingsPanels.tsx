@@ -482,6 +482,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.forkOpenDashboardOnStart !== DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart
       ? ["Open Dashboard on start"]
       : []),
+    ...(settings.forkNewThreadWidgets !== DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets
+      ? ["Charts under new threads"]
+      : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? ["Time format"]
       : []),
@@ -660,6 +663,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       language: DEFAULT_UNIFIED_SETTINGS.language,
       forkOpenDashboardOnStart: DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart,
+      forkNewThreadWidgets: DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1174,6 +1178,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ forkOpenDashboardOnStart: Boolean(checked) })
               }
               aria-label="Open Dashboard on start"
+            />
+          }
+        />
+        {/* Fork: the chart cards under a new thread's composer. */}
+        <SettingsRow
+          {...setting("fork-new-thread-widgets")}
+          description="Show spend, limits, usage and activity charts under the composer of a new thread on this device."
+          resetAction={
+            settings.forkNewThreadWidgets !== DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets ? (
+              <SettingResetButton
+                label="charts under new threads"
+                onClick={() =>
+                  updateSettings({
+                    forkNewThreadWidgets: DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.forkNewThreadWidgets}
+              onCheckedChange={(checked) =>
+                updateSettings({ forkNewThreadWidgets: Boolean(checked) })
+              }
+              aria-label="Charts under new threads"
             />
           }
         />

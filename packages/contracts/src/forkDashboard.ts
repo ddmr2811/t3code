@@ -8,9 +8,9 @@ import { NonNegativeInt } from "./baseSchemas.ts";
 
 /**
  * Fork: the server keeps `forkDashboard` in its settings and refuses a save made from an older
- * revision (2); older servers drop it or overwrite blindly.
+ * revision (2), and knows the `charts` panel (3); older servers drop it or overwrite blindly.
  */
-export const FORK_DASHBOARD_PROTOCOL_VERSION = 2;
+export const FORK_DASHBOARD_PROTOCOL_VERSION = 3;
 
 /** Bounds that keep a bad client from bloating every client's settings. */
 const FORK_DASHBOARD_LIMITS = {
@@ -39,7 +39,12 @@ export type ForkDashboardMachine = typeof ForkDashboardMachine.Type;
 export const ForkDashboardSection = Schema.Struct({ id: Text, name: Text });
 export type ForkDashboardSection = typeof ForkDashboardSection.Type;
 
-export const ForkDashboardPanelId = Schema.Literals(["machines", "subscriptions", "threads"]);
+export const ForkDashboardPanelId = Schema.Literals([
+  "machines",
+  "subscriptions",
+  "charts",
+  "threads",
+]);
 export type ForkDashboardPanelId = typeof ForkDashboardPanelId.Type;
 
 export const ForkDashboardPanelSetting = Schema.Struct({

@@ -7,7 +7,7 @@ import {
   type ForkDashboardMachine,
 } from "@t3tools/contracts";
 
-export type DashboardPanelId = "machines" | "subscriptions" | "threads";
+export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads";
 
 const DASHBOARD_PANELS: ReadonlyArray<{
   readonly id: DashboardPanelId;
@@ -15,6 +15,7 @@ const DASHBOARD_PANELS: ReadonlyArray<{
 }> = [
   { id: "machines", title: "Machines" },
   { id: "subscriptions", title: "Subscriptions" },
+  { id: "charts", title: "Charts" },
   { id: "threads", title: "Active threads" },
 ];
 

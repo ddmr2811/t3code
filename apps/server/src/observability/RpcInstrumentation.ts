@@ -182,6 +182,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.forkTailnetStatus]: "fork",
   [WS_METHODS.forkMachinesHostResources]: "fork",
   [WS_METHODS.forkMachinesNodeExporters]: "fork",
+  [WS_METHODS.forkInsightsLimitHistory]: "fork",
+  [WS_METHODS.forkInsightsActivity]: "fork",
   [WS_METHODS.assetsCreateUrl]: "workspace",
   [WS_METHODS.assetsPersistChatAttachments]: "orchestration",
   [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",

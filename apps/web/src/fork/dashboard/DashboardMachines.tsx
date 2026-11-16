@@ -50,6 +50,7 @@ import {
 } from "./dashboardLayout.logic";
 import { DashboardMachinesEditor, type MachineStatus } from "./DashboardMachinesEditor";
 import { MachineGlyph } from "./machineAppearance";
+import { DotMeter } from "../widgets/DitherChart";
 import {
   dashboardHostProbe,
   dashboardHostStream,
@@ -69,26 +70,21 @@ const SATURATED_SHARE = 0.95;
 
 const caption = "text-3xs font-medium uppercase tracking-widest text-muted-foreground";
 
-function shareTone(share: number | null): string {
-  if (share === null) return "bg-muted-foreground/40";
-  if (share >= SATURATED_SHARE) return "bg-destructive";
-  if (share >= BUSY_SHARE) return "bg-warning";
-  return "bg-primary";
+function shareColor(share: number | null): string {
+  if (share === null) return "var(--muted-foreground)";
+  if (share >= SATURATED_SHARE) return "var(--destructive)";
+  if (share >= BUSY_SHARE) return "var(--warning)";
+  return "var(--primary)";
 }
 
 const percent = (share: number | null) => (share === null ? "–" : `${Math.round(share * 100)}%`);
 
-/** A thin meter; its width changes per sample without a transition, so nothing repaints between. */
+/** A thin dotted meter; its width changes per sample without a transition, so nothing repaints between. */
 function Meter({ label, share }: { readonly label: string; readonly share: number | null }) {
   return (
     <div className="grid grid-cols-[2.25rem_minmax(2rem,1fr)_2.5rem] items-center gap-1.5 font-mono text-2xs tabular-nums">
       <span className="text-muted-foreground">{label}</span>
-      <span className="h-1 overflow-hidden rounded-full bg-muted">
-        <span
-          className={cn("block h-full rounded-full", shareTone(share))}
-          style={{ width: `${Math.round(Math.min(1, Math.max(0, share ?? 0)) * 100)}%` }}
-        />
-      </span>
+      <DotMeter share={share} color={shareColor(share)} />
       <span className="text-end">{percent(share)}</span>
     </div>
   );

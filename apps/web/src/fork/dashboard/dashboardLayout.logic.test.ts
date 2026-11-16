@@ -315,12 +315,14 @@ describe("panels", () => {
       ["threads", true],
       ["machines", false],
       ["subscriptions", false],
+      ["charts", false],
     ]);
     const moved = movePanel(layout, "subscriptions", -2);
     expect(resolvePanels(moved).map((panel) => panel.id)).toEqual([
       "subscriptions",
       "threads",
       "machines",
+      "charts",
     ]);
     expect(resolvePanels(setPanelHidden(moved, "threads", false))[1]).toMatchObject({
       id: "threads",

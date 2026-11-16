@@ -17,6 +17,7 @@ import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { DashboardMachines, useDashboardMachineData } from "./DashboardMachines";
 import { DashboardSubscriptions } from "./DashboardSubscriptions";
 import { DashboardThreads } from "./DashboardThreads";
+import { ForkWidgetGrid } from "../widgets/ForkWidgets";
 import {
   consolidateLayout,
   type DashboardPanelId,
@@ -173,6 +174,8 @@ export function DashboardPage() {
         return (
           <DashboardSubscriptions nowMs={nowMs} layout={layout} onLayoutChange={onLayoutChange} />
         );
+      case "charts":
+        return <ForkWidgetGrid variant="panel" />;
       case "threads":
         return <DashboardThreads nowMs={nowMs} />;
     }

@@ -177,6 +177,9 @@ export const RPC_REQUIRED_SCOPES = {
   // The same reading as serverGetHostResources, so the same scope.
   [WS_METHODS.forkMachinesHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.forkMachinesNodeExporters]: AuthDiagnosticsReadScope,
+  // Limits and activity across the machine, as the usage summary reads them.
+  [WS_METHODS.forkInsightsLimitHistory]: AuthDiagnosticsReadScope,
+  [WS_METHODS.forkInsightsActivity]: AuthDiagnosticsReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,

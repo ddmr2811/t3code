@@ -283,6 +283,7 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
 import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
 import * as ForkMachines from "./fork/machines/ForkMachines.ts";
+import * as ForkInsights from "./fork/insights/ForkInsights.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
@@ -1513,6 +1514,7 @@ export const layerWsRpc = (
       const forkExtensions = yield* ForkExtensions.ForkExtensions;
       const forkTailnet = yield* ForkTailnet.ForkTailnet;
       const forkMachines = yield* ForkMachines.ForkMachines;
+      const forkInsights = yield* ForkInsights.ForkInsights;
       const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const nativeChildWork = yield* NativeChildWorkQuery.NativeChildWorkQuery;
@@ -3045,6 +3047,8 @@ export const layerWsRpc = (
         [WS_METHODS.forkTailnetStatus]: (input) => forkTailnet.status(input),
         [WS_METHODS.forkMachinesHostResources]: (_input) => forkMachines.hostResources,
         [WS_METHODS.forkMachinesNodeExporters]: (_input) => forkMachines.nodeExporters,
+        [WS_METHODS.forkInsightsLimitHistory]: (input) => forkInsights.limitHistory(input),
+        [WS_METHODS.forkInsightsActivity]: (input) => forkInsights.activity(input),
         [WS_METHODS.assetsCreateUrl]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
