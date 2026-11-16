@@ -15,6 +15,14 @@ To install it, open **Settings → Appearance → Add a theme** and drop the fil
 
 The theme styles the app through its internal attributes, so an upstream update can break part of it.
 
+## T3 Clawd Solar
+
+`t3-clawd-solar.json` is T3 Clawd Fork with the colours of the Solar Flare theme: an amber accent, warm brown surfaces, an orange glow under the chat and around the composer, and amber headings. It keeps everything T3 Clawd Fork changes in the layout. Light mode keeps T3 Clawd's light colours.
+
+Solar Flare made the composer glow pulse forever. Here the glow stays still, because a looping animation keeps the GPU busy on high refresh displays. Text on amber buttons is dark, because white on that amber is hard to read.
+
+Install it the same way: **Settings → Appearance → Add a theme**, or `t3 theme set themes/t3-clawd-solar.json`.
+
 ### License
 
 T3 Clawd is MIT licensed:
