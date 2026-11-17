@@ -31,10 +31,13 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
 to you for approval. On fx, prompts it still sends also come to you.
 
-A Codex task started by another agent never asks for approval, whatever its mode. It can write
-only inside its working directory and temporary folders, without network access, and anything
-beyond that is declined; the agent that delegated the task is told what was declined. Put what the
-task needs in its brief, or run it with a different provider.
+A Codex task started by another agent runs without anyone to approve its requests. It works in a
+sandbox: it can write only to its working directory, its repository's git directory and temporary
+folders, with network access. Anything beyond that is declined instead of waiting, and the agent
+that delegated the task is told what was declined. A task whose mode is **Supervised** stays
+read-only, and every request it makes is declined. Put what the task needs in its brief, or
+delegate with another provider. When you write in the task's thread yourself, that turn follows
+the thread's permission mode as usual and you can approve its requests.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.

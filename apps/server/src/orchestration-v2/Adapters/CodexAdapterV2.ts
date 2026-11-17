@@ -785,21 +785,66 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+/** A delegated task's turn that no person started, so nobody is there to answer its prompts. */
+export const isUnattendedDelegatedTurn = (
+  turn: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "appThread" | "message" | "resume">,
+): boolean =>
+  isDelegatedAppThread(turn.appThread) &&
+  // A resumed turn no longer says who wrote it, so it counts as unattended.
+  (turn.resume === true || turn.message.createdBy !== "user");
+
 /**
- * Nobody answers a delegated task's approval prompts, so it never asks and stays inside its
- * checkout. Its runtime mode can only narrow this to read-only, never widen it.
+ * The checkout an unattended delegated task may write to, with the repository's common git
+ * directory so `git worktree add` and `remove` work from a linked worktree. Codex adds `/tmp`.
  */
-function codexDelegatedTurnPolicy(runtimeMode: RuntimeMode): {
+export const codexDelegatedWritableRoots = Effect.fn("CodexAdapterV2.codexDelegatedWritableRoots")(
+  function* (cwd: string | null) {
+    if (cwd === null) return [];
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      const dotGit = path.join(directory, ".git");
+      const kind = yield* fileSystem.stat(dotGit).pipe(
+        Effect.map((info) => info.type),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (kind === "Directory") return [cwd, dotGit];
+      if (kind === "File") {
+        const pointer = yield* fileSystem
+          .readFileString(dotGit)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+        if (gitDir === undefined) return [cwd];
+        const worktreeGitDir = path.resolve(directory, gitDir);
+        const commonDir = yield* fileSystem
+          .readFileString(path.join(worktreeGitDir, "commondir"))
+          .pipe(Effect.orElseSucceed(() => "."));
+        return [cwd, path.resolve(worktreeGitDir, commonDir.trim())];
+      }
+      if (path.dirname(directory) === directory) return [cwd];
+    }
+  },
+);
+
+/**
+ * An unattended delegated task never asks: it writes only to `writableRoots` and temp folders,
+ * with network. A read-only mode keeps its own policy, and the adapter declines what it asks.
+ * Nothing the parent set can widen either.
+ */
+function codexDelegatedTurnPolicy(
+  runtimeMode: RuntimeMode,
+  writableRoots: ReadonlyArray<string>,
+): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
 } {
-  return {
-    approvalPolicy: "never",
-    sandboxPolicy:
-      codexRuntimeModeTurnDefaults(runtimeMode).sandboxPolicy.type === "readOnly"
-        ? { type: "readOnly", networkAccess: false }
-        : { type: "workspaceWrite", networkAccess: false },
-  };
+  const modeDefaults = codexRuntimeModeTurnDefaults(runtimeMode);
+  return modeDefaults.sandboxPolicy.type === "readOnly"
+    ? modeDefaults
+    : {
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "workspaceWrite", networkAccess: true, writableRoots },
+      };
 }
 
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
@@ -819,8 +864,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly nativeThreadId: string;
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-    /** The turn runs a delegated task: see `codexDelegatedTurnPolicy`. */
-    readonly delegated?: boolean;
+    /** Set for an unattended delegated turn: see `codexDelegatedTurnPolicy`. */
+    readonly delegatedWritableRoots?: ReadonlyArray<string>;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
@@ -835,9 +880,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const delegatedPolicy =
-      input.delegated === true
-        ? codexDelegatedTurnPolicy(input.runtimePolicy.runtimeMode)
-        : undefined;
+      input.delegatedWritableRoots === undefined
+        ? undefined
+        : codexDelegatedTurnPolicy(input.runtimePolicy.runtimeMode, input.delegatedWritableRoots);
     const approvalPolicy =
       delegatedPolicy !== undefined
         ? delegatedPolicy.approvalPolicy
@@ -1940,6 +1985,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const path = yield* Path.Path;
   const continuationRequests = adapterOptions.continuationRequests;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -4755,7 +4801,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
 
         const asksForDelegatedTask = (context: ActiveCodexTurnContext) =>
-          isDelegatedAppThread(approvalOwnerCodexTurn(context).owner.input.appThread);
+          isUnattendedDelegatedTurn(approvalOwnerCodexTurn(context).owner.input);
 
         // A delegated task has no human to approve: record the request as declined, never pending.
         const declineDelegatedApproval = Effect.fn("CodexAdapterV2.declineDelegatedApproval")(
@@ -6171,7 +6217,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            const delegated = asksForDelegatedTask(context);
+            if (!delegated && context.input.runtimePolicy.runtimeMode === "full-access") {
               return acceptance;
             }
 
@@ -6189,9 +6236,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               appName: described.appName,
               options: described.options,
             } as const;
-            if (asksForDelegatedTask(context)) {
+            if (delegated) {
               yield* declineDelegatedApproval(approval);
-              return toMcpElicitationResponse(payload, "decline");
+              // `decline` would be saved as the user's denial of the site; `cancel` saves nothing.
+              return toMcpElicitationResponse(payload, "cancel");
             }
             const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
@@ -6251,13 +6299,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const nativeRequestId = payload.approvalId ?? payload.callId;
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
               prompt: payload.reason ?? payload.command.join(" "),
-            });
+            } as const;
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return {
+                decision: { denied: { rejection: DELEGATED_APPROVAL_DECLINED_REASON } },
+              } satisfies CodexSchema.ExecCommandApprovalResponse;
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -6319,13 +6374,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.ApplyPatchApprovalResponse;
             }
 
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: payload.callId,
               nativeRequestId: payload.callId,
               requestKind: "file-change",
               prompt: codexFileChangeApprovalPrompt(payload) ?? null,
-            });
+            } as const;
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return {
+                decision: { denied: { rejection: DELEGATED_APPROVAL_DECLINED_REASON } },
+              } satisfies CodexSchema.ApplyPatchApprovalResponse;
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -7636,7 +7698,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
-              delegated: isDelegatedAppThread(turnInput.appThread),
+              ...(isUnattendedDelegatedTurn(turnInput)
+                ? {
+                    delegatedWritableRoots: yield* codexDelegatedWritableRoots(
+                      turnInput.runtimePolicy.cwd,
+                    ).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                    ),
+                  }
+                : {}),
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,

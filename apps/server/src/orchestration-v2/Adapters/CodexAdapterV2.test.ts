@@ -45,6 +45,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -238,7 +239,8 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
 
-      // A delegated task never asks and stays in its checkout, whatever its mode or its parent set.
+      // An unattended delegated turn never asks and stays in its roots, whatever its parent set.
+      const writableRoots = ["/workspace", "/repo/.git"];
       for (const runtimeMode of [
         "approval-required",
         "auto-accept-edits",
@@ -255,16 +257,91 @@ describe("CodexAdapterV2 runtime policy", () => {
             approvalPolicy: "on-request",
             sandboxPolicy: { type: "dangerFullAccess" },
           },
-          delegated: true,
+          delegatedWritableRoots: writableRoots,
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         });
-        assert.equal(delegated.approvalPolicy, "never");
-        assert.deepEqual(delegated.sandboxPolicy, {
-          type: runtimeMode === "approval-required" ? "readOnly" : "workspaceWrite",
-          networkAccess: false,
-        });
+        // Read-only keeps asking, and the adapter declines what it asks.
+        const readOnly = runtimeMode === "approval-required";
+        assert.equal(delegated.approvalPolicy, readOnly ? "untrusted" : "never");
+        assert.deepEqual(
+          delegated.sandboxPolicy,
+          readOnly
+            ? { type: "readOnly" }
+            : { type: "workspaceWrite", networkAccess: true, writableRoots },
+        );
       }
     }),
+  );
+
+  it("applies the delegated policy only to delegated turns no person started", () => {
+    const thread = {
+      lineage: { parentThreadId: null, relationshipToParent: null },
+      delegatedFrom: undefined,
+    };
+    const parentThreadId = ThreadId.make("thread-delegating-parent");
+    const subagent = {
+      ...thread,
+      lineage: { parentThreadId, relationshipToParent: "subagent" },
+    };
+    const remote = {
+      ...thread,
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("environment-delegating-parent"),
+        threadId: parentThreadId,
+        title: "Parent",
+      },
+    };
+    const unattended = (
+      appThread: typeof thread | typeof subagent | typeof remote,
+      createdBy: "user" | "agent",
+      resume?: true,
+    ) =>
+      CodexAdapterV2.isUnattendedDelegatedTurn({
+        appThread: appThread as OrchestrationV2AppThread,
+        message: { createdBy } as ProviderAdapter.ProviderAdapterV2TurnInput["message"],
+        ...(resume === undefined ? {} : { resume }),
+      });
+    assert.deepEqual(
+      [
+        unattended(subagent, "agent"),
+        unattended(remote, "agent"),
+        // The user wrote in the child thread, so they are there to approve.
+        unattended(subagent, "user"),
+        unattended(subagent, "user", true),
+        unattended(thread, "agent"),
+      ],
+      [true, true, false, true, false],
+    );
+  });
+
+  it.effect("lets a delegated task write to its checkout and its repository's git directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const repository = path.join(root, "repository");
+      const worktree = path.join(root, "worktree");
+      const worktreeGitDir = path.join(repository, ".git", "worktrees", "worktree");
+      yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(repository, "packages"), { recursive: true });
+      yield* fileSystem.makeDirectory(worktree, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+      yield* fileSystem.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+      const outside = path.join(root, "outside");
+      yield* fileSystem.makeDirectory(outside);
+
+      const commonDir = path.join(repository, ".git");
+      assert.deepEqual(yield* CodexAdapterV2.codexDelegatedWritableRoots(worktree), [
+        worktree,
+        commonDir,
+      ]);
+      const nested = path.join(repository, "packages");
+      assert.deepEqual(yield* CodexAdapterV2.codexDelegatedWritableRoots(nested), [
+        nested,
+        commonDir,
+      ]);
+      assert.deepEqual(yield* CodexAdapterV2.codexDelegatedWritableRoots(null), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("sends the chosen cyber access program, else the model's default", () =>
@@ -2440,27 +2517,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = `suggest-${delegation}-thread`;
         const prompt = "Continue the task.";
-        // Delegated threads start their turns under the no-approval policy.
-        const turnPolicy =
-          delegation === "toggled-off"
-            ? {}
-            : ({
-                turnPolicy: {
-                  approvalPolicy: "never",
-                  sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
-                },
-              } as const);
         const first = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: `${delegation}-turn-1`,
           prompt,
-          ...turnPolicy,
         });
         const second = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: `${delegation}-turn-2`,
           prompt,
-          ...turnPolicy,
         });
         const completed = (nativeTurnId: string): CodexReplay.CodexAppServerReplayEntry => ({
           type: "emit_inbound",
@@ -3367,120 +3432,176 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("declines a delegated task's approval requests instead of waiting for a human", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "delegated-approval-thread";
-      const nativeTurnId = "delegated-approval-turn";
-      const prompt = "Review the branch.";
-      const approval = (
-        id: number,
-        kind: "commandExecution" | "fileChange",
-        itemId: string,
-      ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
-        {
-          type: "emit_inbound",
-          label: `${itemId} approval`,
-          frame: {
-            id,
-            method: `item/${kind}/requestApproval`,
-            params: {
-              threadId: nativeThreadId,
-              turnId: nativeTurnId,
-              itemId,
-              startedAtMs: 1782622441000,
-              ...(kind === "commandExecution" ? { command: "rm -rf /tmp/review" } : {}),
-            },
-          },
-        },
-        {
-          type: "expect_outbound",
-          label: `${itemId} decision`,
-          frame: { id, result: { decision: "decline" } },
-        },
-      ];
-      const transcript = makeCodexReplayTranscript({
-        scenario: "codex-delegated-approvals",
-        entries: [
-          ...codexReplayPreamble({
-            nativeThreadId,
-            nativeTurnId,
-            prompt,
-            turnPolicy: {
-              approvalPolicy: "never",
-              sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
-            },
-          }),
-          ...approval(100, "commandExecution", "cleanup-command"),
-          ...approval(101, "fileChange", "outside-patch"),
+  it.effect.each(["subagent", "remote"] as const)(
+    "declines a %s delegated task's requests instead of waiting for a human",
+    (delegation) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `delegated-approval-${delegation}-thread`;
+        const nativeTurnId = `delegated-approval-${delegation}-turn`;
+        const prompt = "Review the branch.";
+        const request = (
+          id: number,
+          method: string,
+          params: Record<string, unknown>,
+          result: Record<string, unknown>,
+        ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
           {
             type: "emit_inbound",
-            label: "turn/completed",
+            label: `${method} ${id}`,
             frame: {
-              method: "turn/completed",
-              params: {
-                threadId: nativeThreadId,
-                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-              },
+              id,
+              method,
+              params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params },
             },
           },
-        ],
-      });
-      const harness = yield* makeCodexReplayHarness(transcript);
-      const turnInput = makeCodexTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId: RunAttemptId.make("delegated-approvals"),
-        text: prompt,
-      });
-      yield* harness.runtime.startTurn({
-        ...turnInput,
-        appThread: {
-          ...turnInput.appThread,
-          lineage: {
-            ...turnInput.appThread.lineage,
-            parentThreadId: ThreadId.make("delegating-parent"),
-            relationshipToParent: "subagent",
-          },
-        },
-      });
-      yield* harness.firstTerminal;
+          { type: "expect_outbound", label: `${method} ${id} answer`, frame: { id, result } },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-delegated-approvals-${delegation}`,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt,
+              turnPolicy: {
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "workspaceWrite",
+                  networkAccess: true,
+                  writableRoots: ["/workspace"],
+                },
+              },
+            }),
+            ...request(
+              100,
+              "item/commandExecution/requestApproval",
+              {
+                itemId: "cleanup-command",
+                startedAtMs: 1782622441000,
+                command: "rm -rf /tmp/review",
+              },
+              { decision: "decline" },
+            ),
+            ...request(
+              101,
+              "item/fileChange/requestApproval",
+              { itemId: "outside-patch", startedAtMs: 1782622441000 },
+              { decision: "decline" },
+            ),
+            ...request(
+              102,
+              "item/permissions/requestApproval",
+              {
+                itemId: "outside-write",
+                cwd: "/workspace",
+                startedAtMs: 1782622441000,
+                permissions: {
+                  fileSystem: {
+                    entries: [{ access: "write", path: { type: "path", path: "/etc" } }],
+                  },
+                },
+              },
+              { permissions: {}, scope: "turn" },
+            ),
+            // Full access accepts this for a thread its user drives; a delegated task gets `cancel`.
+            ...request(
+              103,
+              "mcpServer/elicitation/request",
+              {
+                serverName: "browser",
+                mode: "form",
+                message: "Allow ChatGPT to use Google Chrome?",
+                requestedSchema: {
+                  type: "object",
+                  properties: { approval: { type: "string", enum: ["once", "always"] } },
+                  required: ["approval"],
+                },
+              },
+              { action: "cancel" },
+            ),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`delegated-approvals-${delegation}`),
+          text: prompt,
+        });
+        const parentThreadId = ThreadId.make("delegating-parent");
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+          appThread:
+            delegation === "subagent"
+              ? {
+                  ...turnInput.appThread,
+                  lineage: {
+                    ...turnInput.appThread.lineage,
+                    parentThreadId,
+                    relationshipToParent: "subagent",
+                  },
+                }
+              : {
+                  ...turnInput.appThread,
+                  delegatedFrom: {
+                    environmentId: EnvironmentId.make("environment-delegating-parent"),
+                    threadId: parentThreadId,
+                    title: "Parent",
+                  },
+                },
+        });
+        yield* harness.firstTerminal;
 
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "runtime_request.updated"
-            ? [
-                [
-                  event.runtimeRequest.kind,
-                  event.runtimeRequest.status,
-                  event.runtimeRequest.decision,
-                ],
-              ]
-            : [],
-        ),
-        [
-          ["command", "resolved", "decline"],
-          ["file-change", "resolved", "decline"],
-        ],
-      );
-      assert.deepEqual(
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
-            ? [[event.turnItem.status, event.turnItem.prompt, event.turnItem.reason]]
-            : [],
-        )[0],
-        ["cancelled", "rm -rf /tmp/review", DELEGATED_APPROVAL_DECLINED_REASON],
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated"
+              ? [
+                  [
+                    event.runtimeRequest.kind,
+                    event.runtimeRequest.status,
+                    event.runtimeRequest.decision,
+                  ],
+                ]
+              : [],
+          ),
+          [
+            ["command", "resolved", "decline"],
+            ["file-change", "resolved", "decline"],
+            ["file-change", "resolved", "decline"],
+            ["mcp-elicitation", "resolved", "decline"],
+          ],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [[event.turnItem.status, event.turnItem.prompt, event.turnItem.reason]]
+              : [],
+          )[0],
+          ["cancelled", "rm -rf /tmp/review", DELEGATED_APPROVAL_DECLINED_REASON],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
@@ -7125,6 +7246,90 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("still asks the user when a native subagent of their thread needs approval", () =>
+    Effect.gen(function* () {
+      const interruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
+        (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+      );
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-native-subagent-approval",
+          entries: [
+            ...interruptSubagentCommandTranscript.entries.slice(0, interruptIndex),
+            {
+              type: "emit_inbound",
+              label: "child approval",
+              frame: {
+                id: 90,
+                method: "item/commandExecution/requestApproval",
+                params: {
+                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                  itemId: INTERRUPT_CHILD_COMMAND_ITEM,
+                  startedAtMs: 1782622441600,
+                  command: "rm -rf /tmp/review",
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "child approval decision",
+              frame: { id: 90, result: { decision: "accept" } },
+            },
+            ...interruptSubagentCommandTranscript.entries.slice(interruptIndex),
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-native-subagent-approval"),
+          text: INTERRUPT_PROMPT,
+        }),
+      );
+      const requests = () =>
+        harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event] : [],
+        );
+      yield* harness.until(() => requests().length === 1);
+      const pending = requests()[0]!;
+      assert.deepEqual(
+        [pending.threadId, pending.runtimeRequest.kind, pending.runtimeRequest.status],
+        [harness.threadId, "command", "pending"],
+      );
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+
+      const providerTurnId = harness.events.find(
+        (
+          event,
+        ): event is Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { type: "provider_turn.updated" }
+        > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
+      )?.providerTurn.id;
+      assert.isDefined(providerTurnId);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId,
+      });
+      yield* harness.awaitTerminal(1);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
