@@ -23,7 +23,11 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { DEFAULT_FORK_DASHBOARD_LAYOUT, ForkDashboardLayout } from "./forkDashboard.ts";
+import {
+  DEFAULT_FORK_DASHBOARD_LAYOUT,
+  ForkDashboardLayout,
+  ForkDashboardLayoutWrite,
+} from "./forkDashboard.ts";
 import { ForkNodeExporter } from "./forkNodeExporter.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
@@ -1944,7 +1948,7 @@ export const ServerSettingsPatch = Schema.Struct({
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   forkNodeExporters: Schema.optionalKey(Schema.Array(ForkNodeExporter)),
-  forkDashboard: Schema.optionalKey(ForkDashboardLayout),
+  forkDashboard: Schema.optionalKey(ForkDashboardLayoutWrite),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

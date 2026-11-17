@@ -113,6 +113,16 @@ export const ForkDashboardLayout = Schema.Struct({
 });
 export type ForkDashboardLayout = typeof ForkDashboardLayout.Type;
 
+/**
+ * What a save sends. A client from before Activity sends no `activity`; with no default here the
+ * settings merge keeps the saved one, where the stored layout's default would reset it.
+ */
+export const ForkDashboardLayoutWrite = Schema.Struct({
+  ...ForkDashboardLayout.fields,
+  activity: Schema.optionalKey(ForkDashboardActivitySetting),
+});
+export type ForkDashboardLayoutWrite = typeof ForkDashboardLayoutWrite.Type;
+
 export const DEFAULT_FORK_DASHBOARD_LAYOUT: ForkDashboardLayout = {
   revision: 0,
   panels: [],

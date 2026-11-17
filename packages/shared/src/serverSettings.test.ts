@@ -91,6 +91,40 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it("keeps the saved Dashboard activity panel when a client from before it saves", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      forkDashboard: {
+        ...DEFAULT_SERVER_SETTINGS.forkDashboard,
+        revision: 1,
+        activity: { hidden: true, after: "charts" },
+      },
+    });
+    // What a protocol 3 client sends: the whole layout it knows, with no `activity`.
+    const older = decodeServerSettingsPatch({
+      forkDashboard: {
+        revision: 2,
+        panels: [{ id: "threads", hidden: true }],
+        sections: [],
+        machines: [],
+        hiddenProviders: [],
+        charts: { hidden: false, after: null },
+      },
+    });
+    const next = applyServerSettingsPatch(saved, older);
+    expect(next.forkDashboard.activity).toEqual({ hidden: true, after: "charts" });
+    expect(next.forkDashboard.revision).toBe(2);
+    expect(next.forkDashboard.panels).toEqual([{ id: "threads", hidden: true }]);
+    expect(next.forkDashboard.charts).toEqual({ hidden: false, after: null });
+    const current = applyServerSettingsPatch(next, {
+      forkDashboard: {
+        ...next.forkDashboard,
+        revision: 3,
+        activity: { hidden: false, after: null },
+      },
+    });
+    expect(current.forkDashboard.activity).toEqual({ hidden: false, after: null });
+  });
+
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
     expect([off.idleCompaction, off.compactIdleThreads]).toEqual(["off", false]);
