@@ -3519,6 +3519,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
               { action: "cancel" },
             ),
+            // The legacy v1 requests name the thread as `conversationId`.
+            ...request(
+              104,
+              "execCommandApproval",
+              {
+                conversationId: nativeThreadId,
+                callId: "legacy-command",
+                command: ["rm", "-rf", "/tmp/review"],
+                cwd: "/workspace",
+                parsedCmd: [],
+              },
+              { decision: { denied: { rejection: DELEGATED_APPROVAL_DECLINED_REASON } } },
+            ),
+            ...request(
+              105,
+              "applyPatchApproval",
+              {
+                conversationId: nativeThreadId,
+                callId: "legacy-patch",
+                fileChanges: { "/etc/hosts": { type: "add", content: "127.0.0.1 review" } },
+              },
+              { decision: { denied: { rejection: DELEGATED_APPROVAL_DECLINED_REASON } } },
+            ),
             {
               type: "emit_inbound",
               label: "turn/completed",
@@ -3582,6 +3605,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["file-change", "resolved", "decline"],
             ["file-change", "resolved", "decline"],
             ["mcp-elicitation", "resolved", "decline"],
+            ["command", "resolved", "decline"],
+            ["file-change", "resolved", "decline"],
           ],
         );
         assert.deepEqual(
