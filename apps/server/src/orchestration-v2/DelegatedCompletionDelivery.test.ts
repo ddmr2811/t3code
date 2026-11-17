@@ -3,6 +3,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { DELEGATED_APPROVAL_DECLINED_REASON } from "@t3tools/provider-core/server/subagentProjection";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
@@ -5035,6 +5036,35 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             },
           },
           {
+            id: EventId.make("event:failed-hold-child:declined-approval"),
+            type: "turn-item.updated",
+            threadId: child.childThreadId,
+            runId: activeRun.runId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:failed-hold-child:declined-approval"),
+              type: "approval_request",
+              threadId: child.childThreadId,
+              runId: activeRun.runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "cancelled",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              requestId: RuntimeRequestId.make("request:failed-hold-child:declined-approval"),
+              requestKind: "command",
+              prompt: "rm -rf /tmp/review",
+              reason: DELEGATED_APPROVAL_DECLINED_REASON,
+            },
+          },
+          {
             ...activeRun,
             id: EventId.make("event:failed-hold-child:failed"),
             payload: { ...activeRun.payload, status: "failed", completedAt: now },
@@ -5054,7 +5084,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         );
       assert.isTrue(settled._tag === "Some");
       const recovered = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(recovered.subagents.find((row) => row.id === child.taskId)?.status, "failed");
+      const settledTask = recovered.subagents.find((row) => row.id === child.taskId);
+      assert.equal(settledTask?.status, "failed");
+      // The parent's result names the approval the child asked for and was refused.
+      assert.equal(
+        settledTask?.result,
+        "Provider failed.\n\nThis task asked for approval once and was declined. Delegated Codex tasks can't get approvals; give it what it needs in the brief, or delegate with another provider.\n- command: rm -rf /tmp/review",
+      );
       const childProjection = yield* orchestrator.getThreadProjection(child.childThreadId);
       assert.deepEqual(
         childProjection.runs.map((run) => [run.status, run.queueHeld ?? false]),

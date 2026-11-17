@@ -189,9 +189,19 @@ export function withExecutedModelNote(
     : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }
 
-/** Marks the approval a delegated task asked for and was refused, on its `approval_request` item. */
+/**
+ * Marks the approval a delegated task asked for and was refused, on its `approval_request` item.
+ * Do not change: older records are recognized by this text.
+ */
 export const DELEGATED_APPROVAL_DECLINED_REASON =
   "Delegated tasks have no human approval, so this request was declined.";
+
+/** The turn items `subagentResultForRun` reads; load a child's result with exactly these. */
+export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
+  "assistant_message",
+  "error",
+  "approval_request",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
 
 const DECLINED_APPROVALS_LISTED = 5;
 
@@ -215,7 +225,7 @@ function withDeclinedApprovalsNote(
     return `- ${item.requestKind}${prompt === undefined ? "" : `: ${prompt.slice(0, 200)}`}`;
   });
   const more = declined.length - listed.length;
-  return `${result}\n\nThis task asked for approval ${declined.length === 1 ? "once" : `${declined.length} times`} and was declined: delegated tasks have no human approval. If the task needs it, grant it in the brief or launch it with other settings.\n${listed.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
+  return `${result}\n\nThis task asked for approval ${declined.length === 1 ? "once" : `${declined.length} times`} and was declined. Delegated Codex tasks can't get approvals; give it what it needs in the brief, or delegate with another provider.\n${listed.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
 }
 
 export function subagentResultForRun(

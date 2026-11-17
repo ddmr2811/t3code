@@ -92,6 +92,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  SUBAGENT_RESULT_TURN_ITEM_TYPES,
   delegatedTaskProgress,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -1746,7 +1747,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error"],
+        turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -3371,7 +3372,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: ["assistant_message", "error"],
+              turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (

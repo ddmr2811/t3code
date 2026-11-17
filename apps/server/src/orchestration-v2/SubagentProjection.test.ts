@@ -465,7 +465,7 @@ it("tells the parent which approvals a delegated task asked for and was refused"
   );
   assert.equal(
     result.text,
-    "Review complete.\n\nThis task asked for approval once and was declined: delegated tasks have no human approval. If the task needs it, grant it in the brief or launch it with other settings.\n- command: rm -rf /tmp/review",
+    "Review complete.\n\nThis task asked for approval once and was declined. Delegated Codex tasks can't get approvals; give it what it needs in the brief, or delegate with another provider.\n- command: rm -rf /tmp/review",
   );
 });
 
