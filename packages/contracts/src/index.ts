@@ -57,6 +57,7 @@ export * from "./agentSessions.ts";
 export * from "./forkExtensions.ts";
 export * from "./forkTailnet.ts";
 export * from "./forkInsights.ts";
+export * from "./forkActivity.ts";
 export * from "./forkMachines.ts";
 export * from "./forkNodeExporter.ts";
 export * from "./forkDashboard.ts";

@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  FORK_ACTIVITY_PROTOCOL_VERSION,
   FORK_DASHBOARD_PROTOCOL_VERSION,
   FORK_EXTENSIONS_PROTOCOL_VERSION,
   FORK_INSIGHTS_PROTOCOL_VERSION,
@@ -312,6 +313,8 @@ export const make = Effect.gen(function* () {
       forkDashboard: FORK_DASHBOARD_PROTOCOL_VERSION,
       // Fork: limit history and daily activity for the charts.
       forkInsights: FORK_INSIGHTS_PROTOCOL_VERSION,
+      // Fork: the Dashboard's feed of what the agents did.
+      forkActivity: FORK_ACTIVITY_PROTOCOL_VERSION,
       shellThreadFamilies: true,
       shellOlderSettled: true,
     },

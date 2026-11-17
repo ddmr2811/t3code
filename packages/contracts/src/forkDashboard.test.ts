@@ -74,13 +74,16 @@ describe("ForkDashboardLayout", () => {
         { id: "subscriptions", hidden: false },
       ],
       charts: { hidden: true, after: null },
+      activity: { hidden: true, after: "charts" },
     });
     const released = decodeLayout(JSON.parse(JSON.stringify(saved)));
     expect(released.charts).toEqual({ hidden: true, after: null });
+    expect(released.activity).toEqual({ hidden: true, after: "charts" });
     const older = decodeReleasedLayout(JSON.parse(JSON.stringify(saved)));
     expect(older.revision).toBe(4);
     expect(older.panels.map((panel) => panel.id)).toEqual(["threads", "machines", "subscriptions"]);
     expect(Object.keys(older)).not.toContain("charts");
+    expect(Object.keys(older)).not.toContain("activity");
   });
 
   it("reads a layout saved before Charts with Charts after Subscriptions", () => {
@@ -88,5 +91,6 @@ describe("ForkDashboardLayout", () => {
       hidden: false,
       after: "subscriptions",
     });
+    expect(decodeLayout({ revision: 1 }).activity).toEqual({ hidden: false, after: "threads" });
   });
 });

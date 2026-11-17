@@ -434,6 +434,7 @@ import {
   ForkLimitHistory,
   ForkLimitHistoryInput,
 } from "./forkInsights.ts";
+import { ForkActivityFeed, ForkActivityFeedInput } from "./forkActivity.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -469,6 +470,8 @@ export const WS_METHODS = {
   // Fork: charts under a new thread and on the Dashboard.
   forkInsightsLimitHistory: "forkInsights.limitHistory",
   forkInsightsActivity: "forkInsights.activity",
+  // Fork: the Dashboard's "What the AI did".
+  forkActivityFeed: "forkActivity.feed",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1589,6 +1592,12 @@ const WsForkInsightsActivityRpc = Rpc.make(WS_METHODS.forkInsightsActivity, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsForkActivityFeedRpc = Rpc.make(WS_METHODS.forkActivityFeed, {
+  payload: ForkActivityFeedInput,
+  success: ForkActivityFeed,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2383,6 +2392,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsForkMachinesNodeExportersRpc,
   WsForkInsightsLimitHistoryRpc,
   WsForkInsightsActivityRpc,
+  WsForkActivityFeedRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

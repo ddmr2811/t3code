@@ -50,6 +50,7 @@ import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
 import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
 import * as ForkMachines from "./fork/machines/ForkMachines.ts";
 import * as ForkInsights from "./fork/insights/ForkInsights.ts";
+import * as ForkActivity from "./fork/activity/ForkActivity.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
@@ -729,6 +730,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ForkMachines.layer,
   // Fork: one per server, so the limit history has one sampler and one file.
   ForkInsights.layer,
+  // Fork: one per server, so every open activity card shares one cached read.
+  ForkActivity.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),

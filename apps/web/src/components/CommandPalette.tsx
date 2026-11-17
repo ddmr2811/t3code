@@ -62,6 +62,7 @@ import {
   BugIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
+  HistoryIcon,
   LayoutDashboardIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -1760,6 +1761,18 @@ function OpenCommandPaletteDialog(props: {
     icon: <LayoutDashboardIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/dashboard" });
+    },
+  });
+
+  // Fork: the Dashboard's "What the AI did", in full.
+  actionItems.push({
+    kind: "action",
+    value: "action:fork-activity",
+    searchTerms: ["activity", "ai", "agents", "log", "history", "errors", "what the ai did"],
+    title: "Open AI activity",
+    icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/activity" });
     },
   });
 

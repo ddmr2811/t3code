@@ -9,9 +9,9 @@ import { NonNegativeInt } from "./baseSchemas.ts";
 
 /**
  * Fork: the server keeps `forkDashboard` in its settings and refuses a save made from an older
- * revision (2), and keeps `charts` (3); older servers drop it or overwrite blindly.
+ * revision (2), keeps `charts` (3) and `activity` (4); older servers drop them or overwrite blindly.
  */
-export const FORK_DASHBOARD_PROTOCOL_VERSION = 3;
+export const FORK_DASHBOARD_PROTOCOL_VERSION = 4;
 
 /** Bounds that keep a bad client from bloating every client's settings. */
 const FORK_DASHBOARD_LIMITS = {
@@ -67,6 +67,24 @@ export const DEFAULT_FORK_DASHBOARD_CHARTS: ForkDashboardChartsSetting = {
   after: "subscriptions",
 };
 
+/**
+ * The "What the AI did" panel, kept apart like Charts. It may follow Charts; Charts never follows
+ * it, since clients from before it decode `charts.after` as a closed set.
+ */
+export const ForkDashboardActivitySetting = Schema.Struct({
+  hidden: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The panel it follows; null puts it first. */
+  after: Schema.NullOr(Schema.Union([ForkDashboardPanelId, Schema.Literal("charts")])).pipe(
+    Schema.withDecodingDefault(Effect.succeed("threads" as const)),
+  ),
+});
+export type ForkDashboardActivitySetting = typeof ForkDashboardActivitySetting.Type;
+
+export const DEFAULT_FORK_DASHBOARD_ACTIVITY: ForkDashboardActivitySetting = {
+  hidden: false,
+  after: "threads",
+};
+
 /** Arrays only, so a settings patch replaces each one whole; their order is the Dashboard's. */
 export const ForkDashboardLayout = Schema.Struct({
   /**
@@ -89,6 +107,9 @@ export const ForkDashboardLayout = Schema.Struct({
   charts: ForkDashboardChartsSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_FORK_DASHBOARD_CHARTS)),
   ),
+  activity: ForkDashboardActivitySetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FORK_DASHBOARD_ACTIVITY)),
+  ),
 });
 export type ForkDashboardLayout = typeof ForkDashboardLayout.Type;
 
@@ -99,4 +120,5 @@ export const DEFAULT_FORK_DASHBOARD_LAYOUT: ForkDashboardLayout = {
   machines: [],
   hiddenProviders: [],
   charts: DEFAULT_FORK_DASHBOARD_CHARTS,
+  activity: DEFAULT_FORK_DASHBOARD_ACTIVITY,
 };

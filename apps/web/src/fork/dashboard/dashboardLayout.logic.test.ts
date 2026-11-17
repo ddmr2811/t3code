@@ -313,14 +313,16 @@ describe("panels", () => {
     };
     expect(resolvePanels(layout).map((panel) => [panel.id, panel.hidden])).toEqual([
       ["threads", true],
+      ["activity", false],
       ["machines", false],
       ["subscriptions", false],
       ["charts", false],
     ]);
-    const moved = movePanel(layout, "subscriptions", -2);
+    const moved = movePanel(layout, "subscriptions", -3);
     expect(resolvePanels(moved).map((panel) => panel.id)).toEqual([
       "subscriptions",
       "threads",
+      "activity",
       "machines",
       "charts",
     ]);
@@ -341,6 +343,41 @@ describe("charts panel", () => {
     const hidden = setPanelHidden(movePanel(empty, "charts", 1), "charts", true);
     expect(hidden.charts).toEqual({ hidden: true, after: "threads" });
     expect(hidden.panels.some((panel) => panel.hidden)).toBe(false);
+    expect(isDefaultLayout(hidden)).toBe(false);
+  });
+});
+
+describe("activity panel", () => {
+  const order = (layout: typeof empty) => resolvePanels(layout).map((panel) => panel.id);
+
+  it("comes last by default and keeps its place through every move", () => {
+    expect(order(empty)).toEqual(["machines", "subscriptions", "charts", "threads", "activity"]);
+    let layout = empty;
+    const seen: Array<ReadonlyArray<string>> = [];
+    for (let step = 0; step < 4; step += 1) {
+      layout = movePanel(layout, "activity", -1);
+      seen.push(order(layout));
+      // Charts never follows Activity, so clients from before it still read the layout.
+      expect(layout.charts.after).not.toBe("activity");
+      expect(layout.panels.some((panel) => (panel.id as string) === "activity")).toBe(false);
+    }
+    expect(seen).toEqual([
+      ["machines", "subscriptions", "charts", "activity", "threads"],
+      ["machines", "subscriptions", "activity", "charts", "threads"],
+      ["machines", "activity", "subscriptions", "charts", "threads"],
+      ["activity", "machines", "subscriptions", "charts", "threads"],
+    ]);
+    expect(layout.activity).toEqual({ hidden: false, after: null });
+  });
+
+  it("moves Charts past it and hides it on its own", () => {
+    const afterCharts = movePanel(empty, "activity", -1);
+    const swapped = movePanel(afterCharts, "charts", 1);
+    expect(order(swapped)).toEqual(["machines", "subscriptions", "activity", "charts", "threads"]);
+    expect(swapped.charts.after).toBe("subscriptions");
+    const hidden = setPanelHidden(empty, "activity", true);
+    expect(hidden.activity).toEqual({ hidden: true, after: "threads" });
+    expect(resolvePanels(hidden).at(-1)).toMatchObject({ id: "activity", hidden: true });
     expect(isDefaultLayout(hidden)).toBe(false);
   });
 });

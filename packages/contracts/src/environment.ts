@@ -208,6 +208,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   forkDashboard: Schema.optionalKey(Schema.Int),
   /** Fork: limit history and daily activity for the charts; absent on older servers. */
   forkInsights: Schema.optionalKey(Schema.Int),
+  /** Fork: the Dashboard's feed of what the agents did; absent on older servers. */
+  forkActivity: Schema.optionalKey(Schema.Int),
   /** Fork: target branch setting; absent on upstream servers. */
   forkTargetBranch: Schema.optionalKey(Schema.Int),
   /**

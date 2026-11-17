@@ -180,6 +180,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Limits and activity across the machine, as the usage summary reads them.
   [WS_METHODS.forkInsightsLimitHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.forkInsightsActivity]: AuthDiagnosticsReadScope,
+  [WS_METHODS.forkActivityFeed]: AuthDiagnosticsReadScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,

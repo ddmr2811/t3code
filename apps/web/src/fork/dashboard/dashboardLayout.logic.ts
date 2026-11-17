@@ -2,6 +2,7 @@
 // entries are found by any identity they share with a live machine, never by order or label, so
 // a tailnet peer that becomes a T3 environment keeps its alias, icon, colour and section.
 import {
+  DEFAULT_FORK_DASHBOARD_ACTIVITY,
   DEFAULT_FORK_DASHBOARD_CHARTS,
   DEFAULT_FORK_DASHBOARD_LAYOUT,
   type ForkDashboardLayout,
@@ -9,7 +10,7 @@ import {
   type ForkDashboardPanelId,
 } from "@t3tools/contracts";
 
-export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads";
+export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads" | "activity";
 
 const DASHBOARD_PANELS: ReadonlyArray<{
   readonly id: DashboardPanelId;
@@ -19,6 +20,7 @@ const DASHBOARD_PANELS: ReadonlyArray<{
   { id: "subscriptions", title: "Subscriptions" },
   { id: "charts", title: "Charts" },
   { id: "threads", title: "Active threads" },
+  { id: "activity", title: "What the AI did" },
 ];
 
 export interface ResolvedPanel {
@@ -28,14 +30,25 @@ export interface ResolvedPanel {
 }
 
 const CHARTS = DASHBOARD_PANELS.find((panel) => panel.id === "charts")!;
+const ACTIVITY = DASHBOARD_PANELS.find((panel) => panel.id === "activity")!;
 const SAVED_PANELS = DASHBOARD_PANELS.filter(
   (panel): panel is { readonly id: ForkDashboardPanelId; readonly title: string } =>
-    panel.id !== "charts",
+    panel.id !== "charts" && panel.id !== "activity",
 );
+
+const insertAfter = (
+  panels: ResolvedPanel[],
+  after: DashboardPanelId | null,
+  panel: ResolvedPanel,
+) => {
+  const found = after === null ? -1 : panels.findIndex((entry) => entry.id === after);
+  panels.splice(after === null ? 0 : found === -1 ? panels.length : found + 1, 0, panel);
+};
 
 /**
  * Saved panels in their order, unknown ones dropped and missing ones after them as defaults, with
- * Charts after the panel it is saved to follow (it lives apart from `panels`; see contracts).
+ * Charts and then Activity after the panel each is saved to follow (both live apart from
+ * `panels`; see contracts). Activity goes in last, so sharing Charts' anchor puts it first.
  */
 export function resolvePanels(layout: ForkDashboardLayout): ReadonlyArray<ResolvedPanel> {
   const seen = new Set<string>();
@@ -52,12 +65,8 @@ export function resolvePanels(layout: ForkDashboardLayout): ReadonlyArray<Resolv
       hidden: false,
     })),
   ];
-  const after = layout.charts.after;
-  const found = after === null ? -1 : panels.findIndex((panel) => panel.id === after);
-  panels.splice(after === null ? 0 : found === -1 ? panels.length : found + 1, 0, {
-    ...CHARTS,
-    hidden: layout.charts.hidden,
-  });
+  insertAfter(panels, layout.charts.after, { ...CHARTS, hidden: layout.charts.hidden });
+  insertAfter(panels, layout.activity.after, { ...ACTIVITY, hidden: layout.activity.hidden });
   return panels;
 }
 
@@ -65,16 +74,26 @@ const writePanels = (
   layout: ForkDashboardLayout,
   panels: ReadonlyArray<ResolvedPanel>,
 ): ForkDashboardLayout => {
-  const chartsAt = panels.findIndex((panel) => panel.id === "charts");
-  const before = chartsAt > 0 ? panels[chartsAt - 1]!.id : null;
+  const withoutActivity = panels.filter((panel) => panel.id !== "activity");
+  const chartsAt = withoutActivity.findIndex((panel) => panel.id === "charts");
+  const chartsAfter = chartsAt > 0 ? withoutActivity[chartsAt - 1]!.id : null;
+  const activityAt = panels.findIndex((panel) => panel.id === "activity");
+  const activityAfter = activityAt > 0 ? panels[activityAt - 1]!.id : null;
   return {
     ...layout,
-    panels: panels.flatMap((panel) =>
-      panel.id === "charts" ? [] : [{ id: panel.id, hidden: panel.hidden }],
+    panels: panels.flatMap((panel): ForkDashboardLayout["panels"] =>
+      panel.id === "charts" || panel.id === "activity"
+        ? []
+        : [{ id: panel.id, hidden: panel.hidden }],
     ),
     charts: {
-      hidden: panels[chartsAt]?.hidden ?? false,
-      after: before === "charts" ? null : before,
+      hidden: panels.find((panel) => panel.id === "charts")?.hidden ?? false,
+      // Skipping Activity keeps Charts' anchor one that clients from before Activity can read.
+      after: chartsAfter === "charts" || chartsAfter === "activity" ? null : chartsAfter,
+    },
+    activity: {
+      hidden: panels[activityAt]?.hidden ?? false,
+      after: activityAfter === "activity" ? null : activityAfter,
     },
   };
 };
@@ -131,6 +150,8 @@ export const isDefaultLayout = (layout: ForkDashboardLayout) =>
   layout.panels.every((panel, index) => panel.id === SAVED_PANELS[index]?.id && !panel.hidden) &&
   layout.charts.hidden === DEFAULT_FORK_DASHBOARD_CHARTS.hidden &&
   layout.charts.after === DEFAULT_FORK_DASHBOARD_CHARTS.after &&
+  layout.activity.hidden === DEFAULT_FORK_DASHBOARD_ACTIVITY.hidden &&
+  layout.activity.after === DEFAULT_FORK_DASHBOARD_ACTIVITY.after &&
   layout.sections.length === 0 &&
   layout.machines.length === 0 &&
   layout.hiddenProviders.length === 0;

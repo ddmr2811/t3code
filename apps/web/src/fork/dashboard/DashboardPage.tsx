@@ -18,6 +18,7 @@ import { DashboardMachines, useDashboardMachineData } from "./DashboardMachines"
 import { DashboardSubscriptions } from "./DashboardSubscriptions";
 import { DashboardThreads } from "./DashboardThreads";
 import { ForkWidgetGrid } from "../widgets/ForkWidgets";
+import { ActivityCard } from "../activity/ActivityCard";
 import {
   consolidateLayout,
   type DashboardPanelId,
@@ -218,6 +219,8 @@ export function DashboardPage() {
         return <ForkWidgetGrid variant="panel" />;
       case "threads":
         return <DashboardThreads nowMs={nowMs} />;
+      case "activity":
+        return <ActivityCard nowMs={nowMs} />;
     }
   };
   const visiblePanels = editing ? panels : panels.filter((panel) => !panel.hidden);
@@ -347,7 +350,13 @@ export function DashboardPage() {
                       count={visiblePanels.length}
                       onHidden={(hidden) => change(setPanelHidden(layout, panel.id, hidden))}
                       onMove={(steps) => change(movePanel(layout, panel.id, steps))}
-                      locked={panel.id === "charts" ? writer.chartsBlocked : null}
+                      locked={
+                        panel.id === "charts"
+                          ? writer.chartsBlocked
+                          : panel.id === "activity"
+                            ? writer.activityBlocked
+                            : null
+                      }
                     />
                   ) : index === 0 ? (
                     <EditButton blocked={writer.blocked} onEdit={() => edit(shown)} />

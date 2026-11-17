@@ -133,6 +133,8 @@ export interface DashboardLayoutWriter {
   readonly blocked: string | null;
   /** Why the Charts panel cannot be moved or hidden: a server that drops its setting. */
   readonly chartsBlocked: string | null;
+  /** Why "What the AI did" cannot be moved or hidden, for the same reason. */
+  readonly activityBlocked: string | null;
   /** Saves `layout` as the revision after `base`; "stale" when another device saved since. */
   readonly save: (
     layout: ForkDashboardLayout,
@@ -174,6 +176,10 @@ export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardL
       protocol >= 3 || source.kind === "unavailable"
         ? null
         : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide Charts.`,
+    activityBlocked:
+      protocol >= 4 || source.kind === "unavailable"
+        ? null
+        : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide this panel.`,
     save: async (layout, base) => {
       if (environmentId === null || blocked !== null) return "failed";
       return write(environmentId, layout, base);
