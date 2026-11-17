@@ -14,11 +14,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as SqlClient from "effect/sql/SqlClient";
 
-import { ACTIVITY_LOG_PATTERN, ACTIVITY_LOG_TAIL_BYTES, parseActivityLog } from "./activityLog.ts";
+import { readActivityLogs } from "./activityLog.ts";
 import type * as ProcessRunner from "../../processRunner.ts";
 import { aonEntry, readAonEvents } from "./aonActivity.ts";
 import { commitEntry, readDevCommits } from "./gitActivity.ts";
@@ -39,7 +38,6 @@ const DEFAULT_LIMIT = 200;
 const CACHE_TTL = Duration.seconds(30);
 /** A handful of inputs are asked in practice; more than this starts the cache afresh. */
 const CACHE_KEYS = 16;
-const MAX_LOG_FILES = 20;
 const MAX_GIT_PROJECTS = 30;
 const GIT_CONCURRENCY = 4;
 
@@ -60,35 +58,6 @@ const activityPaths = Effect.gen(function* () {
     agentsDir: expand(env.AON_HOME?.trim() || path.join(home, "agentes")),
     pesadoDir: env.PESADO_DIR?.trim() || "/tmp/pesado",
   } satisfies ActivityPaths;
-});
-
-/** Each matching log's tail, newest file name last; files are never read whole. */
-const readActivityLogs = Effect.fn("ForkActivity.readActivityLogs")(function* (
-  dir: string,
-  sinceMs: number,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
-  const logs = names
-    .filter((name) => ACTIVITY_LOG_PATTERN.test(name))
-    .toSorted()
-    .slice(-MAX_LOG_FILES);
-  const entries: ForkActivityEntry[] = [];
-  for (const name of logs) {
-    const tail = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fs.open(path.join(dir, name), { flag: "r" });
-        const size = Number((yield* file.stat).size);
-        const offset = Math.max(0, size - ACTIVITY_LOG_TAIL_BYTES);
-        const bytes = yield* file.readAlloc(size - offset, { position: BigInt(offset) });
-        return { offset, bytes: Option.getOrElse(bytes, () => new Uint8Array()) };
-      }),
-    ).pipe(Effect.option);
-    if (tail._tag === "None") continue;
-    entries.push(...parseActivityLog(name, tail.value.bytes, tail.value.offset, sinceMs));
-  }
-  return entries;
 });
 
 /**

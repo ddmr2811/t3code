@@ -1,13 +1,22 @@
 // Fork-only: the plain activity log Dani and the orchestrators append to, one JSON object per
 // line: `{ts, proyecto, quien, que, estado}`. Only each file's tail is read.
 import type { ForkActivityEntry } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 import { isoAt, wordActor, wordStatus } from "./classify.ts";
 import { summaryLine } from "./redact.ts";
+import { readRegularFile } from "./safeRead.ts";
 
 /** Each file is read from this far before its end at most. */
-export const ACTIVITY_LOG_TAIL_BYTES = 2 * 1024 * 1024;
-export const ACTIVITY_LOG_PATTERN = /^actividad-[A-Za-z0-9._-]+\.jsonl$/;
+const ACTIVITY_LOG_TAIL_BYTES = 2 * 1024 * 1024;
+const ACTIVITY_LOG_PATTERN = /^actividad-[A-Za-z0-9._-]+\.jsonl$/;
+const MAX_LOG_FILES = 20;
+const FILE_TIMEOUT = Duration.seconds(1);
+const SOURCE_TIMEOUT = Duration.seconds(3);
 
 const NEWLINE = 0x0a;
 
@@ -71,3 +80,37 @@ function parseLine(line: string, sinceMs: number): ParsedLine | null {
     status,
   };
 }
+
+/**
+ * The tails of at most 20 logs, the last names in order. Each is a regular file opened through no
+ * symlink (a FIFO or device is skipped, never waited on), with a time limit per file and overall.
+ */
+export const readActivityLogs = Effect.fn("ForkActivity.readActivityLogs")(function* (
+  dir: string,
+  sinceMs: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const read = Effect.gen(function* () {
+    const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
+    const logs = names
+      .filter((name) => ACTIVITY_LOG_PATTERN.test(name))
+      .toSorted()
+      .slice(-MAX_LOG_FILES);
+    const entries: ForkActivityEntry[] = [];
+    for (const name of logs) {
+      const tail = yield* readRegularFile(path.join(dir, name), {
+        maxBytes: ACTIVITY_LOG_TAIL_BYTES,
+        from: "end",
+        timeout: FILE_TIMEOUT,
+      });
+      if (tail === null) continue;
+      entries.push(...parseActivityLog(name, tail.bytes, tail.offset, sinceMs));
+    }
+    return entries;
+  });
+  return yield* read.pipe(
+    Effect.timeoutOption(SOURCE_TIMEOUT),
+    Effect.map(Option.getOrElse((): ReadonlyArray<ForkActivityEntry> => [])),
+  );
+});

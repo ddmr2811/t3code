@@ -44,12 +44,13 @@ export function parseGitLog(stdout: string): ReadonlyArray<DevCommit> {
   });
 }
 
-export function commitEntry(project: string, commit: DevCommit): ForkActivityEntry {
+export function commitEntry(projectTitle: string, commit: DevCommit): ForkActivityEntry {
+  const project = summaryLine(projectTitle, 80);
   return {
     id: `git:${commit.hash}`,
     at: commit.at,
     source: "git",
-    project,
+    ...(project.length > 0 ? { project } : {}),
     actor: "worker",
     summary: summaryLine(`Pushed to dev: ${commit.subject}`),
     status: "ok",

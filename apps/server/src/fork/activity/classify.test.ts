@@ -2,8 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { aonEntry, type AonEventRow } from "./aonActivity.ts";
 import { runStatus, threadActor, wordActor, wordStatus } from "./classify.ts";
-import { parseGitLog, pickDevRef } from "./gitActivity.ts";
-import { commandMatches, parsePesadoWho } from "./pesadoActivity.ts";
+import { commitEntry, parseGitLog, pickDevRef } from "./gitActivity.ts";
+import { commandMatches, commandSummary, parsePesadoWho, pesadoEntry } from "./pesadoActivity.ts";
 
 const origin = {
   createdBy: "agent",
@@ -64,18 +64,18 @@ describe("aonEntry", () => {
     estado: "hecho",
     creado: "2026-11-17T04:18:30+00:00",
     terminado: "2026-11-17T04:18:37+00:00",
-    payload: "PR #12 merged\nfull body with sk-livesecret123456",
+    decision: 0,
   };
   const since = Date.parse("2026-11-16T00:00:00Z");
 
-  it("keeps the payload's first line and when the event ended", () => {
+  it("names the source and type and keeps when the event ended", () => {
     expect(aonEntry(row, since)).toEqual({
       id: "aon:7",
       at: "2026-11-17T04:18:37.000Z",
       source: "aon",
       project: "nexo",
       actor: "orchestrator",
-      summary: "github: PR #12 merged",
+      summary: "github · github",
       status: "ok",
     });
   });
@@ -85,12 +85,14 @@ describe("aonEntry", () => {
     expect(aonEntry({ ...row, estado: "pendiente", terminado: null }, since)?.status).toBe(
       "running",
     );
-    expect(aonEntry({ ...row, payload: "DECISIÓN: ¿merge a main?" }, since)?.status).toBe(
-      "waiting",
-    );
-    expect(aonEntry({ ...row, fuente: "timer", tipo: "tests", payload: "" }, since)).toMatchObject({
+    expect(aonEntry({ ...row, fuente: "dev-box", tipo: "eco", decision: 1 }, since)).toMatchObject({
+      status: "waiting",
+      summary: "dev-box · eco · decisión pendiente",
+    });
+    expect(aonEntry({ ...row, tipo: "decisión" }, since)?.status).toBe("waiting");
+    expect(aonEntry({ ...row, fuente: "timer", tipo: "tests" }, since)).toMatchObject({
       actor: "timer",
-      summary: "tests (timer)",
+      summary: "timer · tests",
     });
     expect(aonEntry({ ...row, fuente: "dev-cx53", tipo: "eco" }, since)?.actor).toBe("unknown");
     expect(aonEntry({ ...row, creado: "2026-11-10T00:00:00Z", terminado: null }, since)).toBe(null);
@@ -107,7 +109,37 @@ describe("pesado turns", () => {
     expect(parsePesadoWho("garbage")).toBe(null);
     expect(parsePesadoWho("2026-11-17T05:15:43+00:00 pid 1 init")).toBe(null);
     expect(commandMatches("node\0/usr/bin/npx\0vitest\0run", "npx vitest run")).toBe(true);
+    expect(commandMatches("node\0/usr/bin/npx\0vitest", "env CI=1 /usr/bin/npx vitest")).toBe(true);
     expect(commandMatches("bash\0-l", "npx vitest run")).toBe(false);
+  });
+
+  it.each([
+    ["vp run check:changed", "vp run"],
+    ["npx vitest run --maxWorkers=2 apps/x", "npx vitest run"],
+    ["curl -u usuario:clave https://example.com", "curl"],
+    ["deploy --password hunter2", "deploy"],
+    ["env CI=1 TOKEN=abc /usr/local/bin/cargo test -p core", "cargo test"],
+    ["git push origin dev feature extra", "git push origin dev"],
+    ["sh .githooks/integrate-dev.sh", "sh"],
+    ["tool user@example.com", "tool"],
+    [`tool ${"a".repeat(33)}`, "tool"],
+    ["-x", null],
+    ["./9run go", null],
+  ])("shows only the program and its subcommands of %s", (command, summary) => {
+    expect(commandSummary(command)).toBe(summary);
+  });
+
+  it("never puts a turn's free arguments in its entry", () => {
+    for (const command of [
+      "deploy --password hunter2",
+      "curl -u usuario:clave https://x.example",
+    ]) {
+      const entry = pesadoEntry("slot1", { at: "2026-11-17T05:00:00.000Z", pid: 42, command });
+      expect(entry.summary).toBe(`Heavy job: ${command.split(" ")[0]}`);
+      for (const secret of ["hunter2", "password", "usuario", "clave", "x.example"]) {
+        expect(JSON.stringify(entry)).not.toContain(secret);
+      }
+    }
   });
 });
 
@@ -124,6 +156,15 @@ describe("dev commits", () => {
       "refs/remotes/gh/dev",
     );
     expect(pickDevRef(["refs/remotes/forge/main"], urls)).toBe(null);
+  });
+
+  it("cleans the project title like every other source", () => {
+    const commit = { hash: "8de89f7731", at: "2026-11-17T04:00:00.000Z", subject: "Fork: a" };
+    const entry = commitEntry("Orbita TOKEN=ghp_abcdefghijklmnop\nsecond line", commit);
+    expect(entry.project).toBe("Orbita TOKEN=•••");
+    expect(JSON.stringify(entry)).not.toContain("ghp_");
+    expect(JSON.stringify(entry)).not.toContain("second line");
+    expect("project" in commitEntry(" \n ", commit)).toBe(false);
   });
 
   it("parses the log lines it asked for", () => {

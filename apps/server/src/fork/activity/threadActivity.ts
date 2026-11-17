@@ -42,16 +42,31 @@ function threadEntry(row: ThreadActivityRow): ForkActivityEntry | null {
   };
 }
 
+/** Threads looked at per read; each holds every run and request the feed shows for it. */
+const RECENT_THREADS = 500;
+
 /**
- * Runs that ended or wait since `sinceIso`, and requests still waiting on an answer. Threads are
- * found through their project and update time, both indexed; a thread's update time moves with
- * every run, so no run outside it is missed.
+ * Runs that ended or wait since `sinceIso`, and requests still waiting on an answer. Both start
+ * from the threads updated in the window, found by project and update time (indexed, limited),
+ * then reach runs and requests by thread and status (indexed). A thread's update time moves with
+ * every run and request, so none in the window is missed. No index is added: upstream owns them.
  */
 export const readThreadActivity = Effect.fn("ForkActivity.readThreadActivity")(function* (
   sinceIso: string,
   limit: number,
 ) {
   const sql = yield* SqlClient.SqlClient;
+  const recent = sql`
+    WITH recent AS (
+      SELECT thread_id, project_id, title, payload_json
+      FROM orchestration_v2_projection_threads
+      WHERE project_id IN (SELECT project_id FROM projection_projects WHERE deleted_at IS NULL)
+        AND updated_at >= ${sinceIso}
+        AND deleted_at IS NULL
+      ORDER BY updated_at DESC
+      LIMIT ${RECENT_THREADS}
+    )
+  `;
   const origin = sql`
     t.title AS title,
     p.title AS "projectTitle",
@@ -60,6 +75,7 @@ export const readThreadActivity = Effect.fn("ForkActivity.readThreadActivity")(f
     json_extract(t.payload_json, '$.delegatedFrom') IS NOT NULL AS delegated
   `;
   const runs = sql<ThreadActivityRow>`
+    ${recent}
     SELECT
       r.run_id AS id,
       coalesce(r.completed_at, json_extract(r.payload_json, '$.startedAt'), r.requested_at) AS at,
@@ -70,28 +86,27 @@ export const readThreadActivity = Effect.fn("ForkActivity.readThreadActivity")(f
         WHERE m.message_id = json_extract(r.payload_json, '$.userMessageId')
           AND json_extract(m.payload_json, '$.scheduledTaskId') IS NOT NULL
       ) AS scheduled
-    FROM orchestration_v2_projection_threads t
+    FROM recent t
     JOIN projection_projects p ON p.project_id = t.project_id
     JOIN orchestration_v2_projection_runs r ON r.thread_id = t.thread_id
-    WHERE t.project_id IN (SELECT project_id FROM projection_projects WHERE deleted_at IS NULL)
-      AND t.updated_at >= ${sinceIso}
-      AND t.deleted_at IS NULL
-      AND r.status IN ('completed', 'failed', 'waiting')
+    WHERE r.status IN ('completed', 'failed', 'waiting')
       AND coalesce(r.completed_at, r.requested_at) >= ${sinceIso}
     ORDER BY at DESC
     LIMIT ${limit}
   `;
   const requests = sql<ThreadActivityRow>`
+    ${recent}
     SELECT
       'request:' || q.runtime_request_id AS id,
       q.created_at AS at,
       'waiting' AS status,
       ${origin},
       0 AS scheduled
-    FROM orchestration_v2_projection_runtime_requests q
-    JOIN orchestration_v2_projection_threads t ON t.thread_id = q.thread_id
+    FROM recent t
     JOIN projection_projects p ON p.project_id = t.project_id
-    WHERE q.status = 'pending' AND q.created_at >= ${sinceIso} AND t.deleted_at IS NULL
+    JOIN orchestration_v2_projection_runtime_requests q
+      ON q.thread_id = t.thread_id AND q.status = 'pending'
+    WHERE q.created_at >= ${sinceIso}
     ORDER BY q.created_at DESC
     LIMIT ${limit}
   `;

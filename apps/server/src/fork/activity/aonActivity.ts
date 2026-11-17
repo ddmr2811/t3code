@@ -1,7 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- node:sqlite opens aon's own database read-only.
 // Fork-only: the events of `aon`, the always-on agent runner on Dani's machines, read from its
-// SQLite file without ever writing to it.
+// SQLite file without ever writing to it. Only structured fields leave it: the payload is free
+// text, so the read never selects it; one-line summaries belong in the `actividad-*.jsonl` logs.
+import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeURL from "node:url";
 
 import type { ForkActivityEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -17,62 +20,77 @@ export interface AonEventRow {
   readonly estado: string;
   readonly creado: string;
   readonly terminado: string | null;
-  /** The payload's first characters only; the feed keeps its first line. */
-  readonly payload: string | null;
+  /** 1 when the payload starts with `DECISIÓN`, worked out inside SQLite. */
+  readonly decision: number;
 }
 
 /** Event types aon hands to a project's orchestrator thread. */
 const AGENT_TYPES = new Set(["tarea", "github", "t3"]);
 
-/** `DECISIÓN: …`, the prefix aon's orchestrators give what needs Dani. */
-const isDecision = (text: string) =>
+const isDecisionType = (tipo: string) =>
   /^decision\b/i.test(
-    text
+    tipo
       .normalize("NFD")
       .replace(/\p{Diacritic}/gu, "")
-      .replace(/^[^\p{L}]+/u, ""),
+      .trim(),
   );
 
 export function aonEntry(row: AonEventRow, sinceMs: number): ForkActivityEntry | null {
   const at = Date.parse(row.terminado ?? row.creado);
   if (!Number.isFinite(at) || at < sinceMs) return null;
-  const line = summaryLine(row.payload ?? "");
-  const decision = isDecision(row.tipo) || isDecision(line);
-  const status = decision ? "waiting" : (wordStatus(row.estado) ?? "running");
+  const decision = Number(row.decision) === 1 || isDecisionType(row.tipo);
   const named = wordActor(row.fuente);
   const actor =
     named !== "unknown" ? named : AGENT_TYPES.has(row.tipo) ? "orchestrator" : "unknown";
   const project = row.proyecto === null ? "" : summaryLine(row.proyecto, 80);
-  const tipo = summaryLine(row.tipo, 40);
+  const label = `${summaryLine(row.fuente, 40)} · ${summaryLine(row.tipo, 40)}`;
   return {
     id: `aon:${row.id}`,
     at: isoAt(at),
     source: "aon",
     ...(project.length > 0 ? { project } : {}),
     actor,
-    summary: summaryLine(line.length > 0 ? `${tipo}: ${line}` : `${tipo} (${row.fuente})`),
-    status,
+    summary: summaryLine(decision ? `${label} · decisión pendiente` : label),
+    status: decision ? "waiting" : (wordStatus(row.estado) ?? "running"),
   };
 }
 
 /** Rows kept per read; the newest by id, so the read stops early on a long table. */
 const AON_ROWS = 500;
+/** How long a read waits on a writer's lock before it gives up for this round. */
+const BUSY_TIMEOUT_MS = 200;
+
+/**
+ * Creates nothing beside the file: with a live writer, read-only uses its `-wal` and `-shm` and
+ * sees the newest rows; without them, `immutable=1` (read-only would create and leave both). A
+ * writer starting or stopping mid-check can make one read fail or miss a row; the next is right.
+ */
+function openQuietly(databasePath: string): NodeSqlite.DatabaseSync {
+  const live = NodeFS.existsSync(`${databasePath}-wal`) && NodeFS.existsSync(`${databasePath}-shm`);
+  if (live) {
+    return new NodeSqlite.DatabaseSync(databasePath, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
+  }
+  const url = NodeURL.pathToFileURL(databasePath);
+  url.searchParams.set("immutable", "1");
+  return new NodeSqlite.DatabaseSync(url, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
+}
 
 /**
  * The newest events since `sinceIso`. Rows are walked back from the newest id with a limit, so
- * the read is bounded however long the table gets; a missing file answers nothing.
+ * the read is bounded however long the table gets, and a lock held by a writer makes it give up
+ * after 200 ms. A missing file, another schema or a lock answers nothing.
  */
 export const readAonEvents = (databasePath: string, sinceIso: string) =>
   Effect.sync((): ReadonlyArray<AonEventRow> => {
+    if (!NodeFS.existsSync(databasePath)) return [];
     try {
-      const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      const database = openQuietly(databasePath);
       try {
-        database.exec("PRAGMA busy_timeout = 200");
         return database
           .prepare(
             `SELECT * FROM (
                SELECT id, fuente, tipo, proyecto, estado, creado, terminado,
-                      substr(payload, 1, 1000) AS payload
+                      ltrim(coalesce(payload, '')) LIKE 'decisi_n%' AS decision
                FROM eventos ORDER BY id DESC LIMIT ?
              ) WHERE coalesce(terminado, creado) >= ?`,
           )
@@ -81,7 +99,6 @@ export const readAonEvents = (databasePath: string, sinceIso: string) =>
         database.close();
       }
     } catch {
-      // No file, another schema or a lock held too long: aon adds nothing this time.
       return [];
     }
   });
