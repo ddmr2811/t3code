@@ -664,7 +664,7 @@ export interface ProviderSettingsFormAnnotation {
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
-  /** The server ignores a relative value, so the form warns about one. */
+  /** The server resolves a relative value from the home folder, so the form hints at that. */
   readonly absolutePath?: boolean | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;

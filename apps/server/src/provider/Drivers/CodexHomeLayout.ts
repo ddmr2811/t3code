@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as PlatformError from "effect/PlatformError";
 
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveAbsoluteHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface CodexHomeLayout {
@@ -41,9 +41,7 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
 ]);
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
-  const expanded =
-    value && value.trim().length > 0 ? expandHomePath(value, home) : path.join(home, ".codex");
-  return path.resolve(expanded);
+  return resolveAbsoluteHomePath(value ?? "", home) ?? path.resolve(path.join(home, ".codex"));
 }
 
 export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(function* (
@@ -52,8 +50,8 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
   const sharedHomePath = resolveHomePath(path, home, config.homePath);
-  const shadowHomePath = config.shadowHomePath.trim();
-  if (shadowHomePath.length === 0) {
+  const effectiveHomePath = resolveAbsoluteHomePath(config.shadowHomePath, home);
+  if (effectiveHomePath === undefined) {
     return {
       mode: "direct",
       sharedHomePath,
@@ -62,7 +60,6 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     };
   }
 
-  const effectiveHomePath = path.resolve(expandHomePath(shadowHomePath, home));
   return {
     mode: "authOverlay",
     sharedHomePath,

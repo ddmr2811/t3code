@@ -11,16 +11,18 @@ export function expandHomePath(value: string, home: string): string {
   return value;
 }
 
-/** A configured directory with `~` expanded, or undefined when empty or still relative. */
+/**
+ * A configured provider home with `~` expanded. Any other relative path resolves from the
+ * user's home, never the server's cwd, so T3 and the spawned CLI read the same folder.
+ */
 export function resolveAbsoluteHomePath(value: string, home: string): string | undefined {
-  const expanded = expandHomePath(value.trim(), home);
-  return expanded.length > 0 && NodePath.isAbsolute(expanded)
-    ? NodePath.resolve(expanded)
-    : undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? NodePath.resolve(home, expandHomePath(trimmed, home)) : undefined;
 }
 
 const HOME_PATH_VARIABLES = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"]);
 
 export function expandHomeVariable(name: string, value: string, home: string): string {
-  return HOME_PATH_VARIABLES.has(name) ? expandHomePath(value, home) : value;
+  if (!HOME_PATH_VARIABLES.has(name)) return value;
+  return resolveAbsoluteHomePath(value, home) ?? value;
 }

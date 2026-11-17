@@ -12,20 +12,6 @@ import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
-/** Why the instance's CLAUDE_CONFIG_DIR is ignored: a relative one would land in the server's cwd. */
-export const claudeHomePathProblem = Effect.fn("claudeHomePathProblem")(function* (
-  config: Pick<ClaudeSettings, "homePath">,
-) {
-  const homePath = config.homePath.trim();
-  if (
-    homePath.length === 0 ||
-    resolveAbsoluteHomePath(homePath, yield* HostProcess.HomeDirectory) !== undefined
-  ) {
-    return undefined;
-  }
-  return `CLAUDE_CONFIG_DIR must be an absolute path (got ${quotePath(homePath)}). This instance uses the default Claude config directory until you fix it.`;
-});
-
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment?: NodeJS.ProcessEnv,

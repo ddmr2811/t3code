@@ -11,6 +11,8 @@ describe("mergeProviderInstanceEnvironment", () => {
   it.effect.each([
     { value: "~/.account", tail: ".account" },
     { value: "~\\.account\\work", tail: ".account\\work" },
+    // T3 and the spawned CLI must agree, so a relative home is taken from home, not cwd.
+    { value: ".claude-hub", tail: ".claude-hub" },
   ])("expands configured provider homes set to $value", ({ value, tail }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

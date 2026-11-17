@@ -19,7 +19,9 @@ describe("relativePathWarning", () => {
   it.each([".claude-hub", "claude-hub/config", "~dani/.claude", "C:claude"])(
     "warns about %j",
     (value) => {
-      expect(relativePathWarning(value)).toBe("Use an absolute path, or ~ for your home folder.");
+      expect(relativePathWarning(value)).toBe(
+        "Relative paths are taken from your home folder; use an absolute path or ~/…",
+      );
     },
   );
 });

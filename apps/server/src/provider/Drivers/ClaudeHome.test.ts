@@ -9,7 +9,6 @@ import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
-  claudeHomePathProblem,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
@@ -33,20 +32,18 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         );
         // The form Windows users type.
         expect(yield* resolveClaudeHomePath({ homePath: "~\\.claude-work" })).toBe(resolved);
-        expect(yield* claudeHomePathProblem({ homePath })).toBeUndefined();
       }),
     );
 
-    it.effect("ignores a relative CLAUDE_CONFIG_DIR instead of creating it in the server cwd", () =>
+    it.effect("resolves a relative CLAUDE_CONFIG_DIR from home, not the server cwd", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const config = { homePath: ".claude-hub" };
-        const base = { KEEP: "1" };
+        const resolved = path.resolve("/home/dani", ".claude-hub");
 
-        expect(yield* makeClaudeEnvironment(config, base)).toBe(base);
-        expect(yield* resolveClaudeHomePath(config)).toBe(path.join("/home/dani", ".claude"));
-        expect(yield* claudeHomePathProblem(config)).toBe(
-          'CLAUDE_CONFIG_DIR must be an absolute path (got ".claude-hub"). This instance uses the default Claude config directory until you fix it.',
+        expect(yield* resolveClaudeHomePath(config)).toBe(resolved);
+        expect((yield* makeClaudeEnvironment(config, { KEEP: "1" })).CLAUDE_CONFIG_DIR).toBe(
+          resolved,
         );
       }).pipe(Effect.provideService(HostProcess.HomeDirectory, "/home/dani")),
     );

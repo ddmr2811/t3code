@@ -56,7 +56,6 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
-  claudeHomePathProblem,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   mergeClaudeProcessEnvironment,
@@ -124,12 +123,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       driverKind: DRIVER_KIND,
       instanceId,
     });
-    const homePathProblem = yield* claudeHomePathProblem(config);
     const effectiveConfig = {
       ...config,
       enabled,
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
-      homePath: homePathProblem === undefined ? config.homePath : "",
     } satisfies ClaudeSettings;
     const resolveMaintenance = yield* makeClaudeMaintenanceResolution({
       binaryPath: effectiveConfig.binaryPath,
@@ -183,7 +180,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         accentColor,
         environment,
         enabled,
-        config: { ...config, homePath: effectiveConfig.homePath },
+        config,
       },
       {
         scopedLimitNames,
@@ -296,17 +293,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             provider.auth.status === "unauthenticated"
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
-          ),
-          Effect.map((provider) =>
-            homePathProblem === undefined
-              ? provider
-              : {
-                  ...provider,
-                  status: provider.status === "ready" ? ("warning" as const) : provider.status,
-                  message: provider.message
-                    ? `${homePathProblem} ${provider.message}`
-                    : homePathProblem,
-                },
           ),
           Effect.map(stampIdentity),
         ),
