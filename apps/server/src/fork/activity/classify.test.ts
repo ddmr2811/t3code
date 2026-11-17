@@ -115,28 +115,44 @@ describe("pesado turns", () => {
 
   it.each([
     ["vp run check:changed", "vp run"],
-    ["npx vitest run --maxWorkers=2 apps/x", "npx vitest run"],
-    ["curl -u usuario:clave https://example.com", "curl"],
-    ["deploy --password hunter2", "deploy"],
-    ["env CI=1 TOKEN=abc /usr/local/bin/cargo test -p core", "cargo test"],
-    ["git push origin dev feature extra", "git push origin dev"],
-    ["sh .githooks/integrate-dev.sh", "sh"],
-    ["tool user@example.com", "tool"],
-    [`tool ${"a".repeat(33)}`, "tool"],
+    ["cargo test -p x", "cargo test"],
+    ["npx vitest run --maxWorkers=2 apps/x", "npx"],
+    ["pnpm install --frozen-lockfile", "pnpm install"],
+    ["env CI=1 TOKEN=abc /usr/local/bin/cargo clippy --fix", "cargo clippy"],
+    ["/home/dani/.local/bin/vp lint", "vp lint"],
+    ["git push origin dev", "git"],
+    ["tool login alice hunter2", null],
+    ["/opt/hunter2 helpers/run", null],
+    ["/opt/bin/vp run", null],
+    ["./vp run", null],
+    ["curl -u usuario:clave https://example.com", null],
+    ["deploy --password hunter2", null],
+    ["sh .githooks/integrate-dev.sh", null],
     ["-x", null],
-    ["./9run go", null],
-  ])("shows only the program and its subcommands of %s", (command, summary) => {
-    expect(commandSummary(command)).toBe(summary);
+  ])("shows only a known program and subcommand of %s", (command, summary) => {
+    expect(commandSummary(command, "/home/dani")).toBe(summary);
   });
 
   it("never puts a turn's free arguments in its entry", () => {
     for (const command of [
       "deploy --password hunter2",
       "curl -u usuario:clave https://x.example",
+      "tool login alice hunter2",
+      "/opt/hunter2 helpers/run",
+      "vp run hunter2",
     ]) {
-      const entry = pesadoEntry("slot1", { at: "2026-11-17T05:00:00.000Z", pid: 42, command });
-      expect(entry.summary).toBe(`Heavy job: ${command.split(" ")[0]}`);
-      for (const secret of ["hunter2", "password", "usuario", "clave", "x.example"]) {
+      const turn = { at: "2026-11-17T05:00:00.000Z", pid: 42, command };
+      const entry = pesadoEntry("slot1", turn, "/home/dani");
+      expect(entry.summary).toBe(command.startsWith("vp ") ? "Heavy job: vp run" : "Heavy job");
+      for (const secret of [
+        "hunter2",
+        "password",
+        "usuario",
+        "clave",
+        "x.example",
+        "alice",
+        "helpers",
+      ]) {
         expect(JSON.stringify(entry)).not.toContain(secret);
       }
     }

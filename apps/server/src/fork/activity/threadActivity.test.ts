@@ -107,6 +107,38 @@ describe("readThreadActivity", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect(
+    "keeps the oldest thread in the window past 500 newer ones, and says when it cuts",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* setup;
+        yield* sql`INSERT INTO orchestration_v2_projection_threads
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+        SELECT 'bulk-' || i, 'p1', 'Bulk ' || i, '2026-11-17T05:10:00Z', NULL,
+               '{"createdBy":"agent"}'
+        FROM n`;
+        yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES
+        ('oldest', 'p1', 'Oldest in window', '2026-11-16T00:30:00Z', NULL, '{"createdBy":"user"}')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+        ('q-old', 'oldest', 'pending', '2026-11-16T00:20:00Z', '{}')`;
+
+        const entries = yield* readThreadActivity("2026-11-16T00:00:00.000Z", 50);
+        expect(entries.find((entry) => entry.id === "thread:request:q-old")).toMatchObject({
+          summary: "Oldest in window: waiting on you",
+          status: "waiting",
+        });
+        expect(entries.some((entry) => entry.id === "thread:truncated")).toBe(false);
+
+        const cut = yield* readThreadActivity("2026-11-16T00:00:00.000Z", 50, 100);
+        expect(cut[0]).toMatchObject({ id: "thread:truncated", status: "error" });
+        expect(cut[0]!.summary).toBe(
+          "Activity truncated: more than 100 threads changed in this window",
+        );
+        expect(cut.some((entry) => entry.id === "thread:request:q-old")).toBe(false);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("answers nothing on a database without the projections", () =>
     Effect.gen(function* () {
       expect(yield* readThreadActivity("2026-11-16T00:00:00.000Z", 50)).toEqual([]);

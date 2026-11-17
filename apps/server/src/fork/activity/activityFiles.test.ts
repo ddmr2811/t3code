@@ -131,37 +131,33 @@ describe("readAonEvents", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("creates no -wal or -shm, and reads a live writer's newest rows", () =>
+  it.effect("never writes aon's data, and reads a live writer's newest rows", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
       const file = path.join(dir, "aon.db");
       createAon(file).close();
-      const files = () => NodeFS.readdirSync(dir).toSorted();
-      expect(files()).toEqual(["aon.db"]);
+      const before = NodeFS.readFileSync(file);
 
       expect(yield* readAonEvents(file, "2026-11-16T00:00:00.000Z")).toHaveLength(2);
-      expect(files()).toEqual(["aon.db"]);
+      // SQLite may leave empty `-wal` and `-shm` files; the database itself is untouched.
+      expect(NodeFS.readFileSync(file).equals(before)).toBe(true);
 
       const writer = new NodeSqlite.DatabaseSync(file);
       writer.exec(
         "INSERT INTO eventos(fuente, ext_id, inbox, tipo, estado, creado) VALUES ('timer', '3', 'x', 'tests', 'pendiente', '2026-11-17T05:00:00+00:00')",
       );
-      const withWriter = files();
-      expect(withWriter).toEqual(["aon.db", "aon.db-shm", "aon.db-wal"]);
       expect(yield* readAonEvents(file, "2026-11-16T00:00:00.000Z")).toHaveLength(3);
-      expect(files()).toEqual(withWriter);
+      expect(writer.prepare("SELECT count(*) AS n FROM eventos").get()).toEqual({ n: 3 });
       writer.close();
 
-      expect(
-        yield* readAonEvents(path.join(dir, "missing.db"), "2026-11-16T00:00:00.000Z"),
-      ).toEqual([]);
-      expect(files()).toEqual(["aon.db"]);
+      const missing = path.join(dir, "missing.db");
+      expect(yield* readAonEvents(missing, "2026-11-16T00:00:00.000Z")).toEqual([]);
+      expect(NodeFS.existsSync(missing)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // A held lock either makes the read give up after its busy timeout or, with no side files,
-  // the immutable read skips locks; neither waits on the writer nor sees its open transaction.
+  // The busy timeout bounds the wait; the open transaction's row is never read.
   it.effect("never waits on or reads through a writer's exclusive transaction", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

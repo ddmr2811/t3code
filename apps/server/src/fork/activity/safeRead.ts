@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- O_NOFOLLOW, O_NONBLOCK and fstat on one descriptor.
 // Fork-only: how the activity feed reads files other programs write. A symlink is refused at
-// open, a FIFO or device opens without blocking and is refused by its own descriptor's type, and
-// every read is bounded in bytes and in time.
+// open; O_NONBLOCK keeps a FIFO's open from waiting where the platform honours it, and the
+// descriptor's own type then refuses anything but a regular file. Reads are bounded in bytes;
+// the time limit discards the result, it does not cancel the I/O.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 

@@ -4,7 +4,6 @@
 // text, so the read never selects it; one-line summaries belong in the `actividad-*.jsonl` logs.
 import * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
-import * as NodeURL from "node:url";
 
 import type { ForkActivityEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -61,21 +60,6 @@ const AON_ROWS = 500;
 const BUSY_TIMEOUT_MS = 200;
 
 /**
- * Creates nothing beside the file: with a live writer, read-only uses its `-wal` and `-shm` and
- * sees the newest rows; without them, `immutable=1` (read-only would create and leave both). A
- * writer starting or stopping mid-check can make one read fail or miss a row; the next is right.
- */
-function openQuietly(databasePath: string): NodeSqlite.DatabaseSync {
-  const live = NodeFS.existsSync(`${databasePath}-wal`) && NodeFS.existsSync(`${databasePath}-shm`);
-  if (live) {
-    return new NodeSqlite.DatabaseSync(databasePath, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
-  }
-  const url = NodeURL.pathToFileURL(databasePath);
-  url.searchParams.set("immutable", "1");
-  return new NodeSqlite.DatabaseSync(url, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
-}
-
-/**
  * The newest events since `sinceIso`. Rows are walked back from the newest id with a limit, so
  * the read is bounded however long the table gets, and a lock held by a writer makes it give up
  * after 200 ms. A missing file, another schema or a lock answers nothing.
@@ -84,7 +68,12 @@ export const readAonEvents = (databasePath: string, sinceIso: string) =>
   Effect.sync((): ReadonlyArray<AonEventRow> => {
     if (!NodeFS.existsSync(databasePath)) return [];
     try {
-      const database = openQuietly(databasePath);
+      // A plain read-only open: SQLite may add `-wal` and `-shm` beside the file, as any reader
+      // does, and never writes aon's data. `immutable=1` would be unsafe beside aon's writer.
+      const database = new NodeSqlite.DatabaseSync(databasePath, {
+        readOnly: true,
+        timeout: BUSY_TIMEOUT_MS,
+      });
       try {
         return database
           .prepare(

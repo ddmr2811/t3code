@@ -1,6 +1,7 @@
 // Fork-only: the heavy jobs running now under `pesado`, the machine-wide queue for test batteries
 // and builds. Each turn leaves `slot<N>.who` behind; only a live process counts.
 import type { ForkActivityEntry } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,19 +28,48 @@ export function parsePesadoWho(text: string): PesadoTurn | null {
   return { at: isoAt(atMs), pid, command: match[3]!.trim() };
 }
 
-const SAFE_WORD = /^[A-Za-z][A-Za-z0-9._-]*$/;
-const MAX_SUBCOMMANDS = 3;
+/** Programs whose name may show; anything else is a heavy job with no name. */
+const PROGRAMS = new Set([
+  "vp",
+  "pnpm",
+  "npm",
+  "npx",
+  "bun",
+  "node",
+  "cargo",
+  "rustc",
+  "pytest",
+  "python",
+  "python3",
+  "uv",
+  "vitest",
+  "playwright",
+  "knip",
+  "tsc",
+  "make",
+  "docker",
+  "git",
+]);
+/** The one subcommand that may follow a shown program. */
+const SUBCOMMANDS = new Set([
+  "run",
+  "test",
+  "build",
+  "check",
+  "lint",
+  "typecheck",
+  "i",
+  "install",
+  "exec",
+  "x",
+  "clippy",
+  "fmt",
+  "bench",
+  "ci",
+]);
 
-/** A word that can only be a subcommand: no flag, value, address, path or long blob. */
-const isSafeWord = (word: string) =>
-  !word.startsWith("-") && !/[=@:/]/.test(word) && word.length <= 32 && SAFE_WORD.test(word);
-
-/**
- * What a turn's command may show: the program's base name, past `env` and `VAR=…` assignments,
- * and up to three subcommands, stopping at the first word that could carry a value. Free
- * arguments never leave the machine: `vp run check:changed` reads `vp run`.
- */
-export function commandSummary(command: string): string | null {
+/** The program word and the words after it, past `env` and `VAR=…` assignments. */
+function programWords(command: string): ReadonlyArray<string> {
   const words = command.trim().split(/\s+/);
   let at = 0;
   while (
@@ -48,27 +78,42 @@ export function commandSummary(command: string): string | null {
   ) {
     at += 1;
   }
-  const program = words[at]?.split("/").at(-1) ?? "";
-  if (!isSafeWord(program)) return null;
-  const subcommands: string[] = [];
-  for (const word of words.slice(at + 1)) {
-    if (subcommands.length === MAX_SUBCOMMANDS || !isSafeWord(word)) break;
-    subcommands.push(word);
-  }
-  return [program, ...subcommands].join(" ");
+  return words.slice(at);
+}
+
+const STANDARD_DIRS = (home: string) => [
+  "/usr/bin",
+  "/usr/local/bin",
+  "/bin",
+  `${home}/.local/bin`,
+  "~/.local/bin",
+];
+
+/**
+ * What a turn's command may show, from closed lists only: a known program, named bare or from a
+ * standard bin folder, and one known subcommand. Script names, paths and every other argument
+ * stay on the machine: `vp run check:changed` reads `vp run`, `tool login alice` reads nothing.
+ */
+export function commandSummary(command: string, home: string): string | null {
+  const [token = "", next] = programWords(command);
+  const slash = token.lastIndexOf("/");
+  const program = token.slice(slash + 1);
+  if (slash !== -1 && !STANDARD_DIRS(home).includes(token.slice(0, slash))) return null;
+  if (!PROGRAMS.has(program)) return null;
+  return next !== undefined && SUBCOMMANDS.has(next) ? `${program} ${next}` : program;
 }
 
 /**
  * A pid that a later process reused is not the turn: `pesado` execs the command, so the live
- * process's command line holds the program's name.
+ * process's command line holds the program's name. This check stays on the server.
  */
 export const commandMatches = (cmdline: string, command: string): boolean => {
-  const program = commandSummary(command)?.split(" ")[0] ?? "";
+  const program = programWords(command)[0]?.split("/").at(-1) ?? "";
   return program.length > 0 && cmdline.replaceAll("\0", " ").includes(program);
 };
 
-export function pesadoEntry(slot: string, turn: PesadoTurn): ForkActivityEntry {
-  const command = commandSummary(turn.command);
+export function pesadoEntry(slot: string, turn: PesadoTurn, home: string): ForkActivityEntry {
+  const command = commandSummary(turn.command, home);
   return {
     id: `pesado:${slot}:${turn.pid}:${turn.at}`,
     at: turn.at,
@@ -94,6 +139,7 @@ const slotNumber = (name: string) => Number(/^slot(\d+)\.who$/.exec(name)?.[1] ?
 export const readPesadoTurns = Effect.fn("ForkActivity.readPesadoTurns")(function* (dir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   const read = Effect.gen(function* () {
     const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => []));
     const slots = names
@@ -117,7 +163,7 @@ export const readPesadoTurns = Effect.fn("ForkActivity.readPesadoTurns")(functio
         Effect.orElseSucceed(() => null),
       );
       if (cmdline === null || !commandMatches(cmdline, turn.command)) continue;
-      entries.push(pesadoEntry(name.replace(/\.who$/, ""), turn));
+      entries.push(pesadoEntry(name.replace(/\.who$/, ""), turn, home));
     }
     return entries;
   });
