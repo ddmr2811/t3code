@@ -29,6 +29,7 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
 import { SettingsRow } from "./settingsLayout";
+import { relativePathWarning } from "./ProviderSettingsForm.logic";
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -44,6 +45,8 @@ export interface ProviderSettingsFieldModel {
   readonly defaultBooleanValue?: boolean | undefined;
   /** Whether the field's schema decodes a typed string; one it rejects is never stored. */
   readonly accepts?: ((value: string) => boolean) | undefined;
+  /** A directory the server ignores unless it is absolute. */
+  readonly absolutePath?: boolean | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
@@ -152,6 +155,7 @@ export function deriveProviderSettingsFields(
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
           accepts: fieldAcceptsString(fieldSchema),
+          ...(formAnnotation.absolutePath ? { absolutePath: true } : {}),
           ...(formAnnotation.control === "select" && formAnnotation.options
             ? { options: formAnnotation.options }
             : {}),
@@ -459,6 +463,7 @@ function ProviderSettingsTextInput({
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }) {
   const [rejected, setRejected] = useState<string | null>(null);
+  const warning = fieldPathWarning(field, value);
   return (
     <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
       <DraftInput
@@ -484,9 +489,17 @@ function ProviderSettingsTextInput({
       />
       {rejected !== null ? (
         <p className="text-2xs text-destructive">Enter a valid value. It was not saved.</p>
+      ) : warning !== undefined ? (
+        <p className="text-2xs text-warning">{warning}</p>
       ) : null}
     </div>
   );
+}
+
+function fieldPathWarning(field: ProviderSettingsFieldModel, value: unknown) {
+  return field.absolutePath
+    ? relativePathWarning(readProviderConfigString(value, field.key))
+    : undefined;
 }
 
 function FieldFrame(props: {
@@ -680,6 +693,7 @@ function ProviderSettingsFieldRow({
   }
 
   const type = field.control === "password" ? "password" : undefined;
+  const pathWarning = fieldPathWarning(field, value);
   const BufferedInput = field.secret ? SecretInput : DraftInput;
   const ControlledInput = field.secret ? SecretInput : Input;
   return (
@@ -712,6 +726,9 @@ function ProviderSettingsFieldRow({
           />
         )}
         {description}
+        {pathWarning !== undefined ? (
+          <span className="mt-1 block text-2xs text-warning">{pathWarning}</span>
+        ) : null}
       </label>
     </FieldFrame>
   );

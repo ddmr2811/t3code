@@ -10,7 +10,10 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import {
+  expandHomePath,
+  resolveAbsoluteHomePath,
+} from "@t3tools/provider-core/server/pathExpansion";
 
 import { claudeAccountConfigPath, readClaudeOauthAccount } from "../claudeResetCredits.ts";
 
@@ -439,8 +442,11 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   configDirPath: string,
   environment: NodeJS.ProcessEnv,
 ) {
+  const customConfigDir =
+    resolveAbsoluteHomePath(config.homePath, yield* HostProcess.HomeDirectory) !== undefined ||
+    environment.CLAUDE_CONFIG_DIR?.trim();
   const accountConfigPath = yield* claudeAccountConfigPath(
-    config.homePath.trim() || environment.CLAUDE_CONFIG_DIR?.trim() ? configDirPath : undefined,
+    customConfigDir ? configDirPath : undefined,
   );
   const account = yield* readClaudeOauthAccount(accountConfigPath);
   const organizationId = environment.CLAUDE_CODE_ORGANIZATION_UUID ?? account?.organizationUuid;
@@ -634,10 +640,8 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
-  const homePath = config.homePath.trim();
-  if (homePath.length > 0) {
-    return path.resolve(expandHomePath(homePath, home));
-  }
+  const configured = resolveAbsoluteHomePath(config.homePath, home);
+  if (configured !== undefined) return configured;
   // Match the spawned CLI: preserve a literal ~ and resolve relative config against workspace cwd.
   const environmentConfigDir = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (environmentConfigDir.length > 0) {

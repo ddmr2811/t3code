@@ -6,7 +6,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
+  claudeHomePathProblem,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
@@ -28,7 +31,24 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         expect(yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath })).toBe(
           `claude\0${resolved}\0`,
         );
+        // The form Windows users type.
+        expect(yield* resolveClaudeHomePath({ homePath: "~\\.claude-work" })).toBe(resolved);
+        expect(yield* claudeHomePathProblem({ homePath })).toBeUndefined();
       }),
+    );
+
+    it.effect("ignores a relative CLAUDE_CONFIG_DIR instead of creating it in the server cwd", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const config = { homePath: ".claude-hub" };
+        const base = { KEEP: "1" };
+
+        expect(yield* makeClaudeEnvironment(config, base)).toBe(base);
+        expect(yield* resolveClaudeHomePath(config)).toBe(path.join("/home/dani", ".claude"));
+        expect(yield* claudeHomePathProblem(config)).toBe(
+          'CLAUDE_CONFIG_DIR must be an absolute path (got ".claude-hub"). This instance uses the default Claude config directory until you fix it.',
+        );
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, "/home/dani")),
     );
 
     it.effect("uses inherited CLAUDE_CONFIG_DIR when homePath is empty", () =>

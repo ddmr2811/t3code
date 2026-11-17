@@ -2,7 +2,7 @@ import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveAbsoluteHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseTimestampMs,
   tokenCount,
@@ -140,10 +140,9 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     if (config === undefined) return [];
     const path = yield* Path.Path;
     const homeDirectory = yield* HostProcess.HomeDirectory;
-    const configured = config.homePath.trim();
-    const home = configured
-      ? expandHomePath(configured, homeDirectory)
-      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
+    const home =
+      resolveAbsoluteHomePath(config.homePath, homeDirectory) ??
+      (environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude"));
     return [{ dir: path.resolve(home, "projects") }];
   }),
 };

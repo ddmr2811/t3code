@@ -5,12 +5,26 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveAbsoluteHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+/** Why the instance's CLAUDE_CONFIG_DIR is ignored: a relative one would land in the server's cwd. */
+export const claudeHomePathProblem = Effect.fn("claudeHomePathProblem")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+) {
+  const homePath = config.homePath.trim();
+  if (
+    homePath.length === 0 ||
+    resolveAbsoluteHomePath(homePath, yield* HostProcess.HomeDirectory) !== undefined
+  ) {
+    return undefined;
+  }
+  return `CLAUDE_CONFIG_DIR must be an absolute path (got ${quotePath(homePath)}). This instance uses the default Claude config directory until you fix it.`;
+});
 
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -18,10 +32,8 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
-  const homePath = config.homePath.trim();
-  if (homePath.length > 0) {
-    return path.resolve(expandHomePath(homePath, home));
-  }
+  const configured = resolveAbsoluteHomePath(config.homePath, home);
+  if (configured !== undefined) return configured;
   // Inherited env vars are not shell-expanded, so a literal `~` stays literal.
   const inherited = environment?.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (inherited.length > 0) {
@@ -35,13 +47,12 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const resolvedBaseEnv = baseEnv ?? process.env;
-  const homePath = config.homePath.trim();
-  if (homePath.length === 0) return resolvedBaseEnv;
-  const resolvedHomePath = yield* resolveClaudeHomePath(config);
+  const configured = resolveAbsoluteHomePath(config.homePath, yield* HostProcess.HomeDirectory);
+  if (configured === undefined) return resolvedBaseEnv;
   return {
     ...resolvedBaseEnv,
     // Changing HOME hides macOS Keychain credentials; use CLAUDE_CONFIG_DIR to keep login access.
-    CLAUDE_CONFIG_DIR: resolvedHomePath,
+    CLAUDE_CONFIG_DIR: configured,
   };
 });
 

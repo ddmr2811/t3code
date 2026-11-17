@@ -11,6 +11,14 @@ export function expandHomePath(value: string, home: string): string {
   return value;
 }
 
+/** A configured directory with `~` expanded, or undefined when empty or still relative. */
+export function resolveAbsoluteHomePath(value: string, home: string): string | undefined {
+  const expanded = expandHomePath(value.trim(), home);
+  return expanded.length > 0 && NodePath.isAbsolute(expanded)
+    ? NodePath.resolve(expanded)
+    : undefined;
+}
+
 const HOME_PATH_VARIABLES = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME"]);
 
 export function expandHomeVariable(name: string, value: string, home: string): string {

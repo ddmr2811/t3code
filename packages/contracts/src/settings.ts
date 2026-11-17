@@ -664,6 +664,8 @@ export interface ProviderSettingsFormAnnotation {
   readonly placeholder?: string | undefined;
   readonly hidden?: boolean | undefined;
   readonly clearWhenEmpty?: "omit" | "persist" | undefined;
+  /** The server ignores a relative value, so the form warns about one. */
+  readonly absolutePath?: boolean | undefined;
 
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
@@ -823,7 +825,11 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         title: "CLAUDE_CONFIG_DIR path",
         description:
           "Custom Claude home and config directory. Keeps .claude.json and .claude separate.",
-        providerSettingsForm: { placeholder: "~/.claude", clearWhenEmpty: "omit" },
+        providerSettingsForm: {
+          placeholder: "~/.claude",
+          clearWhenEmpty: "omit",
+          absolutePath: true,
+        },
       }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
