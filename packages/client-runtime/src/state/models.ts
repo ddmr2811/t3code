@@ -313,10 +313,12 @@ export function presentThreadShell(
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}
       : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
+    // A run the provider's usage limit ended has no turn left to approve: it reads as limited.
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
-      thread.pendingRuntimeRequest.kind !== "auth_refresh",
+      thread.pendingRuntimeRequest.kind !== "auth_refresh" &&
+      !(runtime?.status === "failed" && runtime.lastErrorClass === "usage_limit"),
     // Async questions count too, so a thread with any open question leaves Working.
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     pendingUserInputAt:

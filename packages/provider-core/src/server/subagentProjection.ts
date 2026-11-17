@@ -189,6 +189,35 @@ export function withExecutedModelNote(
     : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }
 
+/** Marks the approval a delegated task asked for and was refused, on its `approval_request` item. */
+export const DELEGATED_APPROVAL_DECLINED_REASON =
+  "Delegated tasks have no human approval, so this request was declined.";
+
+const DECLINED_APPROVALS_LISTED = 5;
+
+/** A delegated result, followed by what the task asked approval for and was refused. */
+function withDeclinedApprovalsNote(
+  result: string,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  run: OrchestrationV2Run,
+): string {
+  const declined = turnItems
+    .filter(
+      (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "approval_request" }> =>
+        item.runId === run.id &&
+        item.type === "approval_request" &&
+        item.reason === DELEGATED_APPROVAL_DECLINED_REASON,
+    )
+    .toSorted((left, right) => left.ordinal - right.ordinal);
+  if (declined.length === 0) return result;
+  const listed = declined.slice(0, DECLINED_APPROVALS_LISTED).map((item) => {
+    const prompt = trimmed(item.prompt)?.replaceAll(/\s+/g, " ");
+    return `- ${item.requestKind}${prompt === undefined ? "" : `: ${prompt.slice(0, 200)}`}`;
+  });
+  const more = declined.length - listed.length;
+  return `${result}\n\nThis task asked for approval ${declined.length === 1 ? "once" : `${declined.length} times`} and was declined: delegated tasks have no human approval. If the task needs it, grant it in the brief or launch it with other settings.\n${listed.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
+}
+
 export function subagentResultForRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
@@ -233,17 +262,25 @@ export function subagentResultForRun(
     failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
       ? (message?.text ?? turnItem.text)
       : undefined;
-  const text =
-    (failure?.type === "error"
-      ? reportBeforeFailure === undefined
-        ? failure.failure.message
-        : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
-      : undefined) ??
+  // The parent must be able to tell a spent quota from a task that failed on its own.
+  const failureMessage =
+    failure?.type !== "error"
+      ? undefined
+      : failure.failure.class === "usage_limit"
+        ? `Out of quota: the provider's usage limit stopped this task. ${failure.failure.message}`
+        : failure.failure.message;
+  const report =
+    (failureMessage === undefined
+      ? undefined
+      : reportBeforeFailure === undefined
+        ? failureMessage
+        : `${failureMessage}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
       ? "Child task completed without an assistant result."
       : `Child task ended with status ${run.status}.`);
+  const text = withDeclinedApprovalsNote(report, projection.turnItems, run);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,

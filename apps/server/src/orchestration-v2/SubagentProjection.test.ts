@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import {
+  DELEGATED_APPROVAL_DECLINED_REASON,
   makeSubagentChildThread,
   delegatedTaskProgress,
   subagentResultForRun,
@@ -398,6 +400,73 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.equal(result.text, failure.message);
   assert.equal(result.turnItemId, artifacts.turnItem.id);
   assert.isNull(result.messageId);
+
+  const outOfQuota = subagentResultForRun(
+    {
+      ...projection,
+      messages: [],
+      turnItems: [
+        {
+          ...artifacts.turnItem,
+          type: "error",
+          runId: run.id,
+          failure: { ...failure, class: "usage_limit" },
+        },
+      ],
+    },
+    failedRun,
+  );
+  assert.equal(
+    outOfQuota.text,
+    `Out of quota: the provider's usage limit stopped this task. ${failure.message}`,
+  );
+});
+
+it("tells the parent which approvals a delegated task asked for and was refused", () => {
+  const { projection, run } = taskFixture();
+  const artifacts = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "Review complete.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  const report = artifacts.turnItem;
+  if (report.type !== "assistant_message") throw new Error("Expected assistant item");
+  const approval = (id: string, reason: string) => ({
+    ...report,
+    id: TurnItemId.make(id),
+    ordinal: 2,
+    status: "cancelled" as const,
+    type: "approval_request" as const,
+    requestId: RuntimeRequestId.make(id),
+    requestKind: "command" as const,
+    prompt: "rm -rf /tmp/review",
+    reason,
+    runId: run.id,
+  });
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      messages: [{ ...artifacts.message, runId: run.id }],
+      turnItems: [
+        { ...report, runId: run.id },
+        approval("refused", DELEGATED_APPROVAL_DECLINED_REASON),
+        approval("declined-by-user", "Not now."),
+      ],
+    },
+    run,
+  );
+  assert.equal(
+    result.text,
+    "Review complete.\n\nThis task asked for approval once and was declined: delegated tasks have no human approval. If the task needs it, grant it in the brief or launch it with other settings.\n- command: rm -rf /tmp/review",
+  );
 });
 
 it("keeps the final report of a run that failed after its turn ended", () => {

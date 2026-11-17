@@ -53,6 +53,33 @@ describe("V2 client presentation", () => {
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 
+  it("reads a thread out of quota as limited, not as waiting for approval", () => {
+    const runId = RunId.make("run-out-of-quota");
+    const asking = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-stale-approval"),
+        kind: "command" as const,
+        createdAt: v2ThreadShell.updatedAt,
+        blocking: true,
+      },
+    };
+    expect(presentThreadShell(environmentId, asking).hasPendingApprovals).toBe(true);
+
+    const limited = presentThreadShell(environmentId, {
+      ...asking,
+      activeRunId: null,
+      status: "failed",
+      lastError: "You've hit your usage limit.",
+      lastErrorClass: "usage_limit",
+    });
+    expect(limited.hasPendingApprovals).toBe(false);
+    expect(limited.runtime?.lastErrorClass).toBe("usage_limit");
+  });
+
   it("moves a running thread with any question out of Working", () => {
     for (const capability of [{ blocking: false }, { blocking: true }, {}]) {
       const shell = presentThreadShell(environmentId, {

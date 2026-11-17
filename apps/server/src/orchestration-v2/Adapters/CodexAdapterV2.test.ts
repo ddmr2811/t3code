@@ -1,5 +1,6 @@
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { DELEGATED_APPROVAL_DECLINED_REASON } from "@t3tools/provider-core/server/subagentProjection";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -236,6 +237,33 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
+
+      // A delegated task never asks and stays in its checkout, whatever its mode or its parent set.
+      for (const runtimeMode of [
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+        "full-access",
+      ] as const) {
+        const delegated = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: `native-delegated-${runtimeMode}`,
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode,
+            interactionMode: "default",
+            cwd: "/workspace",
+            approvalPolicy: "on-request",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          },
+          delegated: true,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        });
+        assert.equal(delegated.approvalPolicy, "never");
+        assert.deepEqual(delegated.sandboxPolicy, {
+          type: runtimeMode === "approval-required" ? "readOnly" : "workspaceWrite",
+          networkAccess: false,
+        });
+      }
     }),
   );
 
@@ -2412,15 +2440,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = `suggest-${delegation}-thread`;
         const prompt = "Continue the task.";
+        // Delegated threads start their turns under the no-approval policy.
+        const turnPolicy =
+          delegation === "toggled-off"
+            ? {}
+            : ({
+                turnPolicy: {
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+                },
+              } as const);
         const first = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: `${delegation}-turn-1`,
           prompt,
+          ...turnPolicy,
         });
         const second = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId: `${delegation}-turn-2`,
           prompt,
+          ...turnPolicy,
         });
         const completed = (nativeTurnId: string): CodexReplay.CodexAppServerReplayEntry => ({
           type: "emit_inbound",
@@ -3315,6 +3355,122 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* answer(4, "file-change", "accept");
       yield* harness.awaitTerminal(3);
       assert.lengthOf(requests(), 4);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("declines a delegated task's approval requests instead of waiting for a human", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "delegated-approval-thread";
+      const nativeTurnId = "delegated-approval-turn";
+      const prompt = "Review the branch.";
+      const approval = (
+        id: number,
+        kind: "commandExecution" | "fileChange",
+        itemId: string,
+      ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "emit_inbound",
+          label: `${itemId} approval`,
+          frame: {
+            id,
+            method: `item/${kind}/requestApproval`,
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              itemId,
+              startedAtMs: 1782622441000,
+              ...(kind === "commandExecution" ? { command: "rm -rf /tmp/review" } : {}),
+            },
+          },
+        },
+        {
+          type: "expect_outbound",
+          label: `${itemId} decision`,
+          frame: { id, result: { decision: "decline" } },
+        },
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-delegated-approvals",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId,
+            prompt,
+            turnPolicy: {
+              approvalPolicy: "never",
+              sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+            },
+          }),
+          ...approval(100, "commandExecution", "cleanup-command"),
+          ...approval(101, "fileChange", "outside-patch"),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("delegated-approvals"),
+        text: prompt,
+      });
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        appThread: {
+          ...turnInput.appThread,
+          lineage: {
+            ...turnInput.appThread.lineage,
+            parentThreadId: ThreadId.make("delegating-parent"),
+            relationshipToParent: "subagent",
+          },
+        },
+      });
+      yield* harness.firstTerminal;
+
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated"
+            ? [
+                [
+                  event.runtimeRequest.kind,
+                  event.runtimeRequest.status,
+                  event.runtimeRequest.decision,
+                ],
+              ]
+            : [],
+        ),
+        [
+          ["command", "resolved", "decline"],
+          ["file-change", "resolved", "decline"],
+        ],
+      );
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+            ? [[event.turnItem.status, event.turnItem.prompt, event.turnItem.reason]]
+            : [],
+        )[0],
+        ["cancelled", "rm -rf /tmp/review", DELEGATED_APPROVAL_DECLINED_REASON],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

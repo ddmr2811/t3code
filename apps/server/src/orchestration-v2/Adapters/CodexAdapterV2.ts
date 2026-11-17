@@ -154,6 +154,7 @@ import {
   providerMessageTextWithAttachmentPaths,
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import {
+  DELEGATED_APPROVAL_DECLINED_REASON,
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -784,6 +785,23 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+/**
+ * Nobody answers a delegated task's approval prompts, so it never asks and stays inside its
+ * checkout. Its runtime mode can only narrow this to read-only, never widen it.
+ */
+function codexDelegatedTurnPolicy(runtimeMode: RuntimeMode): {
+  readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
+  readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
+} {
+  return {
+    approvalPolicy: "never",
+    sandboxPolicy:
+      codexRuntimeModeTurnDefaults(runtimeMode).sandboxPolicy.type === "readOnly"
+        ? { type: "readOnly", networkAccess: false }
+        : { type: "workspaceWrite", networkAccess: false },
+  };
+}
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -801,6 +819,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly nativeThreadId: string;
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+    /** The turn runs a delegated task: see `codexDelegatedTurnPolicy`. */
+    readonly delegated?: boolean;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
@@ -814,14 +834,22 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly configuredReasoningSummary?: CodexSchema.V2TurnStartParams__ReasoningSummary;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
+    const delegatedPolicy =
+      input.delegated === true
+        ? codexDelegatedTurnPolicy(input.runtimePolicy.runtimeMode)
+        : undefined;
     const approvalPolicy =
-      input.runtimePolicy.approvalPolicy === undefined
-        ? runtimeModeDefaults.approvalPolicy
-        : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
+      delegatedPolicy !== undefined
+        ? delegatedPolicy.approvalPolicy
+        : input.runtimePolicy.approvalPolicy === undefined
+          ? runtimeModeDefaults.approvalPolicy
+          : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
     const sandboxPolicy =
-      input.runtimePolicy.sandboxPolicy === undefined
-        ? runtimeModeDefaults.sandboxPolicy
-        : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+      delegatedPolicy !== undefined
+        ? delegatedPolicy.sandboxPolicy
+        : input.runtimePolicy.sandboxPolicy === undefined
+          ? runtimeModeDefaults.sandboxPolicy
+          : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
     const selectedEffort =
       getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
       codexDefaultReasoningEffortOverride(input.modelSelection.model);
@@ -4726,6 +4754,43 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
+        const asksForDelegatedTask = (context: ActiveCodexTurnContext) =>
+          isDelegatedAppThread(approvalOwnerCodexTurn(context).owner.input.appThread);
+
+        // A delegated task has no human to approve: record the request as declined, never pending.
+        const declineDelegatedApproval = Effect.fn("CodexAdapterV2.declineDelegatedApproval")(
+          function* (input: Parameters<typeof buildApprovalRequestArtifacts>[0]) {
+            const artifacts = yield* buildApprovalRequestArtifacts(input);
+            const declinedAt = artifacts.request.createdAt;
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: { ...artifacts.node, status: "cancelled", completedAt: declinedAt },
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: {
+                ...artifacts.turnItem,
+                status: "cancelled",
+                completedAt: declinedAt,
+                reason: DELEGATED_APPROVAL_DECLINED_REASON,
+              },
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              driver: CODEX_PROVIDER,
+              threadId: artifacts.node.threadId,
+              runtimeRequest: {
+                ...artifacts.request,
+                status: "resolved",
+                resolvedAt: declinedAt,
+                decision: "decline",
+              },
+            });
+          },
+        );
+
         const buildUserInputRequestArtifacts = Effect.fn(
           "CodexAdapterV2.buildUserInputRequestArtifacts",
         )(function* (input: {
@@ -5871,7 +5936,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const nativeRequestId = payload.approvalId ?? payload.itemId;
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: payload.itemId,
               nativeRequestId,
@@ -5879,7 +5944,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...((payload.reason ?? payload.command) === undefined
                 ? {}
                 : { prompt: payload.reason ?? payload.command }),
-            });
+            } as const;
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -5941,7 +6013,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
 
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
@@ -5951,7 +6023,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...payload,
                   fileChanges: context.fileChangeKindsByItem.get(payload.itemId) ?? {},
                 }) ?? null,
-            });
+            } as const;
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.FileChangeRequestApprovalResponse;
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -6008,13 +6087,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             const requestKind = providerRequestKindFromPermissions(payload.permissions);
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
               ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
-            });
+            };
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return permissionsResponseFromDecision({
+                decision: "decline",
+                permissions: payload.permissions,
+              });
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -6093,7 +6180,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? payload.elicitationId
                 : `mcp-elicitation:${payload.serverName}`;
             const described = describeMcpElicitation(payload);
-            const artifacts = yield* buildApprovalRequestArtifacts({
+            const approval = {
               context,
               nativeItemId: nativeRequestId,
               nativeRequestId,
@@ -6101,7 +6188,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               prompt: payload.message,
               appName: described.appName,
               options: described.options,
-            });
+            } as const;
+            if (asksForDelegatedTask(context)) {
+              yield* declineDelegatedApproval(approval);
+              return toMcpElicitationResponse(payload, "decline");
+            }
+            const artifacts = yield* buildApprovalRequestArtifacts(approval);
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
               const updated = new Map(current);
@@ -7544,6 +7636,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
+              delegated: isDelegatedAppThread(turnInput.appThread),
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
