@@ -159,10 +159,12 @@ function SpendCard(props: { readonly data: WidgetUsage; readonly nowMs: number }
         value={loading ? "…" : formatUsd(total)}
         caption="List price, all machines"
         side={
-          <>
-            <span>{formatTokens(tokens)} tokens</span>
-            <span>Today {formatUsd(today?.costUsd ?? 0)}</span>
-          </>
+          loading ? null : (
+            <>
+              <span>{formatTokens(tokens)} tokens</span>
+              <span>Today {formatUsd(today?.costUsd ?? 0)}</span>
+            </>
+          )
         }
       />
       <div ref={ref} className="flex flex-col gap-1">
