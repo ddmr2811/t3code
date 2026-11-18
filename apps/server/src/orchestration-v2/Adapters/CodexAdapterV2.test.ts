@@ -1212,7 +1212,16 @@ describe("CodexAdapterV2 process exit", () => {
       "bwrap: setting up uid map: Permission denied",
       "unshare: write failed /proc/self/uid_map: Operation not permitted",
       "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
+      "bwrap: setting up gid map: Permission denied",
+      "bwrap: Creating new namespace failed: Operation not permitted",
+      "bwrap: No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces.",
     ].map((stderr) => ({ name: `is blocked: ${stderr}`, exit: 1, stderr, status: "blocked" })),
+    {
+      name: "is denied a bind mount",
+      exit: 1,
+      stderr: "bwrap: Can't bind mount /oldroot/x on /newroot/x: Permission denied",
+      status: "indeterminate",
+    },
     {
       name: "fails another way",
       exit: 2,
@@ -3848,7 +3857,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : [],
           );
         yield* harness.firstTerminal;
-        if (notice !== undefined) yield* harness.until(() => notices().length > 0);
         assert.deepEqual(notices(), notice === undefined ? [] : [["warning", notice]]);
       }).pipe(
         Effect.provide(

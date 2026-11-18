@@ -1863,10 +1863,10 @@ const CODEX_SANDBOX_PROBE_ARGS = [
   "true",
 ];
 
-// Failures seen where AppArmor blocks unprivileged user namespaces, e.g.
-// `bwrap: setting up uid map: Permission denied` or `bwrap: loopback: Failed RTM_NEWADDR: ...`.
+// bwrap's diagnostics when the host refuses it user namespaces, as AppArmor's userns policy does.
+// Other bwrap failures, such as a denied bind mount, say nothing about the host.
 const CODEX_SANDBOX_HOST_BLOCKED =
-  /^bwrap: .*(?:Operation not permitted|Permission denied)|uid_map: Operation not permitted/m;
+  /bwrap: setting up [ug]id map:|bwrap: loopback: Failed RTM_NEWADDR|bwrap: Creating new namespace failed|bwrap: No permissions to create new namespace|write failed \/proc\/self\/uid_map/;
 
 /** A probe that fails to run, times out or fails another way says nothing about the host. */
 const probeCodexSandbox = Effect.fn("CodexAdapterV2.probeCodexSandbox")(
@@ -2579,7 +2579,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
-        // Set before or after the turn registers; whichever comes second emits it.
+        // Set before turn/start, emitted once the turn registers.
         const sandboxNotices = new WeakMap<ProviderAdapter.ProviderAdapterV2TurnInput, string>();
         const emitSandboxNotice = Effect.fn("CodexAdapterV2.emitSandboxNotice")(function* (
           context: ActiveCodexTurnContext,
@@ -2616,17 +2616,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             },
           });
         });
-        const noteSandboxNotice = Effect.fn("CodexAdapterV2.noteSandboxNotice")(function* (
-          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-          message: string,
-        ) {
-          sandboxNotices.set(turnInput, message);
-          const context = Array.from((yield* Ref.get(activeTurns)).values()).find(
-            (candidate) => candidate.input === turnInput,
-          );
-          if (context !== undefined) yield* emitSandboxNotice(context);
-        });
-
         const releaseGoalUpdates = (nativeThreadId: string) =>
           Effect.suspend(() => {
             goalUpdatesHeld.delete(nativeThreadId);
@@ -7847,32 +7836,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             const unattended = isUnattendedDelegatedTurn(turnInput);
             const runtimeMode = turnInput.runtimePolicy.runtimeMode;
-            const sandboxStatus =
-              clientFactory.sandboxStatus === undefined
-                ? Effect.succeed<CodexSandboxStatus>("available")
-                : clientFactory.sandboxStatus({
-                    settings: resolvedRuntime?.config ?? adapterOptions.settings,
-                    environment: resolvedRuntime?.environment ?? adapterOptions.environment,
-                  });
-            // Dropping the sandbox needs a turn known to be delegated; a resumed one no longer
-            // says who wrote it.
-            const sandboxBlocked =
+            // Dropping the sandbox needs a turn known to be delegated, and a resumed one no longer
+            // says who wrote it. Read-only stays read-only either way; the probe feeds its notice.
+            const probesSandbox =
               unattended &&
-              turnInput.resume !== true &&
-              runtimeMode === "full-access" &&
-              (yield* sandboxStatus) === "blocked";
+              (runtimeMode === "approval-required" ||
+                (runtimeMode === "full-access" && turnInput.resume !== true));
+            const sandboxBlocked =
+              probesSandbox &&
+              clientFactory.sandboxStatus !== undefined &&
+              (yield* clientFactory.sandboxStatus({
+                settings: resolvedRuntime?.config ?? adapterOptions.settings,
+                environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+              })) === "blocked";
             if (sandboxBlocked) {
-              sandboxNotices.set(turnInput, CODEX_SANDBOX_DROPPED_NOTICE);
-            }
-            // Read-only stays read-only either way, so the probe only feeds its notice.
-            if (unattended && runtimeMode === "approval-required") {
-              yield* sandboxStatus.pipe(
-                Effect.flatMap((status) =>
-                  status === "blocked"
-                    ? noteSandboxNotice(turnInput, CODEX_SANDBOX_READ_ONLY_NOTICE)
-                    : Effect.void,
-                ),
-                Effect.forkIn(scope),
+              sandboxNotices.set(
+                turnInput,
+                runtimeMode === "full-access"
+                  ? CODEX_SANDBOX_DROPPED_NOTICE
+                  : CODEX_SANDBOX_READ_ONLY_NOTICE,
               );
             }
             const turnStartParams = yield* buildCodexTurnStartParams({
