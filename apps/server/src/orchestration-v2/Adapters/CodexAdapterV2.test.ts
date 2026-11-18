@@ -3783,6 +3783,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       notice: undefined,
     },
     {
+      name: "a restarted continuation keeps the sandbox",
+      runtimeMode: "full-access",
+      resume: "restart",
+      turnPolicy: {
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          networkAccess: true,
+          writableRoots: ["/workspace"],
+        },
+      },
+      notice: undefined,
+    },
+    {
       name: "a read-only task stays read-only",
       runtimeMode: "approval-required",
       resume: false,
@@ -3800,7 +3814,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const transcript = makeCodexReplayTranscript({
           scenario: `codex-sandbox-blocked-${runtimeMode}-${resume}`,
           entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, turnPolicy, resume }),
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt,
+              turnPolicy,
+              resume: resume !== false,
+            }),
             {
               type: "emit_inbound",
               label: "turn/completed",
@@ -3835,11 +3855,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         });
         yield* harness.runtime.startTurn({
           ...turnInput,
-          ...(resume ? { resume: true as const } : {}),
-          // A resumed turn reads as the user's, whoever wrote it.
-          message: resume
-            ? turnInput.message
-            : { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+          ...(resume === true ? { resume: true as const } : {}),
+          ...(resume === "restart"
+            ? { restartContinuationOfRunId: RunId.make("sandbox-blocked-restarted-run") }
+            : {}),
+          // A resumed turn reads as the user's, whoever wrote it; a restart keeps the agent's.
+          message:
+            resume === true
+              ? turnInput.message
+              : { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
           runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode },
           appThread: {
             ...turnInput.appThread,

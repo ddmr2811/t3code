@@ -7836,12 +7836,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             const unattended = isUnattendedDelegatedTurn(turnInput);
             const runtimeMode = turnInput.runtimePolicy.runtimeMode;
-            // Dropping the sandbox needs a turn known to be delegated, and a resumed one no longer
-            // says who wrote it. Read-only stays read-only either way; the probe feeds its notice.
+            // Dropping the sandbox needs a turn known to be delegated, and a resumed or restarted
+            // one no longer says who wrote it. Read-only stays read-only; the probe feeds its notice.
+            const continuesEarlierRun =
+              turnInput.resume === true || turnInput.restartContinuationOfRunId !== undefined;
             const probesSandbox =
               unattended &&
               (runtimeMode === "approval-required" ||
-                (runtimeMode === "full-access" && turnInput.resume !== true));
+                (runtimeMode === "full-access" && !continuesEarlierRun));
             const sandboxBlocked =
               probesSandbox &&
               clientFactory.sandboxStatus !== undefined &&
