@@ -39,9 +39,10 @@ commands that only read, and cannot write anything. Put what the task needs in i
 delegate with another provider. When you write in the task's thread yourself, that turn follows
 the thread's permission mode as usual and you can approve its requests.
 
-On Linux, Codex's sandbox needs unprivileged user namespaces, which Ubuntu 24.04 blocks through
-AppArmor by default. Where it cannot start, the server log says so once, a **Full access** task
-runs without a sandbox, and a **Supervised** task's commands fail.
+On Linux, Codex's sandbox needs unprivileged user namespaces, and some systems block them, for
+example through an AppArmor policy. When that stops the sandbox from starting, a **Full access**
+task runs without it and its thread tells you so. A **Supervised** task stays read-only even then,
+so it cannot run commands, and its thread tells you that too.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.

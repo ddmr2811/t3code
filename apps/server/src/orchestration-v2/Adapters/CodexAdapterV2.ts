@@ -828,8 +828,8 @@ export const codexDelegatedWritableRoots = Effect.fn("CodexAdapterV2.codexDelega
 
 export interface CodexDelegatedTurn {
   readonly writableRoots: ReadonlyArray<string>;
-  /** False where Codex's sandbox cannot start, such as bubblewrap blocked by AppArmor. */
-  readonly sandboxAvailable: boolean;
+  /** Set only when a probe saw the host stop Codex's sandbox from starting. */
+  readonly sandboxBlocked: boolean;
 }
 
 /**
@@ -847,7 +847,7 @@ function codexDelegatedTurnPolicy(
   if (codexRuntimeModeTurnDefaults(runtimeMode).sandboxPolicy.type === "readOnly") {
     return { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } };
   }
-  if (!delegated.sandboxAvailable && runtimeMode === "full-access") {
+  if (delegated.sandboxBlocked && runtimeMode === "full-access") {
     return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
   }
   return {
@@ -859,6 +859,11 @@ function codexDelegatedTurnPolicy(
     },
   };
 }
+
+const CODEX_SANDBOX_DROPPED_NOTICE =
+  "Codex's sandbox can't start on this host, so this delegated task runs without it.";
+const CODEX_SANDBOX_READ_ONLY_NOTICE =
+  "Codex's sandbox can't start on this host, so this read-only task can't run commands.";
 
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
@@ -1567,11 +1572,14 @@ export interface CodexAppServerClientFactoryShape {
     Scope.Scope
   >;
   /** Whether Codex's sandbox starts on this host. Omitted means it does. */
-  readonly sandboxAvailable?: (input: {
+  readonly sandboxStatus?: (input: {
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
-  }) => Effect.Effect<boolean>;
+  }) => Effect.Effect<CodexSandboxStatus>;
 }
+
+/** `blocked` only for a failure known to come from the host; anything else is `indeterminate`. */
+export type CodexSandboxStatus = "available" | "blocked" | "indeterminate";
 
 export class CodexAppServerClientFactory extends Context.Service<
   CodexAppServerClientFactory,
@@ -1855,7 +1863,12 @@ const CODEX_SANDBOX_PROBE_ARGS = [
   "true",
 ];
 
-/** A probe that fails to run or times out says nothing about the sandbox, so it keeps it. */
+// Failures seen where AppArmor blocks unprivileged user namespaces, e.g.
+// `bwrap: setting up uid map: Permission denied` or `bwrap: loopback: Failed RTM_NEWADDR: ...`.
+const CODEX_SANDBOX_HOST_BLOCKED =
+  /^bwrap: .*(?:Operation not permitted|Permission denied)|uid_map: Operation not permitted/m;
+
+/** A probe that fails to run, times out or fails another way says nothing about the host. */
 const probeCodexSandbox = Effect.fn("CodexAdapterV2.probeCodexSandbox")(
   function* (
     spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -1875,20 +1888,26 @@ const probeCodexSandbox = Effect.fn("CodexAdapterV2.probeCodexSandbox")(
       [Stream.mkString(Stream.decodeText(child.stderr)), child.exitCode],
       { concurrency: 2 },
     );
-    if (exitCode === 0) return true;
+    if (exitCode === 0) return "available" as const;
+    const blocked = CODEX_SANDBOX_HOST_BLOCKED.test(stderr);
     yield* Effect.logWarning(
-      "Codex's sandbox cannot start on this host (AppArmor or user namespaces): unattended delegated Codex tasks from a full-access thread run without a sandbox, and the commands of read-only ones will fail.",
+      blocked
+        ? "Codex's sandbox cannot start on this host: unattended delegated Codex tasks from a full-access thread run without it, and read-only ones cannot run commands."
+        : "Codex's sandbox probe failed for an unknown reason; delegated Codex tasks keep the sandbox.",
       { command, exitCode, stderr: stderr.trim().slice(-500) },
     );
-    return false;
+    return blocked ? ("blocked" as const) : ("indeterminate" as const);
   },
   Effect.scoped,
   Effect.timeoutOption("10 seconds"),
-  Effect.map(Option.getOrElse(() => true)),
-  Effect.orElseSucceed(() => true),
+  Effect.map(Option.getOrElse((): CodexSandboxStatus => "indeterminate")),
+  Effect.orElseSucceed((): CodexSandboxStatus => "indeterminate"),
 );
 
-const codexProcessEnvironment = (settings: CodexSettings, environment: NodeJS.ProcessEnv) => ({
+const codexProcessEnvironment = (
+  settings: CodexSettings,
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => ({
   ...codexAppServerEnvironment(environment),
   ...(settings.homePath ? { CODEX_HOME: settings.homePath } : {}),
 });
@@ -1907,26 +1926,26 @@ export const layerAppServerClientFactory: Layer.Layer<
     const agentScope = yield* AgentScope;
     const portDiscovery = yield* PortScanner.PortDiscovery;
     const platform = yield* HostProcess.Platform;
-    // One probe per binary for the process: a resolved runtime can pick another binary.
-    const sandboxProbes = new Map<string, Effect.Effect<boolean>>();
+    // Settled results per binary and Codex home; an indeterminate probe runs again next turn.
+    const sandboxStatuses = new Map<string, CodexSandboxStatus>();
 
     return CodexAppServerClientFactory.of({
-      sandboxAvailable: Effect.fn("CodexAdapterV2.sandboxAvailable")(function* (input) {
+      sandboxStatus: Effect.fn("CodexAdapterV2.sandboxStatus")(function* (input) {
         // Only Linux's bubblewrap sandbox is known to be blocked by the host.
-        if (platform !== "linux") return true;
+        if (platform !== "linux") return "available";
         const command = input.settings.binaryPath || "codex";
-        let probe = sandboxProbes.get(command);
-        if (probe === undefined) {
-          probe = yield* Effect.cached(
-            probeCodexSandbox(
-              spawner,
-              command,
-              codexProcessEnvironment(input.settings, input.environment),
-            ),
-          );
-          sandboxProbes.set(command, probe);
-        }
-        return yield* probe;
+        const environment = codexProcessEnvironment(input.settings, input.environment);
+        // A bare command resolves through the instance's PATH.
+        const key = [
+          command,
+          environment.CODEX_HOME ?? "",
+          command.includes("/") ? "" : (environment.PATH ?? ""),
+        ].join("\0");
+        const settled = sandboxStatuses.get(key);
+        if (settled !== undefined) return settled;
+        const status = yield* probeCodexSandbox(spawner, command, environment);
+        if (status !== "indeterminate") sandboxStatuses.set(key, status);
+        return status;
       }),
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
@@ -2560,6 +2579,54 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // Set before or after the turn registers; whichever comes second emits it.
+        const sandboxNotices = new WeakMap<ProviderAdapter.ProviderAdapterV2TurnInput, string>();
+        const emitSandboxNotice = Effect.fn("CodexAdapterV2.emitSandboxNotice")(function* (
+          context: ActiveCodexTurnContext,
+        ) {
+          const message = sandboxNotices.get(context.input);
+          if (message === undefined) return;
+          sandboxNotices.delete(context.input);
+          const nativeItemId = `codex-sandbox-unavailable:${context.providerTurnId}`;
+          const { ordinal, startedAt } = yield* resolveItemPosition(context, nativeItemId);
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CODEX_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CODEX_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId: context.providerNodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: { ...codexNativeItemRef(nativeItemId), strength: "weak" },
+              parentItemId: null,
+              ordinal,
+              type: "system_notice",
+              level: "warning",
+              status: "completed",
+              title: "Codex sandbox unavailable",
+              message,
+              startedAt,
+              completedAt: startedAt,
+              updatedAt: startedAt,
+            },
+          });
+        });
+        const noteSandboxNotice = Effect.fn("CodexAdapterV2.noteSandboxNotice")(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          message: string,
+        ) {
+          sandboxNotices.set(turnInput, message);
+          const context = Array.from((yield* Ref.get(activeTurns)).values()).find(
+            (candidate) => candidate.input === turnInput,
+          );
+          if (context !== undefined) yield* emitSandboxNotice(context);
+        });
+
         const releaseGoalUpdates = (nativeThreadId: string) =>
           Effect.suspend(() => {
             goalUpdatesHeld.delete(nativeThreadId);
@@ -2682,6 +2749,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
           yield* rememberRootProviderThread(input.turnInput.providerThread);
           yield* emitMcpStartupFailures(context);
+          yield* emitSandboxNotice(context);
           return context;
         });
 
@@ -7777,12 +7845,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
                 ),
               );
+            const unattended = isUnattendedDelegatedTurn(turnInput);
+            const runtimeMode = turnInput.runtimePolicy.runtimeMode;
+            const sandboxStatus =
+              clientFactory.sandboxStatus === undefined
+                ? Effect.succeed<CodexSandboxStatus>("available")
+                : clientFactory.sandboxStatus({
+                    settings: resolvedRuntime?.config ?? adapterOptions.settings,
+                    environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+                  });
+            // Dropping the sandbox needs a turn known to be delegated; a resumed one no longer
+            // says who wrote it.
+            const sandboxBlocked =
+              unattended &&
+              turnInput.resume !== true &&
+              runtimeMode === "full-access" &&
+              (yield* sandboxStatus) === "blocked";
+            if (sandboxBlocked) {
+              sandboxNotices.set(turnInput, CODEX_SANDBOX_DROPPED_NOTICE);
+            }
+            // Read-only stays read-only either way, so the probe only feeds its notice.
+            if (unattended && runtimeMode === "approval-required") {
+              yield* sandboxStatus.pipe(
+                Effect.flatMap((status) =>
+                  status === "blocked"
+                    ? noteSandboxNotice(turnInput, CODEX_SANDBOX_READ_ONLY_NOTICE)
+                    : Effect.void,
+                ),
+                Effect.forkIn(scope),
+              );
+            }
             const turnStartParams = yield* buildCodexTurnStartParams({
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
-              ...(isUnattendedDelegatedTurn(turnInput)
+              ...(unattended
                 ? {
                     delegated: {
                       writableRoots: yield* codexDelegatedWritableRoots(
@@ -7791,14 +7889,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         Effect.provideService(FileSystem.FileSystem, fileSystem),
                         Effect.provideService(Path.Path, path),
                       ),
-                      sandboxAvailable:
-                        clientFactory.sandboxAvailable === undefined
-                          ? true
-                          : yield* clientFactory.sandboxAvailable({
-                              settings: resolvedRuntime?.config ?? adapterOptions.settings,
-                              environment:
-                                resolvedRuntime?.environment ?? adapterOptions.environment,
-                            }),
+                      sandboxBlocked,
                     },
                   }
                 : {}),

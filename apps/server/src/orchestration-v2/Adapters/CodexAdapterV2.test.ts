@@ -243,7 +243,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       // Read-only stays read-only and can still read; only full-access drops a sandbox that
       // cannot start on the host.
       const writableRoots = ["/workspace", "/repo/.git"];
-      for (const sandboxAvailable of [true, false]) {
+      for (const sandboxBlocked of [false, true]) {
         for (const runtimeMode of [
           "approval-required",
           "auto-accept-edits",
@@ -260,7 +260,7 @@ describe("CodexAdapterV2 runtime policy", () => {
               approvalPolicy: "on-request",
               sandboxPolicy: { type: "dangerFullAccess" },
             },
-            delegated: { writableRoots, sandboxAvailable },
+            delegated: { writableRoots, sandboxBlocked },
             modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           });
           assert.equal(delegated.approvalPolicy, "never");
@@ -268,10 +268,10 @@ describe("CodexAdapterV2 runtime policy", () => {
             delegated.sandboxPolicy,
             runtimeMode === "approval-required"
               ? { type: "readOnly" }
-              : runtimeMode === "full-access" && !sandboxAvailable
+              : runtimeMode === "full-access" && sandboxBlocked
                 ? { type: "dangerFullAccess" }
                 : { type: "workspaceWrite", networkAccess: true, writableRoots },
-            `${runtimeMode} with the sandbox ${sandboxAvailable ? "available" : "blocked"}`,
+            `${runtimeMode} with the sandbox ${sandboxBlocked ? "blocked" : "available"}`,
           );
         }
       }
@@ -774,6 +774,8 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  /** A resumed turn sends no input. */
+  readonly resume?: boolean;
   readonly effort?: string;
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
@@ -870,7 +872,7 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
+          input: input.resume ? [] : [{ type: "text", text: input.sentPrompt ?? input.prompt }],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -1205,10 +1207,26 @@ describe("CodexAdapterV2 process exit", () => {
   });
 
   it.effect.each([
-    { exitCode: 0, available: true },
-    { exitCode: 1, available: false },
-  ])("probes Codex's sandbox once per binary (exit $exitCode)", ({ exitCode, available }) => {
-    const probes: Array<{ readonly command: string; readonly args: ReadonlyArray<unknown> }> = [];
+    { name: "starts", exit: 0, stderr: "", status: "available" },
+    ...[
+      "bwrap: setting up uid map: Permission denied",
+      "unshare: write failed /proc/self/uid_map: Operation not permitted",
+      "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted",
+    ].map((stderr) => ({ name: `is blocked: ${stderr}`, exit: 1, stderr, status: "blocked" })),
+    {
+      name: "fails another way",
+      exit: 2,
+      stderr: "error: unexpected argument '-c' found",
+      status: "indeterminate",
+    },
+    { name: "cannot spawn", exit: "spawn-failure", stderr: "", status: "indeterminate" },
+    { name: "times out", exit: "hang", stderr: "", status: "indeterminate" },
+  ] as const)("probes Codex's sandbox when it $name", ({ exit, stderr, status }) => {
+    const probes: Array<{
+      readonly command: string;
+      readonly args: ReadonlyArray<unknown>;
+      readonly codexHome: unknown;
+    }> = [];
     const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
       Layer.provide(Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => {} })),
       Layer.provide(
@@ -1222,20 +1240,34 @@ describe("CodexAdapterV2 process exit", () => {
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
             if (command._tag === "StandardCommand") {
-              probes.push({ command: command.command, args: command.args });
+              probes.push({
+                command: command.command,
+                args: command.args,
+                codexHome: command.options.env?.CODEX_HOME,
+              });
+            }
+            if (exit === "spawn-failure") {
+              return Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                }),
+              );
             }
             return Effect.succeed(
               ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(999_999_998),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
-                isRunning: Effect.succeed(false),
+                exitCode:
+                  exit === "hang"
+                    ? Effect.never
+                    : Effect.succeed(ChildProcessSpawner.ExitCode(exit)),
+                isRunning: Effect.succeed(exit === "hang"),
                 kill: () => Effect.void,
                 unref: Effect.succeed(Effect.void),
                 stdin: Sink.drain,
                 stdout: Stream.empty,
-                stderr: Stream.make(
-                  new TextEncoder().encode("bwrap: setting up uid map: Permission denied"),
-                ),
+                stderr: Stream.make(new TextEncoder().encode(stderr)),
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
                 getOutputFd: () => Stream.empty,
@@ -1248,19 +1280,40 @@ describe("CodexAdapterV2 process exit", () => {
     );
     return Effect.gen(function* () {
       const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
-      const sandboxAvailable = factory.sandboxAvailable;
-      assert.isDefined(sandboxAvailable);
-      const probe = (binaryPath: string) =>
-        sandboxAvailable({ settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath }, environment: {} });
-      assert.equal(yield* probe("/opt/codex"), available);
-      assert.equal(yield* probe("/opt/codex"), available);
-      assert.equal(yield* probe("/other/codex"), available);
+      const sandboxStatus = factory.sandboxStatus;
+      assert.isDefined(sandboxStatus);
+      const probe = Effect.fnUntraced(function* (homePath: string) {
+        const fiber = yield* sandboxStatus({
+          settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath: "/opt/codex", homePath },
+          environment: {},
+        }).pipe(Effect.forkChild);
+        if (exit === "hang") yield* TestClock.adjust("10 seconds");
+        return yield* Fiber.join(fiber);
+      });
+      assert.equal(yield* probe("/home/a/.codex"), status);
+      assert.equal(yield* probe("/home/a/.codex"), status);
+      // Another instance's Codex home gets its own probe.
+      assert.equal(yield* probe("/home/b/.codex"), status);
+      // Only a settled result is kept; anything else probes again next turn.
       assert.deepEqual(
-        probes.map((entry) => entry.command),
-        ["/opt/codex", "/other/codex"],
+        probes.map((entry) => entry.codexHome),
+        status === "indeterminate"
+          ? ["/home/a/.codex", "/home/a/.codex", "/home/b/.codex"]
+          : ["/home/a/.codex", "/home/b/.codex"],
       );
-      assert.deepEqual(probes[0]?.args.slice(0, 1), ["sandbox"]);
-      assert.deepEqual(probes[0]?.args.slice(-2), ["--", "true"]);
+      assert.deepEqual(probes[0], {
+        command: "/opt/codex",
+        args: [
+          "sandbox",
+          "-c",
+          'sandbox_mode="workspace-write"',
+          "-c",
+          "sandbox_workspace_write.network_access=true",
+          "--",
+          "true",
+        ],
+        codexHome: "/home/a/.codex",
+      });
     }).pipe(Effect.provide(factoryLayer));
   });
 });
@@ -1639,6 +1692,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    sandboxStatus?: CodexAdapterV2.CodexSandboxStatus,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1655,6 +1709,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
+        ...(sandboxStatus === undefined
+          ? {}
+          : { sandboxStatus: () => Effect.succeed(sandboxStatus) }),
         open: (openInput) =>
           Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
             Effect.mapError(
@@ -3682,6 +3739,117 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           )[0],
           ["cancelled", "rm -rf /tmp/review", DELEGATED_APPROVAL_DECLINED_REASON],
         );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    {
+      name: "a full-access task runs unsandboxed",
+      runtimeMode: "full-access",
+      resume: false,
+      turnPolicy: { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } },
+      notice: "Codex's sandbox can't start on this host, so this delegated task runs without it.",
+    },
+    {
+      name: "a resumed turn keeps the sandbox",
+      runtimeMode: "full-access",
+      resume: true,
+      turnPolicy: {
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          networkAccess: true,
+          writableRoots: ["/workspace"],
+        },
+      },
+      notice: undefined,
+    },
+    {
+      name: "a read-only task stays read-only",
+      runtimeMode: "approval-required",
+      resume: false,
+      turnPolicy: { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } },
+      notice:
+        "Codex's sandbox can't start on this host, so this read-only task can't run commands.",
+    },
+  ] as const)(
+    "where Codex's sandbox is blocked, $name",
+    ({ runtimeMode, resume, turnPolicy, notice }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `sandbox-blocked-${runtimeMode}-${resume}-thread`;
+        const nativeTurnId = `sandbox-blocked-${runtimeMode}-${resume}-turn`;
+        const prompt = "Review the branch.";
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-sandbox-blocked-${runtimeMode}-${resume}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt, turnPolicy, resume }),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "blocked",
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`sandbox-blocked-${runtimeMode}-${resume}`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          ...(resume ? { resume: true as const } : {}),
+          // A resumed turn reads as the user's, whoever wrote it.
+          message: resume
+            ? turnInput.message
+            : { ...turnInput.message, createdBy: "agent", creationSource: "mcp" },
+          runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode },
+          appThread: {
+            ...turnInput.appThread,
+            lineage: {
+              ...turnInput.appThread.lineage,
+              parentThreadId: ThreadId.make("delegating-parent"),
+              relationshipToParent: "subagent",
+            },
+          },
+        });
+        const notices = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [[event.turnItem.level, event.turnItem.message]]
+              : [],
+          );
+        yield* harness.firstTerminal;
+        if (notice !== undefined) yield* harness.until(() => notices().length > 0);
+        assert.deepEqual(notices(), notice === undefined ? [] : [["warning", notice]]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
