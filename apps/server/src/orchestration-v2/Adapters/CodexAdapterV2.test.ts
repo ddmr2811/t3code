@@ -240,35 +240,40 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
 
       // An unattended delegated turn never asks and stays in its roots, whatever its parent set.
+      // Read-only stays read-only and can still read; only full-access drops a sandbox that
+      // cannot start on the host.
       const writableRoots = ["/workspace", "/repo/.git"];
-      for (const runtimeMode of [
-        "approval-required",
-        "auto-accept-edits",
-        "auto",
-        "full-access",
-      ] as const) {
-        const delegated = yield* CodexAdapterV2.buildCodexTurnStartParams({
-          nativeThreadId: `native-delegated-${runtimeMode}`,
-          codexInput: [{ type: "text", text: "test" }],
-          runtimePolicy: {
-            runtimeMode,
-            interactionMode: "default",
-            cwd: "/workspace",
-            approvalPolicy: "on-request",
-            sandboxPolicy: { type: "dangerFullAccess" },
-          },
-          delegatedWritableRoots: writableRoots,
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-        });
-        // Read-only keeps asking, and the adapter declines what it asks.
-        const readOnly = runtimeMode === "approval-required";
-        assert.equal(delegated.approvalPolicy, readOnly ? "untrusted" : "never");
-        assert.deepEqual(
-          delegated.sandboxPolicy,
-          readOnly
-            ? { type: "readOnly" }
-            : { type: "workspaceWrite", networkAccess: true, writableRoots },
-        );
+      for (const sandboxAvailable of [true, false]) {
+        for (const runtimeMode of [
+          "approval-required",
+          "auto-accept-edits",
+          "auto",
+          "full-access",
+        ] as const) {
+          const delegated = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: `native-delegated-${runtimeMode}`,
+            codexInput: [{ type: "text", text: "test" }],
+            runtimePolicy: {
+              runtimeMode,
+              interactionMode: "default",
+              cwd: "/workspace",
+              approvalPolicy: "on-request",
+              sandboxPolicy: { type: "dangerFullAccess" },
+            },
+            delegated: { writableRoots, sandboxAvailable },
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          });
+          assert.equal(delegated.approvalPolicy, "never");
+          assert.deepEqual(
+            delegated.sandboxPolicy,
+            runtimeMode === "approval-required"
+              ? { type: "readOnly" }
+              : runtimeMode === "full-access" && !sandboxAvailable
+                ? { type: "dangerFullAccess" }
+                : { type: "workspaceWrite", networkAccess: true, writableRoots },
+            `${runtimeMode} with the sandbox ${sandboxAvailable ? "available" : "blocked"}`,
+          );
+        }
       }
     }),
   );
@@ -1196,6 +1201,66 @@ describe("CodexAdapterV2 process exit", () => {
           .pipe(Effect.tap(() => Effect.sync(() => assert.equal(runningAgents, 1)))),
       );
       assert.equal(runningAgents, 0);
+    }).pipe(Effect.provide(factoryLayer));
+  });
+
+  it.effect.each([
+    { exitCode: 0, available: true },
+    { exitCode: 1, available: false },
+  ])("probes Codex's sandbox once per binary (exit $exitCode)", ({ exitCode, available }) => {
+    const probes: Array<{ readonly command: string; readonly args: ReadonlyArray<unknown> }> = [];
+    const factoryLayer = CodexAdapterV2.layerAppServerClientFactory.pipe(
+      Layer.provide(Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => {} })),
+      Layer.provide(
+        Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
+          native: undefined,
+          canonical: undefined,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand") {
+              probes.push({ command: command.command, args: command.args });
+            }
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(999_999_998),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.empty,
+                stderr: Stream.make(
+                  new TextEncoder().encode("bwrap: setting up uid map: Permission denied"),
+                ),
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          }),
+        ),
+      ),
+      Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+    );
+    return Effect.gen(function* () {
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory;
+      const sandboxAvailable = factory.sandboxAvailable;
+      assert.isDefined(sandboxAvailable);
+      const probe = (binaryPath: string) =>
+        sandboxAvailable({ settings: { ...DEFAULT_CODEX_SETTINGS, binaryPath }, environment: {} });
+      assert.equal(yield* probe("/opt/codex"), available);
+      assert.equal(yield* probe("/opt/codex"), available);
+      assert.equal(yield* probe("/other/codex"), available);
+      assert.deepEqual(
+        probes.map((entry) => entry.command),
+        ["/opt/codex", "/other/codex"],
+      );
+      assert.deepEqual(probes[0]?.args.slice(0, 1), ["sandbox"]);
+      assert.deepEqual(probes[0]?.args.slice(-2), ["--", "true"]);
     }).pipe(Effect.provide(factoryLayer));
   });
 });

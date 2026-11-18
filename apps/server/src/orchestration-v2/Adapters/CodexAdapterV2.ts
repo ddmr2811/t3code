@@ -826,25 +826,38 @@ export const codexDelegatedWritableRoots = Effect.fn("CodexAdapterV2.codexDelega
   },
 );
 
+export interface CodexDelegatedTurn {
+  readonly writableRoots: ReadonlyArray<string>;
+  /** False where Codex's sandbox cannot start, such as bubblewrap blocked by AppArmor. */
+  readonly sandboxAvailable: boolean;
+}
+
 /**
  * An unattended delegated task never asks: it writes only to `writableRoots` and temp folders,
- * with network. A read-only mode keeps its own policy, and the adapter declines what it asks.
- * Nothing the parent set can widen either.
+ * with network, or reads only under a read-only mode. Nothing the parent set can widen either.
+ * Only a full-access parent runs it unsandboxed, and only where the sandbox cannot start.
  */
 function codexDelegatedTurnPolicy(
   runtimeMode: RuntimeMode,
-  writableRoots: ReadonlyArray<string>,
+  delegated: CodexDelegatedTurn,
 ): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
 } {
-  const modeDefaults = codexRuntimeModeTurnDefaults(runtimeMode);
-  return modeDefaults.sandboxPolicy.type === "readOnly"
-    ? modeDefaults
-    : {
-        approvalPolicy: "never",
-        sandboxPolicy: { type: "workspaceWrite", networkAccess: true, writableRoots },
-      };
+  if (codexRuntimeModeTurnDefaults(runtimeMode).sandboxPolicy.type === "readOnly") {
+    return { approvalPolicy: "never", sandboxPolicy: { type: "readOnly" } };
+  }
+  if (!delegated.sandboxAvailable && runtimeMode === "full-access") {
+    return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
+  }
+  return {
+    approvalPolicy: "never",
+    sandboxPolicy: {
+      type: "workspaceWrite",
+      networkAccess: true,
+      writableRoots: delegated.writableRoots,
+    },
+  };
 }
 
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
@@ -865,7 +878,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     /** Set for an unattended delegated turn: see `codexDelegatedTurnPolicy`. */
-    readonly delegatedWritableRoots?: ReadonlyArray<string>;
+    readonly delegated?: CodexDelegatedTurn;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
@@ -880,9 +893,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const delegatedPolicy =
-      input.delegatedWritableRoots === undefined
+      input.delegated === undefined
         ? undefined
-        : codexDelegatedTurnPolicy(input.runtimePolicy.runtimeMode, input.delegatedWritableRoots);
+        : codexDelegatedTurnPolicy(input.runtimePolicy.runtimeMode, input.delegated);
     const approvalPolicy =
       delegatedPolicy !== undefined
         ? delegatedPolicy.approvalPolicy
@@ -1553,6 +1566,11 @@ export interface CodexAppServerClientFactoryShape {
     ProviderAdapter.ProviderAdapterOpenSessionError,
     Scope.Scope
   >;
+  /** Whether Codex's sandbox starts on this host. Omitted means it does. */
+  readonly sandboxAvailable?: (input: {
+    readonly settings: CodexSettings;
+    readonly environment: NodeJS.ProcessEnv;
+  }) => Effect.Effect<boolean>;
 }
 
 export class CodexAppServerClientFactory extends Context.Service<
@@ -1826,6 +1844,55 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   );
 }
 
+// Pinned: a danger-full-access config would skip the sandbox and always pass.
+const CODEX_SANDBOX_PROBE_ARGS = [
+  "sandbox",
+  "-c",
+  'sandbox_mode="workspace-write"',
+  "-c",
+  "sandbox_workspace_write.network_access=true",
+  "--",
+  "true",
+];
+
+/** A probe that fails to run or times out says nothing about the sandbox, so it keeps it. */
+const probeCodexSandbox = Effect.fn("CodexAdapterV2.probeCodexSandbox")(
+  function* (
+    spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+    command: string,
+    env: NodeJS.ProcessEnv,
+  ) {
+    const child = yield* spawner.spawn(
+      ChildProcess.make(command, CODEX_SANDBOX_PROBE_ARGS, {
+        env,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+        forceKillAfter: "1 second",
+      }),
+    );
+    const [stderr, exitCode] = yield* Effect.all(
+      [Stream.mkString(Stream.decodeText(child.stderr)), child.exitCode],
+      { concurrency: 2 },
+    );
+    if (exitCode === 0) return true;
+    yield* Effect.logWarning(
+      "Codex's sandbox cannot start on this host (AppArmor or user namespaces): unattended delegated Codex tasks from a full-access thread run without a sandbox, and the commands of read-only ones will fail.",
+      { command, exitCode, stderr: stderr.trim().slice(-500) },
+    );
+    return false;
+  },
+  Effect.scoped,
+  Effect.timeoutOption("10 seconds"),
+  Effect.map(Option.getOrElse(() => true)),
+  Effect.orElseSucceed(() => true),
+);
+
+const codexProcessEnvironment = (settings: CodexSettings, environment: NodeJS.ProcessEnv) => ({
+  ...codexAppServerEnvironment(environment),
+  ...(settings.homePath ? { CODEX_HOME: settings.homePath } : {}),
+});
+
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
@@ -1839,14 +1906,31 @@ export const layerAppServerClientFactory: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const portDiscovery = yield* PortScanner.PortDiscovery;
+    const platform = yield* HostProcess.Platform;
+    // One probe per binary for the process: a resolved runtime can pick another binary.
+    const sandboxProbes = new Map<string, Effect.Effect<boolean>>();
 
     return CodexAppServerClientFactory.of({
+      sandboxAvailable: Effect.fn("CodexAdapterV2.sandboxAvailable")(function* (input) {
+        // Only Linux's bubblewrap sandbox is known to be blocked by the host.
+        if (platform !== "linux") return true;
+        const command = input.settings.binaryPath || "codex";
+        let probe = sandboxProbes.get(command);
+        if (probe === undefined) {
+          probe = yield* Effect.cached(
+            probeCodexSandbox(
+              spawner,
+              command,
+              codexProcessEnvironment(input.settings, input.environment),
+            ),
+          );
+          sandboxProbes.set(command, probe);
+        }
+        return yield* probe;
+      }),
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
-        const environment = {
-          ...codexAppServerEnvironment(input.environment),
-          ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
-        };
+        const environment = codexProcessEnvironment(input.settings, input.environment);
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
           args: codexAppServerArgs(
@@ -7700,12 +7784,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               ...(isUnattendedDelegatedTurn(turnInput)
                 ? {
-                    delegatedWritableRoots: yield* codexDelegatedWritableRoots(
-                      turnInput.runtimePolicy.cwd,
-                    ).pipe(
-                      Effect.provideService(FileSystem.FileSystem, fileSystem),
-                      Effect.provideService(Path.Path, path),
-                    ),
+                    delegated: {
+                      writableRoots: yield* codexDelegatedWritableRoots(
+                        turnInput.runtimePolicy.cwd,
+                      ).pipe(
+                        Effect.provideService(FileSystem.FileSystem, fileSystem),
+                        Effect.provideService(Path.Path, path),
+                      ),
+                      sandboxAvailable:
+                        clientFactory.sandboxAvailable === undefined
+                          ? true
+                          : yield* clientFactory.sandboxAvailable({
+                              settings: resolvedRuntime?.config ?? adapterOptions.settings,
+                              environment:
+                                resolvedRuntime?.environment ?? adapterOptions.environment,
+                            }),
+                    },
                   }
                 : {}),
               modelSelection: turnInput.modelSelection,
