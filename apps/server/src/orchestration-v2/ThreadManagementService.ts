@@ -472,6 +472,7 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<boolean>;
   /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  readonly getThreadVisibleAttachmentIds: Orchestrator.OrchestratorV2["Service"]["getThreadVisibleAttachmentIds"];
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -1768,6 +1769,7 @@ const make = Effect.gen(function* () {
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
+    getThreadVisibleAttachmentIds: orchestrator.getThreadVisibleAttachmentIds,
     waitForThread,
     settleAfterRun,
     settleThread,

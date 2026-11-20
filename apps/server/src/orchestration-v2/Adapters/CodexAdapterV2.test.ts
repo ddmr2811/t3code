@@ -50,7 +50,7 @@ import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { attachmentRelativePath, resolveAttachmentPathById } from "../../attachmentStore.ts";
-import { threadAttachmentsDir } from "../../threadAttachments.ts";
+import { placeThreadAttachments, threadAttachmentsDir } from "../../threadAttachments.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -1055,6 +1055,12 @@ describe("CodexAdapterV2 thread attachment folders", () => {
       };
       const fileName = attachmentRelativePath(attachment)!;
       yield* fileSystem.writeFileString(path.join(serverConfig.attachmentsDir, fileName), "notes");
+      // The session manager places a turn's files before the adapter starts it.
+      yield* placeThreadAttachments({
+        attachmentsDir: serverConfig.attachmentsDir,
+        threadId,
+        attachments: [attachment],
+      });
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make(`session-${scenario}`),

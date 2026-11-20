@@ -17,7 +17,7 @@ export interface ProviderHostPaths {
   readonly baseDir: string;
   readonly stateDir: string;
   readonly providerStatusCacheDir: string;
-  /** Where chat attachments are stored; agents that sandbox file reads must be granted it. */
+  /** Where every thread's attachments are stored; agents get their thread's folder instead. */
   readonly attachmentsDir: string;
 }
 
@@ -46,8 +46,13 @@ export class ProviderHost extends Context.Service<
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     /** Completes once server startup finishes; first provider checks wait for it. */
     readonly awaitServerReady?: Effect.Effect<void>;
-    /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
+    /** Where the server reads an attachment's bytes; never a path to hand an agent. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /** The copy in the thread's own folder that its agent may read, or null if it is not there. */
+    readonly resolveThreadAttachmentPath: (
+      threadId: string,
+      attachment: ChatAttachment,
+    ) => string | null;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly credentials: (
       namespace: string,

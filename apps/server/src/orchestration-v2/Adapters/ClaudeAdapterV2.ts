@@ -12724,7 +12724,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const threadAttachmentsDir = ensureThreadAttachmentsDir({
+          const threadAttachmentsDir = yield* ensureThreadAttachmentsDir({
             attachmentsDir,
             threadId: turnInput.threadId,
           });

@@ -2627,7 +2627,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 turnInput.runtimePolicy.cwd ?? undefined,
               ),
               attachments: turnInput.message.attachments,
-              resolveAttachmentPath: host.resolveAttachmentPath,
+              resolveAttachmentPath: (attachment) =>
+                host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
             hasT3Mcp: mcpServers !== undefined,
@@ -3080,7 +3081,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   context.input.runtimePolicy.cwd ?? undefined,
                 ),
                 attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveAttachmentPath: (attachment) =>
+                  host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               });
               if (text.trim().length === 0) {

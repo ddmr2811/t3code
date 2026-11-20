@@ -84,7 +84,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
-import { threadAttachmentsDir } from "../../threadAttachments.ts";
+import { placeThreadAttachments, threadAttachmentsDir } from "../../threadAttachments.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -1310,6 +1310,8 @@ describe("ClaudeAdapterV2 thread attachment folders", () => {
           path.join(attachmentsDir, attachmentRelativePath(attachment)!),
           name,
         );
+        // The session manager places a turn's files before the adapter starts it.
+        yield* placeThreadAttachments({ attachmentsDir, threadId, attachments: [attachment] });
         const runtime = yield* adapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make(`provider-session-claude-folders-${name}`),
@@ -1348,9 +1350,9 @@ describe("ClaudeAdapterV2 thread attachment folders", () => {
         assert.notInclude(options?.additionalDirectories ?? [], attachmentsDir);
         assert.notInclude(options?.additionalDirectories ?? [], other);
       }
-      for (const [message, own, name] of [
-        [offered[0], folderA, "a"],
-        [offered[1], folderB, "b"],
+      for (const [message, own, other, name] of [
+        [offered[0], folderA, folderB, "a"],
+        [offered[1], folderB, folderA, "b"],
       ] as const) {
         const linked = path.join(
           own,
@@ -1358,6 +1360,7 @@ describe("ClaudeAdapterV2 thread attachment folders", () => {
         );
         assert.include(promptText(message), `is saved at: ${linked}`);
         assert.notInclude(promptText(message), `${attachmentsDir}${path.sep}`);
+        assert.notInclude(promptText(message), other);
         assert.equal(yield* fileSystem.readFileString(linked), name);
       }
     }).pipe(
@@ -2517,6 +2520,11 @@ describe("ClaudeAdapterV2 attachments", () => {
           path.join(attachmentsDir, attachmentRelativePath(document)!),
           pdfBytes,
         );
+        yield* placeThreadAttachments({
+          attachmentsDir,
+          threadId,
+          attachments: [attachment, document],
+        });
         const attemptId = RunAttemptId.make("attempt-claude-attachments");
         const now = yield* DateTime.now;
 
@@ -5867,6 +5875,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!),
           "%PDF",
         );
+        yield* placeThreadAttachments({
+          attachmentsDir: harness.attachmentsDir,
+          threadId: harness.threadId,
+          attachments: [attachment],
+        });
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         yield* harness.runtime.steerTurn({
           threadId: harness.threadId,

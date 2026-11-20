@@ -96,7 +96,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  threadHtmlRenderAttachmentIds,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
 import {
   isFoldableWorkItem,
@@ -6427,24 +6431,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.fn("ProjectionStore.getThreadVisibleAttachmentIds")(
         function* (threadId) {
           // A fork shows its source through the fork run, and that source's own source the same way.
+          // Each step needs the persisted fork and a fork run that belongs to the declared source.
           const sources = yield* sql<{ thread_id: ThreadId; through: number }>`
-            WITH RECURSIVE source(child_id, thread_id, through) AS (
-              SELECT thread.thread_id, json_extract(thread.payload_json, '$.forkedFrom.threadId'),
-                fork_run.ordinal
+            WITH RECURSIVE source(thread_id, through) AS (
+              SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId'), fork_run.ordinal
               FROM orchestration_v2_projection_threads AS thread
               JOIN orchestration_v2_projection_runs AS fork_run
                 ON fork_run.run_id = json_extract(thread.payload_json, '$.forkedFrom.runId')
-              WHERE thread.thread_id = ${threadId}
-                AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+                AND fork_run.thread_id = json_extract(thread.payload_json, '$.forkedFrom.threadId')
+              JOIN orchestration_v2_projection_context_transfers AS transfer
+                ON transfer.type = 'fork'
+                AND transfer.target_thread_id = thread.thread_id
+                AND transfer.source_thread_id = json_extract(thread.payload_json, '$.forkedFrom.threadId')
+              WHERE json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
                 AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+                AND thread.thread_id = ${threadId}
               UNION
-              SELECT thread.thread_id, json_extract(thread.payload_json, '$.forkedFrom.threadId'),
-                fork_run.ordinal
-              FROM source
-              JOIN orchestration_v2_projection_threads AS thread
-                ON thread.thread_id = source.thread_id
+              SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId'), fork_run.ordinal
+              FROM orchestration_v2_projection_threads AS thread
               JOIN orchestration_v2_projection_runs AS fork_run
                 ON fork_run.run_id = json_extract(thread.payload_json, '$.forkedFrom.runId')
+                AND fork_run.thread_id = json_extract(thread.payload_json, '$.forkedFrom.threadId')
+              JOIN orchestration_v2_projection_context_transfers AS transfer
+                ON transfer.type = 'fork'
+                AND transfer.target_thread_id = thread.thread_id
+                AND transfer.source_thread_id = json_extract(thread.payload_json, '$.forkedFrom.threadId')
+              JOIN source ON source.thread_id = thread.thread_id
               WHERE json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
                 AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
             )
@@ -6453,12 +6465,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           const inherited = yield* Effect.forEach(sources, (source) =>
             runAttachmentIds(source.thread_id, -1, source.through),
           );
+          // A guest's waiting files are the thread's own before any message row holds them.
+          const guestFiles = yield* sql<{ id: string }>`
+            SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+            FROM orchestration_v2_projection_threads AS thread,
+              json_each(thread.payload_json, '$.guestShare.messages') AS message,
+              json_each(message.value, '$.attachments') AS attachment
+            WHERE thread.thread_id = ${threadId}
+              AND json_extract(message.value, '$.status') = 'pending'
+          `;
+          // An id names the thread that stored it; a row naming any other thread's file is not
+          // trusted, even if an older server let it in.
+          const owners = new Set(
+            [threadId, ...sources.map((source) => source.thread_id)].flatMap(
+              (owner) => toSafeThreadAttachmentSegment(owner) ?? [],
+            ),
+          );
           return [
             ...new Set([
               ...(yield* runAttachmentIds(threadId, -1, Number.MAX_SAFE_INTEGER)),
               ...inherited.flat(),
+              ...guestFiles.map((row) => row.id),
             ]),
-          ];
+          ].filter((id) => owners.has(parseThreadSegmentFromAttachmentId(id) ?? ""));
         },
         (effect, threadId) =>
           effect.pipe(

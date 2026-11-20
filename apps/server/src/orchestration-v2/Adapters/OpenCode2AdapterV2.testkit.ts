@@ -308,6 +308,9 @@ const layerReplayHostWithAttachments = (
         paths: { ...host.paths, attachmentsDir },
         resolveAttachmentPath: (attachment) =>
           resolveAttachmentPath({ attachmentsDir, attachment }),
+        // Thread folders are covered by the adapters that grant them; here both name the store.
+        resolveThreadAttachmentPath: (_threadId, attachment) =>
+          resolveAttachmentPath({ attachmentsDir, attachment }),
         ...(resolveExtractedTextPath === undefined ? {} : { resolveExtractedTextPath }),
       });
     }),

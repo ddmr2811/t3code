@@ -3163,6 +3163,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
 
       const resolvePromptPayload = Effect.fnUntraced(function* (
+        threadId: string,
         text: string,
         attachments: ReadonlyArray<ChatAttachment>,
       ) {
@@ -3170,7 +3171,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const message = yield* providerMessageTextWithAttachmentPaths({
           text,
           attachments,
-          resolveAttachmentPath: host.resolveAttachmentPath,
+          resolveAttachmentPath: (attachment) =>
+            host.resolveThreadAttachmentPath(threadId, attachment),
           resolveExtractedTextPath: host.resolveExtractedTextPath,
         });
         for (const attachment of attachments) {
@@ -3294,7 +3296,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               : parsePiCompactCommand(turnInput.message.text);
             const payload =
               !continuation && compactCommand === null
-                ? yield* resolvePromptPayload(turnInput.message.text, turnInput.message.attachments)
+                ? yield* resolvePromptPayload(
+                    turnInput.threadId,
+                    turnInput.message.text,
+                    turnInput.message.attachments,
+                  )
                 : null;
             const startedAt = yield* DateTime.now;
             const syntheticNativeTurnId = `${state.providerThread.id}:attempt:${turnInput.attemptId}`;
@@ -3453,6 +3459,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const payload =
               compactCommand === null
                 ? yield* resolvePromptPayload(
+                    steerInput.threadId,
                     steerInput.message.text,
                     steerInput.message.attachments,
                   )

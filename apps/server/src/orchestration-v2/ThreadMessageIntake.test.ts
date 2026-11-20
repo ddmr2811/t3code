@@ -381,6 +381,49 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
+it.effect("refuses a stored file the receiving thread does not already see", () =>
+  Effect.gen(function* () {
+    const stored = (threadId: string) => ({
+      type: "file" as const,
+      id: ChatAttachmentId.make(createAttachmentId(threadId, "txt")!),
+      name: `${threadId}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    });
+    const own = stored("thread-receiver");
+    const foreign = stored("thread-elsewhere");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const send = (attachments: ReadonlyArray<typeof own>, commandId: string) =>
+      dispatchCommand({
+        type: "message.dispatch",
+        commandId: CommandId.make(commandId),
+        threadId: ThreadId.make("thread-receiver"),
+        messageId: MessageId.make(commandId),
+        text: "Again",
+        attachments,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            getThreadVisibleAttachmentIds: (threadId) =>
+              Effect.succeed(threadId === "thread-receiver" ? [own.id] : [foreign.id]),
+          }),
+        ),
+        Effect.flip,
+      );
+
+    const refused = yield* send([own, foreign], "send-foreign");
+    expect(refused).toMatchObject({ _tag: "AttachmentClaimError" });
+    expect(String(refused.message)).toContain("not part of this thread");
+    expect(captured).toHaveLength(0);
+    yield* send([own], "send-own");
+    expect(captured).toHaveLength(1);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
 it.effect("sends a guest message with the guest's files, never ones the client names", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -399,6 +442,8 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     const captured: OrchestrationV2ServerCommand[] = [];
     const layerGuestShare = Layer.mock(ThreadManagementService.ThreadManagementService)({
       dispatch: layerFailingDispatchHandler(captured),
+      // The guest's waiting files are the thread's own.
+      getThreadVisibleAttachmentIds: () => Effect.succeed([guestFile.id]),
       // Only the share is read.
       getThreadSnapshotWindow: () =>
         Effect.succeed({
@@ -466,6 +511,8 @@ it.effect("refuses a queued edit that keeps a file another edit already deleted"
             dispatch: layerFailingDispatchHandler(captured),
             hasReceipt: (commandId) =>
               Effect.succeed(captured.some((command) => command.commandId === commandId)),
+            // The queued message holds both files, so both are the thread's.
+            getThreadVisibleAttachmentIds: () => Effect.succeed([kept.id, deleted.id]),
           }),
         ),
         Effect.result,

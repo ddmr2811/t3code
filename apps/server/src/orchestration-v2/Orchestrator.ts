@@ -526,6 +526,10 @@ export interface OrchestratorV2Shape {
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
   ) => Effect.Effect<ThreadId | null, OrchestratorV2Error>;
+  /** Stored files the thread may send again: its own and those its run forks show it. */
+  readonly getThreadVisibleAttachmentIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, OrchestratorV2Error>;
   /** Titles of the given threads that exist, archived ones included. */
   readonly getThreadLinkMetadata: (
     threadIds: ReadonlyArray<ThreadId>,
@@ -16387,6 +16391,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .findGuestShareThreadId(shareId)
         .pipe(Effect.mapError(shellProjectionError));
     }),
+    getThreadVisibleAttachmentIds: Effect.fn("OrchestratorV2.getThreadVisibleAttachmentIds")(
+      function (threadId) {
+        return projectionStore
+          .getThreadVisibleAttachmentIds(threadId)
+          .pipe(Effect.mapError(shellProjectionError));
+      },
+    ),
     getThreadLinkMetadata: Effect.fn("OrchestratorV2.getThreadLinkMetadata")(function (threadIds) {
       return projectionStore
         .getThreadLinkMetadata(threadIds)

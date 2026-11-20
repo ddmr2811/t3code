@@ -53,7 +53,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { linkThreadAttachmentIds, threadAttachmentsDir } from "../threadAttachments.ts";
+import { placeThreadAttachments } from "../threadAttachments.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -444,31 +444,26 @@ export const layerWithOptions = (
       const agentScope = yield* AgentScope;
       const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
       const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
-      const linkedAttachmentThreads = new Set<ThreadId>();
-      // Turns link the files they send; this fills a folder once per process for history from
-      // before it existed, so a restarted or forked thread gets every file it can see.
-      const linkThreadAttachmentHistory = Effect.fn(
-        "ProviderSessionManagerV2.linkThreadAttachmentHistory",
+      const preparedAttachmentThreads = new Set<ThreadId>();
+      // A thread's folder holds copies of every file it can see. A turn or steer that sends files
+      // refreshes it, and so does the thread's first turn in this process, for older history.
+      const prepareThreadAttachments = Effect.fn(
+        "ProviderSessionManagerV2.prepareThreadAttachments",
       )(
-        function* (threadId: ThreadId) {
+        function* (threadId: ThreadId, sending: number) {
           if (Option.isNone(serverConfig)) return;
-          const { attachmentsDir } = serverConfig.value;
-          const threadDir = threadAttachmentsDir({ attachmentsDir, threadId });
-          if (threadDir === null) return;
-          if (
-            linkedAttachmentThreads.has(threadId) &&
-            (yield* fileSystem.exists(threadDir).pipe(Effect.orElseSucceed(() => false)))
-          )
-            return;
+          if (sending === 0 && preparedAttachmentThreads.has(threadId)) return;
           const attachmentIds = yield* projectionStore.getThreadVisibleAttachmentIds(threadId);
-          yield* Effect.sync(() =>
-            linkThreadAttachmentIds({ attachmentsDir, threadId, attachmentIds }),
-          );
-          linkedAttachmentThreads.add(threadId);
+          yield* placeThreadAttachments({
+            attachmentsDir: serverConfig.value.attachmentsDir,
+            threadId,
+            attachmentIds,
+          });
+          preparedAttachmentThreads.add(threadId);
         },
-        // A failed read leaves the folder as turns fill it; it never blocks the turn.
+        // A failed read leaves the folder as it was; the turn still starts.
         Effect.catch((cause) =>
-          Effect.logWarning("orchestration-v2.thread-attachments.link-failed", { cause }),
+          Effect.logWarning("orchestration-v2.thread-attachments.prepare-failed", { cause }),
         ),
       );
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
@@ -2488,7 +2483,9 @@ export const layerWithOptions = (
                   providerThread: input.providerThread,
                 }),
               ),
-              Effect.andThen(linkThreadAttachmentHistory(input.threadId)),
+              Effect.andThen(
+                prepareThreadAttachments(input.threadId, input.message.attachments.length),
+              ),
               Effect.andThen(
                 Effect.acquireUseRelease(
                   markBusy(
@@ -2532,6 +2529,9 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+              Effect.andThen(
+                prepareThreadAttachments(input.threadId, input.message.attachments.length),
+              ),
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.

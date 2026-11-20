@@ -1083,7 +1083,12 @@ describe("PiAdapterV2", () => {
       });
       yield* startTurn(runtime, providerThread, "default", [attachment]);
       const prompt = yield* fake.takeRequest("prompt");
-      assert.include(String(prompt["message"]), path);
+      // The agent is told the thread's own copy; the bytes come from the store.
+      assert.include(
+        String(prompt["message"]),
+        host.resolveThreadAttachmentPath(THREAD_ID, attachment)!,
+      );
+      assert.notInclude(String(prompt["message"]), path);
       assert.deepEqual(prompt["images"], [{ type: "image", data: "AQID", mimeType: "image/png" }]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -1097,6 +1102,10 @@ describe("PiAdapterV2", () => {
           ...host,
           resolveAttachmentPath: (attachment) =>
             attachment.id === "available" ? host.resolveAttachmentPath(attachment) : null,
+          resolveThreadAttachmentPath: (threadId, attachment) =>
+            attachment.id === "available"
+              ? host.resolveThreadAttachmentPath(threadId, attachment)
+              : null,
         }),
       );
       const providerThread = yield* runtime.ensureThread({
@@ -1138,7 +1147,7 @@ describe("PiAdapterV2", () => {
       const prompt = yield* fake.takeRequest("prompt");
       assert.isString(prompt["message"]);
       const message = String(prompt["message"]);
-      assert.include(message, host.resolveAttachmentPath(attachments[0]!)!);
+      assert.include(message, host.resolveThreadAttachmentPath(THREAD_ID, attachments[0]!)!);
       for (const attachment of attachments.slice(1)) {
         assert.include(message, attachment.name);
         assert.include(message, attachment.id);

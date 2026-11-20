@@ -30,6 +30,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { threadAttachmentsDir } from "../../threadAttachments.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -330,10 +331,16 @@ describe("AntigravityAdapterV2 client file system", () => {
       });
       const outsideFile = path.join(outside, "secret.txt");
       yield* fileSystem.writeFileString(outsideFile, "secret");
-      const attachment = path.join(host.paths.attachmentsDir, "pasted.txt");
-      yield* fileSystem.writeFileString(attachment, "pasted");
-
       const threadId = ThreadId.make("thread-antigravity-containment");
+      const folderOf = (thread: string) =>
+        threadAttachmentsDir({ attachmentsDir: host.paths.attachmentsDir, threadId: thread })!;
+      // Another thread's files, in the shared store and in that thread's own folder.
+      yield* fileSystem.makeDirectory(host.paths.attachmentsDir, { recursive: true });
+      const stored = path.join(host.paths.attachmentsDir, "stored.txt");
+      yield* fileSystem.writeFileString(stored, "another thread's file");
+      const otherFolderFile = path.join(folderOf("thread-antigravity-other"), "other.txt");
+      yield* fileSystem.makeDirectory(path.dirname(otherFolderFile), { recursive: true });
+      yield* fileSystem.writeFileString(otherFolderFile, "another thread's copy");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -347,6 +354,9 @@ describe("AntigravityAdapterV2 client file system", () => {
         runtimePolicy,
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+      // Opening the session made this thread's folder; the agent may read only that one.
+      const attachment = path.join(folderOf(threadId), "pasted.txt");
+      yield* fileSystem.writeFileString(attachment, "pasted");
       const initialize = (yield* fileSystem.readFileString(requestLog))
         .trim()
         .split("\n")
@@ -377,6 +387,13 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      for (const foreign of [stored, otherFolderFile]) {
+        const foreignRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: foreign },
+          context("fs/read_text_file"),
+        ).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(foreignRead), `${foreign} is outside this thread's folder`);
+      }
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
@@ -440,7 +457,12 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         mimeType: "application/pdf",
         sizeBytes: 9,
       });
-      const documentPath = host.resolveAttachmentPath(document)!;
+      // The agent is pointed at the thread's own copy, never the shared store.
+      const documentPath = host.resolveThreadAttachmentPath(
+        "thread-antigravity-workspace-change",
+        document,
+      )!;
+      yield* fileSystem.makeDirectory(path.dirname(documentPath), { recursive: true });
       yield* fileSystem.writeFileString(documentPath, "%PDF-1.7");
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");

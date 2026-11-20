@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { threadAttachmentPath } from "../threadAttachments.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
@@ -49,6 +50,8 @@ export const layer = Layer.effect(
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
+      resolveThreadAttachmentPath: (threadId, attachment) =>
+        threadAttachmentPath({ attachmentsDir: config.attachmentsDir, threadId, attachment }),
       // DocumentText owns the path-resolution span.
       resolveExtractedTextPath: Effect.fnUntraced(
         function* (path) {

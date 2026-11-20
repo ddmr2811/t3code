@@ -2029,13 +2029,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         );
       });
       const prompt = Effect.fnUntraced(function* (
+        threadId: string,
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = yield* providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
-          resolveAttachmentPath: providerHost.resolveAttachmentPath,
+          resolveAttachmentPath: (attachment) =>
+            providerHost.resolveThreadAttachmentPath(threadId, attachment),
           resolveExtractedTextPath: providerHost.resolveExtractedTextPath,
         });
         if (text) parts.push({ type: "text", text });
@@ -2093,7 +2095,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           turnInput.message.creationSource === "provider";
         const adopted = continuation ? wake : undefined;
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
-        const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
+        const parts =
+          compact || continuation ? [] : yield* prompt(turnInput.threadId, turnInput.message);
         const targetModel = continuation
           ? undefined
           : yield* resolveModel(turnInput.modelSelection);
@@ -2332,7 +2335,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               turn.compact
             )
               return yield* protocolError("This Muse turn cannot be steered");
-            const parts = yield* prompt(args.message);
+            const parts = yield* prompt(args.threadId, args.message);
             const result = yield* request("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,

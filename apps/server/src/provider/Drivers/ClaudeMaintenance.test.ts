@@ -419,6 +419,7 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
             },
             shouldRunBackgroundWork: () => Effect.succeed(true),
             resolveAttachmentPath: () => null,
+            resolveThreadAttachmentPath: () => null,
           }),
         ),
       );

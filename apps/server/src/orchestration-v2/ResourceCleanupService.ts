@@ -141,11 +141,11 @@ export const layer = Layer.effect(
       cleanupThreadAttachmentFolder: Effect.fn(
         "ResourceCleanupService.cleanupThreadAttachmentFolder",
       )(function (threadId: ThreadId) {
-        return Effect.try({
-          try: () =>
-            removeThreadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId }),
-          catch: (cause) => new ResourceCleanupError({ operation: "attachment", threadId, cause }),
-        });
+        return removeThreadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId }).pipe(
+          Effect.mapError(
+            (cause) => new ResourceCleanupError({ operation: "attachment", threadId, cause }),
+          ),
+        );
       }),
     };
   }),

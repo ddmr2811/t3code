@@ -613,12 +613,16 @@ it.effect(
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const instanceId = ProviderInstanceId.make("claudeAgent");
-      const sourceId = ThreadId.make("thread:files-source");
-      const forkId = ThreadId.make("thread:files-fork");
-      const nestedId = ThreadId.make("thread:files-nested");
-      const otherId = ThreadId.make("thread:files-other");
+      const sourceId = ThreadId.make("thread-files-source");
+      const forkId = ThreadId.make("thread-files-fork");
+      const nestedId = ThreadId.make("thread-files-nested");
+      const otherId = ThreadId.make("thread-files-other");
+      const unrecordedId = ThreadId.make("thread-files-unrecorded");
+      const misplacedId = ThreadId.make("thread-files-misplaced");
       const runId = (threadId: ThreadId, ordinal: number) =>
         RunId.make(`run:${threadId}:${ordinal}`);
+      const fileId = (threadId: ThreadId, n: number) =>
+        `${threadId}-00000000-0000-4000-8000-${String(n).padStart(12, "0")}-txt`;
       const thread = (
         id: ThreadId,
         forkedFrom: OrchestrationV2AppThread["forkedFrom"],
@@ -645,13 +649,21 @@ it.effect(
         lastVisitedAt: null,
         deletedAt: null,
       });
-      const threads = [
+      const fork = (source: ThreadId, ordinal: number, runThread = source) => ({
+        type: "run" as const,
+        threadId: source,
+        runId: runId(runThread, ordinal),
+      });
+      for (const value of [
         thread(sourceId, null),
-        thread(forkId, { type: "run", threadId: sourceId, runId: runId(sourceId, 1) }),
-        thread(nestedId, { type: "run", threadId: forkId, runId: runId(forkId, 1) }),
+        thread(forkId, fork(sourceId, 1)),
+        thread(nestedId, fork(forkId, 1)),
         thread(otherId, null),
-      ];
-      for (const value of threads) {
+        // Claims a fork that was never recorded.
+        thread(unrecordedId, fork(sourceId, 2)),
+        // Names the source but a run of another thread.
+        thread(misplacedId, fork(sourceId, 1, otherId)),
+      ]) {
         yield* store.apply({
           id: EventId.make(`event:thread:${value.id}`),
           type: "thread.created",
@@ -660,7 +672,44 @@ it.effect(
           payload: value,
         });
       }
-      const runWithFile = (threadId: ThreadId, ordinal: number, fileId: string) =>
+      for (const [source, target] of [
+        [sourceId, forkId],
+        [forkId, nestedId],
+        [sourceId, misplacedId],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`event:fork:${target}`),
+          type: "context-transfer.created",
+          threadId: target,
+          occurredAt: now,
+          payload: {
+            id: ContextTransferId.make(`transfer:${target}`),
+            type: "fork",
+            sourceThreadId: source,
+            targetThreadId: target,
+            sourcePoint: { threadId: source, runId: runId(source, 1) },
+            basePoint: null,
+            sourceProviderInstanceId: instanceId,
+            targetProviderInstanceId: instanceId,
+            targetRunId: runId(target, 1),
+            status: "consumed",
+            resolution: {
+              strategy: "native_fork",
+              providerThreadRef: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                nativeId: `native-${source}`,
+                strength: "strong",
+              },
+            },
+            createdBy: "user",
+            error: null,
+            createdAt: now,
+            updatedAt: now,
+            consumedAt: now,
+          },
+        });
+      }
+      const runWithFiles = (threadId: ThreadId, ordinal: number, fileIds: ReadonlyArray<string>) =>
         Effect.gen(function* () {
           const id = runId(threadId, ordinal);
           const messageId = MessageId.make(`message:${id}`);
@@ -701,9 +750,13 @@ it.effect(
               nodeId: null,
               role: "user",
               text: "See the file",
-              attachments: [
-                { type: "file", id: fileId, name: "a.txt", mimeType: "text/plain", sizeBytes: 1 },
-              ],
+              attachments: fileIds.map((fileId) => ({
+                type: "file" as const,
+                id: fileId,
+                name: "a.txt",
+                mimeType: "text/plain",
+                sizeBytes: 1,
+              })),
               streaming: false,
               createdBy: "user",
               creationSource: "web",
@@ -712,17 +765,24 @@ it.effect(
             },
           });
         });
-      yield* runWithFile(sourceId, 1, "source-shown");
-      yield* runWithFile(sourceId, 2, "source-after-fork");
-      yield* runWithFile(forkId, 1, "fork-own");
-      yield* runWithFile(forkId, 2, "fork-after-nested");
-      yield* runWithFile(otherId, 1, "other-thread");
+      yield* runWithFiles(sourceId, 1, [fileId(sourceId, 1)]);
+      yield* runWithFiles(sourceId, 2, [fileId(sourceId, 2)]);
+      // An older server let another thread's file into this fork's own message.
+      yield* runWithFiles(forkId, 1, [fileId(forkId, 1), fileId(otherId, 1)]);
+      yield* runWithFiles(forkId, 2, [fileId(forkId, 2)]);
+      yield* runWithFiles(otherId, 1, [fileId(otherId, 1)]);
 
       const visible = (threadId: ThreadId) =>
         store.getThreadVisibleAttachmentIds(threadId).pipe(Effect.map((ids) => ids.toSorted()));
-      assert.deepEqual(yield* visible(sourceId), ["source-after-fork", "source-shown"]);
-      assert.deepEqual(yield* visible(forkId), ["fork-after-nested", "fork-own", "source-shown"]);
-      assert.deepEqual(yield* visible(nestedId), ["fork-own", "source-shown"]);
-      assert.deepEqual(yield* visible(otherId), ["other-thread"]);
+      assert.deepEqual(yield* visible(sourceId), [fileId(sourceId, 1), fileId(sourceId, 2)]);
+      assert.deepEqual(yield* visible(forkId), [
+        fileId(forkId, 1),
+        fileId(forkId, 2),
+        fileId(sourceId, 1),
+      ]);
+      assert.deepEqual(yield* visible(nestedId), [fileId(forkId, 1), fileId(sourceId, 1)]);
+      assert.deepEqual(yield* visible(otherId), [fileId(otherId, 1)]);
+      assert.deepEqual(yield* visible(unrecordedId), []);
+      assert.deepEqual(yield* visible(misplacedId), []);
     }).pipe(Effect.provide(layerDatabase)),
 );

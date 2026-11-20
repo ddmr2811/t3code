@@ -4192,18 +4192,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return (yield* providerMessageTextWithAttachmentPaths({
         text: turnInput.message.text,
         attachments: turnInput.message.attachments,
-        resolveAttachmentPath: host.resolveAttachmentPath,
+        resolveAttachmentPath: (attachment) =>
+          host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
         resolveExtractedTextPath: host.resolveExtractedTextPath,
       })).trim();
     });
 
-    const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
+    const promptFiles = Effect.fnUntraced(function* (
+      threadId: string,
+      attachments: ReadonlyArray<ChatAttachment>,
+    ) {
       const files: Array<{ uri: string; name: string }> = [];
       // An external server may not share T3's attachment directory.
       if (connection.external) return files;
       for (const attachment of attachments) {
         if (!isProviderNativeImageAttachment(attachment)) continue;
-        const path = host.resolveAttachmentPath(attachment);
+        const path = host.resolveThreadAttachmentPath(threadId, attachment);
         if (path === null) continue;
         // OpenCode rejects the whole prompt if an attached file is missing.
         const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
@@ -4587,7 +4591,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
-      const files = yield* promptFiles(turnInput.message.attachments);
+      const files = yield* promptFiles(turnInput.threadId, turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
@@ -4927,11 +4931,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
           const { files, messageText } = yield* Effect.gen(function* () {
-            const files = yield* promptFiles(steerInput.message.attachments);
+            const files = yield* promptFiles(steerInput.threadId, steerInput.message.attachments);
             const messageText = (yield* providerMessageTextWithAttachmentPaths({
               text: steerInput.message.text,
               attachments: steerInput.message.attachments,
-              resolveAttachmentPath: host.resolveAttachmentPath,
+              resolveAttachmentPath: (attachment) =>
+                host.resolveThreadAttachmentPath(steerInput.threadId, attachment),
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             })).trim();
             return { files, messageText };

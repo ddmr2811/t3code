@@ -191,6 +191,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      resolveThreadAttachmentPath: () => null,
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
@@ -4003,6 +4004,7 @@ describe("OpenCodeAdapterV2", () => {
         },
         {
           resolveAttachmentPath: () => "/workspace/report.docx",
+          resolveThreadAttachmentPath: () => "/workspace/report.docx",
           resolveExtractedTextPath: () =>
             Deferred.succeed(lookup, undefined).pipe(
               Effect.andThen(Deferred.await(release)),

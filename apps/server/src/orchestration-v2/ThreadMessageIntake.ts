@@ -1,6 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import { ThreadId, type ChatAttachment, type OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -34,6 +34,39 @@ function dispatchWasNotAccepted(
       return false;
   }
 }
+/** A stored file may be sent again only to a thread that already sees it; uploads are new. */
+const claimThreadAttachments = Effect.fn("ThreadMessageIntake.claimThreadAttachments")(
+  function* (input: {
+    readonly threadId: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+  }) {
+    const stored = input.attachments.filter(
+      (attachment) => !AttachmentClaims.attachmentIsPendingUpload(attachment),
+    );
+    if (stored.length > 0) {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const visible = new Set(
+        yield* threads.getThreadVisibleAttachmentIds(ThreadId.make(input.threadId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AttachmentClaims.AttachmentClaimError({
+                message: "Failed to read the thread's files.",
+                cause,
+              }),
+          ),
+        ),
+      );
+      const foreign = stored.find((attachment) => !visible.has(attachment.id));
+      if (foreign !== undefined) {
+        return yield* new AttachmentClaims.AttachmentClaimError({
+          message: `Attachment '${foreign.name}' cannot be sent: it is not part of this thread.`,
+        });
+      }
+    }
+    return yield* AttachmentClaims.claimPendingAttachments(input);
+  },
+);
+
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
@@ -99,7 +132,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     const prepared = yield* Effect.gen(function* () {
       const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
       for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
-        const claimed = yield* AttachmentClaims.claimPendingAttachments({
+        const claimed = yield* claimThreadAttachments({
           threadId: command.threadId,
           attachments,
         });
@@ -114,11 +147,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         attachmentsByQuestionId,
         attachmentsDir: config.attachmentsDir,
         threadId: command.threadId,
-      }).pipe(
-        Effect.mapError(
-          (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
-        ),
-      );
+      });
       return { answers, attachmentsByQuestionId };
     }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
     return yield* threads
@@ -179,7 +208,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       }
     }
   }
-  const claimed = yield* AttachmentClaims.claimPendingAttachments({
+  const claimed = yield* claimThreadAttachments({
     threadId: command.threadId,
     attachments: command.attachments ?? [],
   });
@@ -218,7 +247,7 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   input: ThreadManagement.ThreadManagementSendInput,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
+  const claimed = yield* claimThreadAttachments(input);
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
     Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
     Effect.tapError((error) =>
@@ -234,15 +263,15 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
 ) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
-  if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
+  if (input.initialMessage === undefined || input.initialMessage.attachments.length === 0) {
     return yield* launches.launch(input);
   }
   if (input.threadId === undefined) {
     return yield* new AttachmentClaims.AttachmentClaimError({
-      message: "Uploaded attachments need a thread id at launch.",
+      message: "Attachments need a thread id at launch.",
     });
   }
-  const claimed = yield* AttachmentClaims.claimPendingAttachments({
+  const claimed = yield* claimThreadAttachments({
     threadId: input.threadId,
     attachments: input.initialMessage.attachments,
   });

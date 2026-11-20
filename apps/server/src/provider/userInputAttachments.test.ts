@@ -1312,9 +1312,9 @@ describe("question answer paths", () => {
         "Second",
         `Attached file "spec \\"final\\".txt": ${JSON.stringify(linked)}`,
       ]);
-      // The thread folder holds a hard link to the stored file, not a copy or a symlink.
-      expect(NodeFS.lstatSync(linked).isSymbolicLink()).toBe(false);
-      expect(NodeFS.statSync(linked).ino).toBe(NodeFS.statSync(path).ino);
+      // The thread folder holds its own read-only copy of the stored file.
+      expect(NodeFS.lstatSync(linked).isFile()).toBe(true);
+      expect(NodeFS.statSync(linked).ino).not.toBe(NodeFS.statSync(path).ino);
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
       expect(NodeFS.readFileSync(path, "utf8")).toBe("spec");
@@ -1328,16 +1328,16 @@ describe("question answer paths", () => {
       expect(specialKey["__proto__"]).toContain(JSON.stringify(linked));
     }).pipe(Effect.provide(layer)),
   );
-  it.effect("does not send an unavailable attachment path", () =>
+  it.effect("names a missing attachment as unavailable instead of sending its path", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
-      const result = yield* appendUserInputAttachmentPaths({
+      const answers = yield* appendUserInputAttachmentPaths({
         answers: { q: "" },
         attachmentsDir: config.attachmentsDir,
         threadId,
         attachmentsByQuestionId: { q: [attachment] },
-      }).pipe(Effect.result);
-      expect(result._tag).toBe("Failure");
+      });
+      expect(answers.q).toBe(`Attached file "spec \\"final\\".txt" is unavailable.`);
     }).pipe(Effect.provide(layer)),
   );
 });

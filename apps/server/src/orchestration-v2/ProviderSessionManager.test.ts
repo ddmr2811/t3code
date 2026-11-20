@@ -1729,8 +1729,8 @@ it.effect("ProviderSessionManagerV2 links a thread's earlier files before its fi
       });
       assert.deepEqual(NodeFS.readdirSync(folder), [`${earlier.id}.txt`]);
       assert.equal(
-        NodeFS.statSync(NodePath.join(folder, `${earlier.id}.txt`)).ino,
-        NodeFS.statSync(NodePath.join(config.attachmentsDir, `${earlier.id}.txt`)).ino,
+        NodeFS.readFileSync(NodePath.join(folder, `${earlier.id}.txt`), "utf8"),
+        "earlier",
       );
     }).pipe(
       Effect.provide(

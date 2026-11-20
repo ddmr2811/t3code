@@ -3,16 +3,8 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
-import { threadAttachmentPath } from "../threadAttachments.ts";
+import { placeThreadAttachments, threadAttachmentPath } from "../threadAttachments.ts";
 import * as DocumentText from "./DocumentText.ts";
-class UserInputAttachmentError extends Schema.TaggedError<UserInputAttachmentError>()(
-  "UserInputAttachmentError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
 
 const quoteReference = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -32,42 +24,36 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
       const references: string[] = [];
       for (const attachment of attachments) {
         const path = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
-        if (
-          !path ||
-          !(yield* fs.exists(path).pipe(
-            Effect.mapError(
-              (cause) =>
-                new UserInputAttachmentError({
-                  operation: "respondToUserInput",
-                  issue: `Could not access attachment '${attachment.name}'.`,
-                  cause,
-                }),
-            ),
-          ))
-        ) {
-          return yield* new UserInputAttachmentError({
-            operation: "respondToUserInput",
-            issue: `Attachment '${attachment.name}' is no longer available. Attach it again.`,
+        const stored =
+          path !== null && (yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)));
+        // Extract in the store first so the thread folder gets the sidecar too.
+        const extracted = stored && (yield* documents.ensure(path)) !== undefined;
+        if (stored) {
+          yield* placeThreadAttachments({
+            attachmentsDir: input.attachmentsDir,
+            threadId: input.threadId,
+            attachments: [attachment],
           });
         }
-        // Extract in the store first so the thread folder links the sidecar too.
-        const extracted = (yield* documents.ensure(path)) !== undefined;
-        const threadPath = threadAttachmentPath({
-          attachmentsDir: input.attachmentsDir,
-          threadId: input.threadId,
-          attachment,
-        });
+        const threadPath = stored
+          ? threadAttachmentPath({
+              attachmentsDir: input.attachmentsDir,
+              threadId: input.threadId,
+              attachment,
+            })
+          : null;
+        // Like a turn's attachments, a missing file is named as unavailable instead of failing.
         if (threadPath === null) {
-          return yield* new UserInputAttachmentError({
-            operation: "respondToUserInput",
-            issue: `Could not access attachment '${attachment.name}'.`,
-          });
+          references.push(
+            `Attached ${attachment.type} ${quoteReference(attachment.name)} is unavailable.`,
+          );
+          continue;
         }
         const sidecar = `${threadPath}.txt`;
-        const linkedText =
+        const copiedText =
           extracted && (yield* fs.exists(sidecar).pipe(Effect.orElseSucceed(() => false)));
         references.push(
-          `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(threadPath)}${linkedText ? ` (text extracted to: ${quoteReference(sidecar)})` : ""}`,
+          `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(threadPath)}${copiedText ? ` (text extracted to: ${quoteReference(sidecar)})` : ""}`,
         );
       }
       const answer = answers.get(questionId);

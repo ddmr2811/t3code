@@ -33,6 +33,7 @@ import {
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import { ensureThreadAttachmentsDir, threadAttachmentsDir } from "../../threadAttachments.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -135,11 +136,20 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
-  const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  const threadFolder = (threadId: string) =>
+    threadAttachmentsDir({ attachmentsDir: options.host.paths.attachmentsDir, threadId });
+  // The agent reads its own thread's attachment folder, never the store every thread shares.
+  const antigravityClientFileRoots = (cwd: string | null, threadId: string) => {
+    const folder = threadFolder(threadId);
+    return [...(cwd === null ? [] : [cwd]), ...(folder === null ? [] : [folder])];
+  };
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      const folder = yield* ensureThreadAttachmentsDir({
+        attachmentsDir: options.host.paths.attachmentsDir,
+        threadId: input.threadId,
+      });
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
@@ -147,7 +157,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ...input,
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
-            additionalDirectories: [options.host.paths.attachmentsDir],
+            additionalDirectories: folder === null ? [] : [folder],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -253,11 +263,11 @@ export function makeAntigravityAcpAdapterFlavor(
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
-      readTextFile: (request, cwd) =>
+      readTextFile: (request, cwd, threadId) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          allowedRoots: antigravityClientFileRoots(cwd, threadId),
           request,
         }),
     },

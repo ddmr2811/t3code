@@ -121,6 +121,7 @@ function layerProviderHost(input: {
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
       ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
+      resolveThreadAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
     }),
   );

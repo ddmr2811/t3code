@@ -3379,12 +3379,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const text = (yield* providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveAttachmentPath: (attachment) =>
+              host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           })).trim();
           const files = OpenCodeRuntime.toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveAttachmentPath: (attachment) =>
+              host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
           });
           if (text.length === 0 && files.length === 0) {
             throw protocolError("OpenCode turns require text or at least one valid attachment");
@@ -4003,7 +4005,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               const text = (yield* providerMessageTextWithAttachmentPaths({
                 text: steerInput.message.text,
                 attachments: steerInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveAttachmentPath: (attachment) =>
+                  host.resolveThreadAttachmentPath(steerInput.threadId, attachment),
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               })).trim();
               if (state.activeTurn !== turn || turn.interrupted || turn.finalized) {
@@ -4013,7 +4016,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               const files = OpenCodeRuntime.toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveAttachmentPath: (attachment) =>
+                  host.resolveThreadAttachmentPath(steerInput.threadId, attachment),
               });
               if (text.length === 0 && files.length === 0) {
                 return yield* protocolError("OpenCode steering requires text or an attachment");

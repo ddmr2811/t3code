@@ -202,6 +202,8 @@ const ACP_PROMPT_ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
 ]);
 
 export interface AcpAdapterV2RuntimeInput {
+  /** The thread the session serves; it may read only that thread's attachment folder. */
+  readonly threadId: ThreadId;
   readonly cwd: string;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -465,6 +467,7 @@ export interface AcpAdapterV2Flavor {
     readonly readTextFile: (
       request: EffectAcpSchema.ReadTextFileRequest,
       cwd: string | null,
+      threadId: ThreadId,
     ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
     readonly writeTextFile?: (
       request: EffectAcpSchema.WriteTextFileRequest,
@@ -2571,6 +2574,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           return {
+            threadId: input.threadId,
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
@@ -6713,6 +6717,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         // Post-settle background work retains the latest turn policy.
         const clientPolicyContext = Effect.map(Ref.get(activeTurn), (context) => ({
+          threadId: context?.input.threadId ?? input.threadId,
           policy: context?.input.runtimePolicy ?? latestRuntimePolicy,
           turnKey: context === null ? null : String(context.providerTurnId),
         }));
@@ -6821,7 +6826,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (clientFileSystem !== undefined) {
             yield* targetRuntime.handleReadTextFile((request) =>
               clientPolicyContext.pipe(
-                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
+                Effect.flatMap(({ policy, threadId }) =>
+                  clientFileSystem.readTextFile(request, policy.cwd, threadId),
+                ),
               ),
             );
             const writeTextFile = clientFileSystem.writeTextFile;
@@ -8379,7 +8386,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
-            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveAttachmentPath: (attachment) =>
+              host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
@@ -8403,7 +8411,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               .buildAttachmentPrompt({
                 text: messageText,
                 attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveAttachmentPath: (attachment) =>
+                  host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
                 promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
                 agentVersion: setup?.initializeResult.agentInfo?.version,
                 currentModel:
@@ -9312,7 +9321,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const text = yield* providerMessageTextWithAttachmentPaths({
                 text: turnInput.message.text,
                 attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveAttachmentPath: (attachment) =>
+                  host.resolveThreadAttachmentPath(turnInput.threadId, attachment),
                 resolveExtractedTextPath: host.resolveExtractedTextPath,
               });
               const steerId = yield* steering.send(
