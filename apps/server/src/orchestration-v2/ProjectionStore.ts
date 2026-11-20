@@ -518,6 +518,10 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     options?: { readonly includeShownByLiveFork?: boolean },
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
+  /** Files a thread's provider may read: its own, and those its run fork sources show it. */
+  readonly getThreadVisibleAttachmentIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadHistoryPage: (
     threadId: ThreadId,
     cursor: string,
@@ -6419,6 +6423,49 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return candidates.filter((id) => !retained.has(id));
     });
 
+    const getThreadVisibleAttachmentIds: ProjectionStoreV2Shape["getThreadVisibleAttachmentIds"] =
+      Effect.fn("ProjectionStore.getThreadVisibleAttachmentIds")(
+        function* (threadId) {
+          // A fork shows its source through the fork run, and that source's own source the same way.
+          const sources = yield* sql<{ thread_id: ThreadId; through: number }>`
+            WITH RECURSIVE source(child_id, thread_id, through) AS (
+              SELECT thread.thread_id, json_extract(thread.payload_json, '$.forkedFrom.threadId'),
+                fork_run.ordinal
+              FROM orchestration_v2_projection_threads AS thread
+              JOIN orchestration_v2_projection_runs AS fork_run
+                ON fork_run.run_id = json_extract(thread.payload_json, '$.forkedFrom.runId')
+              WHERE thread.thread_id = ${threadId}
+                AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+                AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+              UNION
+              SELECT thread.thread_id, json_extract(thread.payload_json, '$.forkedFrom.threadId'),
+                fork_run.ordinal
+              FROM source
+              JOIN orchestration_v2_projection_threads AS thread
+                ON thread.thread_id = source.thread_id
+              JOIN orchestration_v2_projection_runs AS fork_run
+                ON fork_run.run_id = json_extract(thread.payload_json, '$.forkedFrom.runId')
+              WHERE json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+                AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+            )
+            SELECT thread_id, MAX(through) AS through FROM source GROUP BY thread_id
+          `;
+          const inherited = yield* Effect.forEach(sources, (source) =>
+            runAttachmentIds(source.thread_id, -1, source.through),
+          );
+          return [
+            ...new Set([
+              ...(yield* runAttachmentIds(threadId, -1, Number.MAX_SAFE_INTEGER)),
+              ...inherited.flat(),
+            ]),
+          ];
+        },
+        (effect, threadId) =>
+          effect.pipe(
+            Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+          ),
+      );
+
     // Deleting a fork also frees what its deleted sources kept only for it.
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = Effect.fn(
       "ProjectionStore.getThreadAttachmentIds",
@@ -9341,6 +9388,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       searchThread: readOnReader(searchThread),
       searchThreadStream,
       getThreadAttachmentIds: readOnReader(getThreadAttachmentIds),
+      getThreadVisibleAttachmentIds: readOnReader(getThreadVisibleAttachmentIds),
     } satisfies ProjectionStoreV2Shape;
   }),
 );

@@ -162,6 +162,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { ensureThreadAttachmentsDir, threadAttachmentPath } from "../../threadAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
@@ -2142,6 +2143,7 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
+  /** The thread's attachment folder; never the shared store. */
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
   readonly promptSuggestions?: boolean;
@@ -2991,6 +2993,8 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly priority?: SDKUserMessage["priority"];
   readonly uuid?: SDKUserMessage["uuid"];
   readonly attachmentsDir: string;
+  /** Paths in the prompt point at this thread's folder; bytes are still read from the store. */
+  readonly threadId: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
@@ -3020,7 +3024,11 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
         Effect.provideService(FileSystem.FileSystem, input.fileSystem),
       ),
     resolveAttachmentPath: (attachment) =>
-      resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
+      threadAttachmentPath({
+        attachmentsDir: input.attachmentsDir,
+        threadId: input.threadId,
+        attachment,
+      }),
   });
 
   const dispatch =
@@ -12716,6 +12724,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const threadAttachmentsDir = ensureThreadAttachmentsDir({
+            attachmentsDir,
+            threadId: turnInput.threadId,
+          });
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
@@ -12724,7 +12736,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
-            attachmentsDir,
+            ...(threadAttachmentsDir === null ? {} : { attachmentsDir: threadAttachmentsDir }),
             settings: adapterOptions.settings,
             // Delegated threads have no one typing, so they never ask for suggestions.
             promptSuggestions:
@@ -13056,6 +13068,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           }),
                       attachments: turnInput.message.attachments,
                       attachmentsDir,
+                      threadId: turnInput.threadId,
                       fileSystem,
                       pdfReservation,
                       ...(skills === undefined ? {} : { skills }),
@@ -13597,6 +13610,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               priority: "now",
               uuid: steerUuid,
               attachmentsDir,
+              threadId: turnInput.threadId,
               fileSystem,
               pdfReservation,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),

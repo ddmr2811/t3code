@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { removeThreadAttachmentsDir } from "../threadAttachments.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -32,6 +33,10 @@ export class ResourceCleanupService extends Context.Reference<{
   readonly cleanupAttachments: (
     attachmentIds: ReadonlyArray<string>,
   ) => Effect.Effect<void, ResourceCleanupError>;
+  /** Removes the thread's folder of attachment links; the stored files are separate. */
+  readonly cleanupThreadAttachmentFolder: (
+    threadId: ThreadId,
+  ) => Effect.Effect<void, ResourceCleanupError>;
 }>("t3/orchestration-v2/ResourceCleanupService", {
   defaultValue: () => ({
     cleanupScheduledTasks: () => Effect.void,
@@ -39,6 +44,7 @@ export class ResourceCleanupService extends Context.Reference<{
     cleanupPreviews: () => Effect.void,
     cleanupDevices: () => Effect.void,
     cleanupAttachments: () => Effect.void,
+    cleanupThreadAttachmentFolder: () => Effect.void,
   }),
 }) {}
 
@@ -131,6 +137,15 @@ export const layer = Layer.effect(
           },
           { discard: true, concurrency: 4 },
         );
+      }),
+      cleanupThreadAttachmentFolder: Effect.fn(
+        "ResourceCleanupService.cleanupThreadAttachmentFolder",
+      )(function (threadId: ThreadId) {
+        return Effect.try({
+          try: () =>
+            removeThreadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId }),
+          catch: (cause) => new ResourceCleanupError({ operation: "attachment", threadId, cause }),
+        });
       }),
     };
   }),

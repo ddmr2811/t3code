@@ -124,6 +124,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
     skipReferenced: Schema.optional(Schema.Boolean),
+    /** Thread deletion also removes the thread's folder of attachment links. */
+    removeThreadFolder: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),

@@ -113,6 +113,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         answers: command.answers ?? {},
         attachmentsByQuestionId,
         attachmentsDir: config.attachmentsDir,
+        threadId: command.threadId,
       }).pipe(
         Effect.mapError(
           (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),

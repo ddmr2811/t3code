@@ -84,6 +84,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { threadAttachmentsDir } from "../../threadAttachments.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -145,6 +146,14 @@ beforeEach(() => {
 });
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+// Thread folders sit beside the store, so a store at a temp root would leave them in the temp dir.
+const scopedAttachmentsDir = Effect.fnUntraced(function* (options: { readonly prefix: string }) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const root = yield* fileSystem.makeTempDirectoryScoped(options);
+  const attachmentsDir = (yield* Path.Path).join(root, "attachments");
+  yield* fileSystem.makeDirectory(attachmentsDir);
+  return attachmentsDir;
+});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
@@ -1105,7 +1114,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-accept-edits-",
       });
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
@@ -1228,6 +1237,142 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("ClaudeAdapterV2 thread attachment folders", () => {
+  it.effect("gives each thread's session only its own folder and paths inside it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-folders-" });
+      const attachmentsDir = path.join(root, "attachments");
+      yield* fileSystem.makeDirectory(attachmentsDir);
+      const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
+      const offered: Array<SDKUserMessage> = [];
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path,
+        random: yield* SecureRandom.SecureRandom,
+        idAllocator,
+        queryRunner: {
+          allocateSessionId: Effect.sync(() => `native-thread-folders-${opened.length}`),
+          open: (input) =>
+            Effect.sync(() => {
+              opened.push(input.options);
+              return {
+                messages: Stream.never,
+                offer: (message, onQueued) =>
+                  Effect.sync(() => {
+                    offered.push(message);
+                    onQueued?.();
+                  }),
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
+                backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
+                stopTask: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              };
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentModel: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      const now = yield* DateTime.now;
+      const startWithFile = Effect.fnUntraced(function* (name: string) {
+        const threadId = ThreadId.make(`thread-claude-folders-${name}`);
+        const attachment = ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make(
+            `thread-claude-folders-${name}-12345678-1234-1234-1234-123456789abc-txt`,
+          ),
+          name: `${name}.txt`,
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(attachmentsDir, attachmentRelativePath(attachment)!),
+          name,
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`provider-session-claude-folders-${name}`),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-folders-${name}`),
+            text: "Read the file.",
+            attachments: [attachment],
+            runtimePolicy,
+          }),
+        );
+        return threadAttachmentsDir({ attachmentsDir, threadId })!;
+      });
+      const folderA = yield* startWithFile("a");
+      const folderB = yield* startWithFile("b");
+      const promptText = (message: SDKUserMessage | undefined) =>
+        JSON.stringify(message?.message.content);
+
+      assert.lengthOf(opened, 2);
+      for (const [options, own, other] of [
+        [opened[0], folderA, folderB],
+        [opened[1], folderB, folderA],
+      ] as const) {
+        assert.include(options?.additionalDirectories ?? [], own);
+        assert.notInclude(options?.additionalDirectories ?? [], attachmentsDir);
+        assert.notInclude(options?.additionalDirectories ?? [], other);
+      }
+      for (const [message, own, name] of [
+        [offered[0], folderA, "a"],
+        [offered[1], folderB, "b"],
+      ] as const) {
+        const linked = path.join(
+          own,
+          `thread-claude-folders-${name}-12345678-1234-1234-1234-123456789abc-txt.txt`,
+        );
+        assert.include(promptText(message), `is saved at: ${linked}`);
+        assert.notInclude(promptText(message), `${attachmentsDir}${path.sep}`);
+        assert.equal(yield* fileSystem.readFileString(linked), name);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1236,7 +1381,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
       environment: {},
-      attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
+      attachmentsDir: yield* scopedAttachmentsDir({ prefix: "t3-claude-append-" }),
       fileSystem,
       path: yield* Path.Path,
       random: yield* SecureRandom.SecureRandom,
@@ -1517,7 +1662,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         instanceId,
         settings: DEFAULT_CLAUDE_SETTINGS,
         environment: {},
-        attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-gate-" }),
+        attachmentsDir: yield* scopedAttachmentsDir({ prefix: "t3-claude-gate-" }),
         fileSystem,
         path: yield* Path.Path,
         random: yield* SecureRandom.SecureRandom,
@@ -1827,7 +1972,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: { CLAUDE_CONFIG_DIR: configDir },
-          attachmentsDir: configDir,
+          attachmentsDir: path.join(configDir, "attachments"),
           fileSystem,
           path,
           random: yield* SecureRandom.SecureRandom,
@@ -1899,7 +2044,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-resume-",
       });
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
@@ -2252,7 +2397,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           ...CLAUDE_TEST_MODEL_SELECTION,
           options: ultrathink ? CLAUDE_TEST_MODEL_SELECTION.options : [],
         };
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        const attachmentsDir = yield* scopedAttachmentsDir({
           prefix: "t3-claude-v2-attachments-",
         });
         const offeredMessages: Array<SDKUserMessage> = [];
@@ -2326,6 +2471,11 @@ describe("ClaudeAdapterV2 attachments", () => {
           },
         });
         const threadId = ThreadId.make("thread-claude-attachments");
+        const sentPath = (sent: ChatAttachment) =>
+          path.join(
+            threadAttachmentsDir({ attachmentsDir, threadId })!,
+            attachmentRelativePath(sent)!,
+          );
         const providerSessionId = ProviderSessionId.make("provider-session-claude-attachments");
         const runtime = yield* adapter.openSession({
           threadId,
@@ -2431,7 +2581,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           yield* deliver;
           const retried = offeredMessages.at(-1)!.message.content;
           assert.notInclude(JSON.stringify(retried), '"type":"document"');
-          assert.include(JSON.stringify(retried), JSON.stringify(documentPath).slice(1, -1));
+          assert.include(JSON.stringify(retried), JSON.stringify(sentPath(document)).slice(1, -1));
           assert.isBelow(Buffer.byteLength(JSON.stringify(offeredMessages)), 32_000_000);
           return;
         }
@@ -2480,7 +2630,7 @@ describe("ClaudeAdapterV2 attachments", () => {
               typeof sent === "string" ? [] : sent.filter((block) => block.type === "image"),
               budget === "partial-images" ? 1 : 0,
             );
-            assert.include(JSON.stringify(sent), JSON.stringify(imagePath).slice(1, -1));
+            assert.include(JSON.stringify(sent), JSON.stringify(sentPath(attachment)).slice(1, -1));
             yield* runtime.steerTurn({
               threadId,
               runId: RunId.make("run-claude-attachments"),
@@ -2497,7 +2647,10 @@ describe("ClaudeAdapterV2 attachments", () => {
               typeof steered === "string" ? [] : steered.filter((block) => block.type === "image"),
               0,
             );
-            assert.include(JSON.stringify(steered), JSON.stringify(imagePath).slice(1, -1));
+            assert.include(
+              JSON.stringify(steered),
+              JSON.stringify(sentPath(attachment)).slice(1, -1),
+            );
             assert.isBelow(
               Buffer.byteLength(JSON.stringify(offeredMessages.map((message) => message.message))),
               32_000_000,
@@ -2555,7 +2708,7 @@ describe("ClaudeAdapterV2 attachments", () => {
             0,
             budget,
           );
-          assert.include(JSON.stringify(sent), JSON.stringify(documentPath).slice(1, -1));
+          assert.include(JSON.stringify(sent), JSON.stringify(sentPath(document)).slice(1, -1));
           return;
         }
         if (!resumed) {
@@ -2592,11 +2745,8 @@ describe("ClaudeAdapterV2 attachments", () => {
             data: Buffer.from(pdfBytes).toString("base64"),
           },
         } as const;
-        const expectedAttachmentPath = path.join(
-          attachmentsDir,
-          attachmentRelativePath(attachment)!,
-        );
-        const expectedDocumentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
+        const expectedAttachmentPath = sentPath(attachment);
+        const expectedDocumentPath = sentPath(document);
         const attachmentNotes = `\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]${resumed ? "" : `\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`}`;
         const requestBlock = { type: "text" as const, text: expectedText + attachmentNotes };
         const expectedContent = command
@@ -2763,7 +2913,8 @@ describe("ClaudeAdapterV2 attachments", () => {
           );
           if (scenario === "text-only")
             assert.equal(sent, ultrathink ? "Ultrathink:\nContinue." : "Continue.");
-          else assert.include(JSON.stringify(sent), JSON.stringify(documentPath).slice(1, -1));
+          else
+            assert.include(JSON.stringify(sent), JSON.stringify(sentPath(document)).slice(1, -1));
         }
       }).pipe(
         Effect.provide(
@@ -2783,7 +2934,7 @@ describe("ClaudeAdapterV2 native fork", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-fork-attachments-",
       });
       const configDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -3162,7 +3313,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        const attachmentsDir = yield* scopedAttachmentsDir({
           prefix: "t3-claude-v2-session-identity-",
         });
         if (importedNativeThreadId !== undefined) {
@@ -3566,7 +3717,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-wake-",
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
@@ -5712,6 +5863,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           mimeType: "application/pdf",
           sizeBytes: 4,
         });
+        yield* (yield* FileSystem.FileSystem).writeFileString(
+          path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!),
+          "%PDF",
+        );
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         yield* harness.runtime.steerTurn({
           threadId: harness.threadId,
@@ -5729,7 +5884,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [attachment],
           },
         });
-        const attachmentNote = `\n\n[Attached file "requirements.pdf" is saved at: ${path.join(harness.attachmentsDir, attachmentRelativePath(attachment)!)}]`;
+        const linked = path.join(
+          threadAttachmentsDir({
+            attachmentsDir: harness.attachmentsDir,
+            threadId: harness.threadId,
+          })!,
+          attachmentRelativePath(attachment)!,
+        );
+        const attachmentNote = `\n\n[Attached file "requirements.pdf" is saved at: ${linked}]`;
         assert.equal(harness.offeredMessages[1]?.priority, "now");
         assert.deepEqual(harness.offeredMessages[1]?.message.content, [
           { type: "text", text: `${leadingText}${attachmentNote}` },
@@ -13769,7 +13931,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const changes = yield* makeChangeSignal;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-settled-stop-replaced-",
       });
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -13964,7 +14126,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+    const attachmentsDir = yield* scopedAttachmentsDir({
       prefix: `t3-claude-v2-${name}-`,
     });
     const deadStreamEnded = yield* Deferred.make<void>();
@@ -14131,7 +14293,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const changes = yield* makeChangeSignal;
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        const attachmentsDir = yield* scopedAttachmentsDir({
           prefix: "t3-claude-v2-sibling-replace-",
         });
         const nativeIds = ["native-thread-roster-a", "native-thread-roster-b"] as const;
@@ -17410,7 +17572,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.gen(function* () {
       const changes = yield* makeChangeSignal;
       const fileSystem = yield* FileSystem.FileSystem;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: `t3-claude-v2-${label}-`,
       });
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -20702,7 +20864,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const changes = yield* makeChangeSignal;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-process-reset-",
       });
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -20880,7 +21042,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const changes = yield* makeChangeSignal;
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        const attachmentsDir = yield* scopedAttachmentsDir({
           prefix: "t3-claude-v2-buffer-replace-",
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -21065,7 +21227,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const SUBAGENT_TOOL_USE_ID = "toolu-model-change-running-subagent";
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-model-change-running-subagent-",
       });
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
@@ -21271,7 +21433,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           launchArgs: "--append-system-prompt-file rules.md",
         },
         environment: {},
-        attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+        attachmentsDir: yield* scopedAttachmentsDir({
           prefix: "t3-claude-append-replacement-attachments-",
         }),
         fileSystem,
@@ -21399,7 +21561,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const changes = yield* makeChangeSignal;
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        const attachmentsDir = yield* scopedAttachmentsDir({
           prefix: "t3-claude-v2-replace-open-fail-",
         });
         let openCount = 0;
@@ -21534,7 +21696,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const changes = yield* makeChangeSignal;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      const attachmentsDir = yield* scopedAttachmentsDir({
         prefix: "t3-claude-v2-process-signal-",
       });
       const sdkMessages = yield* Queue.unbounded<

@@ -605,3 +605,124 @@ it.effect(
       assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
     }).pipe(Effect.provide(layerDatabase)),
 );
+
+it.effect(
+  "lists the files a fork's provider sees: its own and its sources' through each fork run",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const sourceId = ThreadId.make("thread:files-source");
+      const forkId = ThreadId.make("thread:files-fork");
+      const nestedId = ThreadId.make("thread:files-nested");
+      const otherId = ThreadId.make("thread:files-other");
+      const runId = (threadId: ThreadId, ordinal: number) =>
+        RunId.make(`run:${threadId}:${ordinal}`);
+      const thread = (
+        id: ThreadId,
+        forkedFrom: OrchestrationV2AppThread["forkedFrom"],
+      ): OrchestrationV2AppThread => ({
+        id,
+        projectId: ProjectId.make("project:files"),
+        title: id,
+        providerInstanceId: instanceId,
+        modelSelection: { instanceId, model: "claude-opus-5-5" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+        forkedFrom,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      const threads = [
+        thread(sourceId, null),
+        thread(forkId, { type: "run", threadId: sourceId, runId: runId(sourceId, 1) }),
+        thread(nestedId, { type: "run", threadId: forkId, runId: runId(forkId, 1) }),
+        thread(otherId, null),
+      ];
+      for (const value of threads) {
+        yield* store.apply({
+          id: EventId.make(`event:thread:${value.id}`),
+          type: "thread.created",
+          threadId: value.id,
+          occurredAt: now,
+          payload: value,
+        });
+      }
+      const runWithFile = (threadId: ThreadId, ordinal: number, fileId: string) =>
+        Effect.gen(function* () {
+          const id = runId(threadId, ordinal);
+          const messageId = MessageId.make(`message:${id}`);
+          yield* store.apply({
+            id: EventId.make(`event:run:${id}`),
+            type: "run.updated",
+            threadId,
+            runId: id,
+            occurredAt: now,
+            payload: {
+              id,
+              threadId,
+              ordinal,
+              providerInstanceId: instanceId,
+              modelSelection: { instanceId, model: "claude-opus-5-5" },
+              providerThreadId: null,
+              userMessageId: messageId,
+              rootNodeId: NodeId.make(`node:${id}`),
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* store.apply({
+            id: EventId.make(`event:message:${id}`),
+            type: "message.updated",
+            threadId,
+            runId: id,
+            occurredAt: now,
+            payload: {
+              id: messageId,
+              threadId,
+              runId: id,
+              nodeId: null,
+              role: "user",
+              text: "See the file",
+              attachments: [
+                { type: "file", id: fileId, name: "a.txt", mimeType: "text/plain", sizeBytes: 1 },
+              ],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+      yield* runWithFile(sourceId, 1, "source-shown");
+      yield* runWithFile(sourceId, 2, "source-after-fork");
+      yield* runWithFile(forkId, 1, "fork-own");
+      yield* runWithFile(forkId, 2, "fork-after-nested");
+      yield* runWithFile(otherId, 1, "other-thread");
+
+      const visible = (threadId: ThreadId) =>
+        store.getThreadVisibleAttachmentIds(threadId).pipe(Effect.map((ids) => ids.toSorted()));
+      assert.deepEqual(yield* visible(sourceId), ["source-after-fork", "source-shown"]);
+      assert.deepEqual(yield* visible(forkId), ["fork-after-nested", "fork-own", "source-shown"]);
+      assert.deepEqual(yield* visible(nestedId), ["fork-own", "source-shown"]);
+      assert.deepEqual(yield* visible(otherId), ["other-thread"]);
+    }).pipe(Effect.provide(layerDatabase)),
+);

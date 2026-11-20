@@ -94,6 +94,7 @@ import {
 } from "@t3tools/provider-acp/server/adapter";
 
 import { appendUserInputAttachmentPaths } from "../../provider/userInputAttachments.ts";
+import { threadAttachmentsDir } from "../../threadAttachments.ts";
 
 import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 import {
@@ -103,6 +104,12 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const DROID_FORM_THREAD_ID = "thread-droid-form";
+const droidThreadDir = (directory: string) =>
+  threadAttachmentsDir({
+    attachmentsDir: NodePath.join(directory, "attachments"),
+    threadId: DROID_FORM_THREAD_ID,
+  })!;
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
   commandPath: "/usr/local/bin/omp",
@@ -2001,7 +2008,7 @@ describe("AcpAdapterV2", () => {
         action: "accept",
         content: {
           question_1: "other",
-          question_1_other: `Plain text\n\nAttached image "shot.png": ${JSON.stringify(NodePath.join(directory, "droid-shot.png"))}\nAttached file "spec.txt": ${JSON.stringify(NodePath.join(directory, "droid-spec.txt"))}`,
+          question_1_other: `Plain text\n\nAttached image "shot.png": ${JSON.stringify(NodePath.join(droidThreadDir(directory), "droid-shot.png"))}\nAttached file "spec.txt": ${JSON.stringify(NodePath.join(droidThreadDir(directory), "droid-spec.txt"))}`,
           question_2: "other",
           question_2_other: "option_1\n\nAttached notes: keep this custom text",
         },
@@ -2049,11 +2056,14 @@ describe("AcpAdapterV2", () => {
       const expectedResult = typeof result === "function" ? result(directory) : result;
       let preparedAnswers: ProviderUserInputAnswers | undefined = answers;
       if (withAttachments && answers !== undefined) {
-        yield* fileSystem.writeFileString(path.join(directory, "droid-shot.png"), "image");
-        yield* fileSystem.writeFileString(path.join(directory, "droid-spec.txt"), "spec");
+        const attachmentsDir = path.join(directory, "attachments");
+        yield* fileSystem.makeDirectory(attachmentsDir);
+        yield* fileSystem.writeFileString(path.join(attachmentsDir, "droid-shot.png"), "image");
+        yield* fileSystem.writeFileString(path.join(attachmentsDir, "droid-spec.txt"), "spec");
         preparedAnswers = yield* appendUserInputAttachmentPaths({
           answers,
-          attachmentsDir: directory,
+          attachmentsDir,
+          threadId: DROID_FORM_THREAD_ID,
           attachmentsByQuestionId: {
             question_1: [
               {

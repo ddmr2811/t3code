@@ -107,6 +107,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { threadAttachmentPath } from "../../threadAttachments.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
@@ -3895,7 +3896,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           turnInput: Pick<
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
-            "message"
+            "message" | "threadId"
           >,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
@@ -3906,8 +3907,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               DocumentText.resolveExtractedTextPath(path).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
               ),
+            // Paths point at the thread's own folder; Codex gets image bytes inline below.
             resolveAttachmentPath: (attachment) =>
-              resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+              threadAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                threadId: turnInput.threadId,
+                attachment,
+              }),
           });
           if (text.length > 0) {
             inputItems.push({

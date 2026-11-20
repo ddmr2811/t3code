@@ -51,7 +51,9 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { linkThreadAttachmentIds, threadAttachmentsDir } from "../threadAttachments.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -441,6 +443,34 @@ export const layerWithOptions = (
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
       const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+      const linkedAttachmentThreads = new Set<ThreadId>();
+      // Turns link the files they send; this fills a folder once per process for history from
+      // before it existed, so a restarted or forked thread gets every file it can see.
+      const linkThreadAttachmentHistory = Effect.fn(
+        "ProviderSessionManagerV2.linkThreadAttachmentHistory",
+      )(
+        function* (threadId: ThreadId) {
+          if (Option.isNone(serverConfig)) return;
+          const { attachmentsDir } = serverConfig.value;
+          const threadDir = threadAttachmentsDir({ attachmentsDir, threadId });
+          if (threadDir === null) return;
+          if (
+            linkedAttachmentThreads.has(threadId) &&
+            (yield* fileSystem.exists(threadDir).pipe(Effect.orElseSucceed(() => false)))
+          )
+            return;
+          const attachmentIds = yield* projectionStore.getThreadVisibleAttachmentIds(threadId);
+          yield* Effect.sync(() =>
+            linkThreadAttachmentIds({ attachmentsDir, threadId, attachmentIds }),
+          );
+          linkedAttachmentThreads.add(threadId);
+        },
+        // A failed read leaves the folder as turns fill it; it never blocks the turn.
+        Effect.catch((cause) =>
+          Effect.logWarning("orchestration-v2.thread-attachments.link-failed", { cause }),
+        ),
+      );
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
       // Unreadable settings keep it off.
       const promptSuggestionsEnabled = Option.isNone(serverSettings)
@@ -2458,6 +2488,7 @@ export const layerWithOptions = (
                   providerThread: input.providerThread,
                 }),
               ),
+              Effect.andThen(linkThreadAttachmentHistory(input.threadId)),
               Effect.andThen(
                 Effect.acquireUseRelease(
                   markBusy(

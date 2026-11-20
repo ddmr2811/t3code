@@ -8,6 +8,7 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ChatAttachmentId,
   CommandId,
   CheckpointId,
   CodexSettings,
@@ -48,7 +49,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
-import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { attachmentRelativePath, resolveAttachmentPathById } from "../../attachmentStore.ts";
+import { threadAttachmentsDir } from "../../threadAttachments.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -989,6 +991,124 @@ function withReplayRequestId(
     ? { ...entry, frame: { ...entry.frame, id } }
     : entry;
 }
+
+describe("CodexAdapterV2 thread attachment folders", () => {
+  it.effect("sends attachment paths inside the thread's own folder", () =>
+    Effect.gen(function* () {
+      const scenario = "thread-attachment-folders";
+      const nativeThreadId = `native-${scenario}`;
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const emit = (frame: unknown) =>
+        Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+      const outbound: Array<{ readonly method?: string; readonly params?: unknown }> = [];
+      const preamble = withConfigReadBeforeTurnStart(
+        codexReplayPreamble({ nativeThreadId, nativeTurnId: `turn-${scenario}`, prompt: "read" }),
+      );
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.gen(function* () {
+                const frame = JSON.parse(
+                  typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+                ) as { readonly id?: number; readonly method: string; readonly params?: unknown };
+                outbound.push(frame);
+                const response = preamble.find(
+                  (entry) =>
+                    entry.type === "emit_inbound" &&
+                    entry.label === frame.method &&
+                    Predicate.isObject(entry.frame) &&
+                    "id" in entry.frame,
+                );
+                if (response?.type === "emit_inbound") yield* emit(response.frame);
+              }),
+            ),
+          stderr: () => Sink.drain,
+        }),
+        {},
+      );
+      const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+        Effect.orDie,
+      );
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem.makeDirectory(serverConfig.attachmentsDir, { recursive: true });
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        digest: yield* Digest.Digest,
+        fileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig,
+      });
+      const threadId = ThreadId.make(`thread-${scenario}-a`);
+      const attachment = {
+        type: "file" as const,
+        id: ChatAttachmentId.make(`thread-${scenario}-b-12345678-1234-1234-1234-123456789abc-txt`),
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+      };
+      const fileName = attachmentRelativePath(attachment)!;
+      yield* fileSystem.writeFileString(path.join(serverConfig.attachmentsDir, fileName), "notes");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const turn = makeCodexTestTurnInput({
+        threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make(`attempt-${scenario}`),
+        text: "read",
+      });
+      yield* runtime.startTurn({
+        ...turn,
+        message: { ...turn.message, attachments: [attachment] },
+      });
+
+      const folderA = threadAttachmentsDir({
+        attachmentsDir: serverConfig.attachmentsDir,
+        threadId,
+      })!;
+      const folderB = threadAttachmentsDir({
+        attachmentsDir: serverConfig.attachmentsDir,
+        threadId: `thread-${scenario}-b`,
+      })!;
+      const turnStart = JSON.stringify(outbound.find((frame) => frame.method === "turn/start"));
+      const linked = path.join(folderA, fileName);
+      assert.include(
+        turnStart,
+        JSON.stringify(`read\n\n[Attached file "notes.txt" is saved at: ${linked}]`).slice(1, -1),
+      );
+      assert.notInclude(turnStart, `${serverConfig.attachmentsDir}${path.sep}`);
+      assert.notInclude(turnStart, folderB);
+      assert.equal(yield* fileSystem.readFileString(linked), "notes");
+      yield* Queue.end(input);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
 
 describe("CodexAdapterV2 process exit", () => {
   it.effect.each([

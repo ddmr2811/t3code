@@ -1,10 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import {
   EnvironmentId,
+  EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -44,7 +49,9 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { threadAttachmentsDir } from "../threadAttachments.ts";
 import {
   CodexProviderCapabilitiesV2,
   normalizeCodexThreadLoadModelSelection,
@@ -651,6 +658,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -744,6 +752,7 @@ function layerTest(input: {
           input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.serverConfigLayer === undefined ? [] : [input.serverConfigLayer]),
         ),
       ),
     ),
@@ -1630,6 +1639,106 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
       assert.equal((yield* Fiber.join(stopping))._tag, "ProviderAdapterInterruptTimeoutError");
     }).pipe(
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, interruptTurn: Effect.never })),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 links a thread's earlier files before its first turn", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+      prefix: "t3-session-thread-files-",
+    }).pipe(Layer.provide(NodeServices.layer), Layer.orDie);
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-files");
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      // A message from before folders existed, as after a restart onto this version.
+      const earlier = {
+        type: "file" as const,
+        id: "thread-provider-session-manager-files-00000000-0000-4000-8000-0000000000aa-txt",
+        name: "earlier.txt",
+        mimeType: "text/plain",
+        sizeBytes: 7,
+      };
+      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${earlier.id}.txt`), "earlier");
+      yield* projectionStore.apply({
+        id: EventId.make("event:thread-files:earlier"),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make("message:thread-files:earlier"),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "earlier",
+          attachments: [earlier],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const folder = threadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId })!;
+      assert.isFalse(NodeFS.existsSync(folder));
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "turn",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(NodeFS.readdirSync(folder), [`${earlier.id}.txt`]);
+      assert.equal(
+        NodeFS.statSync(NodePath.join(folder, `${earlier.id}.txt`)).ino,
+        NodeFS.statSync(NodePath.join(config.attachmentsDir, `${earlier.id}.txt`)).ino,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerTest({ state, idleTimeoutMs: 60_000, serverConfigLayer }),
+          serverConfigLayer,
+        ),
+      ),
     );
   }),
 );

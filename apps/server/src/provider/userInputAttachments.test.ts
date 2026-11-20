@@ -22,6 +22,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as NodeZlib from "node:zlib";
+import { threadAttachmentsDir } from "../threadAttachments.ts";
 import { appendUserInputAttachmentPaths } from "./userInputAttachments.ts";
 
 vi.mock("node:child_process", { spy: true });
@@ -37,6 +38,9 @@ const attachment = {
   mimeType: "text/plain",
   sizeBytes: 4,
 };
+const threadId = "thread-1";
+const threadPath = (attachmentsDir: string, fileName: string) =>
+  NodePath.join(threadAttachmentsDir({ attachmentsDir, threadId })!, fileName);
 describe("question answer paths", () => {
   it.effect.each([false, true])(
     "keeps unrelated files available during extraction (failure: %s)",
@@ -407,9 +411,12 @@ describe("question answer paths", () => {
       const answers = yield* appendUserInputAttachmentPaths({
         answers: { q: "Read this" },
         attachmentsDir: config.attachmentsDir,
+        threadId,
         attachmentsByQuestionId: { q: [file] },
       });
-      expect(answers.q).toContain(`text extracted to: ${JSON.stringify(path + ".txt")}`);
+      const linked = threadPath(config.attachmentsDir, `${file.id}.ipynb`);
+      expect(answers.q).toContain(`text extracted to: ${JSON.stringify(linked + ".txt")}`);
+      expect(NodeFS.readFileSync(`${linked}.txt`, "utf8")).toContain("Vessel: Larkspur");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
@@ -469,9 +476,12 @@ describe("question answer paths", () => {
           const answers = yield* appendUserInputAttachmentPaths({
             answers: {},
             attachmentsDir: config.attachmentsDir,
+            threadId,
             attachmentsByQuestionId: { q: [file] },
           });
-          expect(answers.q).toContain(JSON.stringify(path));
+          expect(answers.q).toContain(
+            JSON.stringify(threadPath(config.attachmentsDir, `${file.id}.${extension}`)),
+          );
           expect(answers.q).not.toContain("text extracted");
           expect(NodeFS.existsSync(`${path}.txt`)).toBe(false);
           expect(NodeFS.readFileSync(path, "utf8")).toBe("invalid document");
@@ -1293,23 +1303,29 @@ describe("question answer paths", () => {
       const answers = yield* appendUserInputAttachmentPaths({
         answers: original,
         attachmentsDir: config.attachmentsDir,
+        threadId,
         attachmentsByQuestionId: { q: [attachment] },
       });
+      const linked = threadPath(config.attachmentsDir, `${attachment.id}.txt`);
       expect(answers.q).toEqual([
         "First",
         "Second",
-        `Attached file "spec \\"final\\".txt": ${JSON.stringify(path)}`,
+        `Attached file "spec \\"final\\".txt": ${JSON.stringify(linked)}`,
       ]);
+      // The thread folder holds a hard link to the stored file, not a copy or a symlink.
+      expect(NodeFS.lstatSync(linked).isSymbolicLink()).toBe(false);
+      expect(NodeFS.statSync(linked).ino).toBe(NodeFS.statSync(path).ino);
       expect(answers.other).toBe("No file");
       expect(original.q).toEqual(["First", "Second"]);
       expect(NodeFS.readFileSync(path, "utf8")).toBe("spec");
       const specialKey = yield* appendUserInputAttachmentPaths({
         answers: {},
         attachmentsDir: config.attachmentsDir,
+        threadId,
         attachmentsByQuestionId: { ["__proto__"]: [attachment] },
       });
       expect(Object.keys(specialKey)).toEqual(["__proto__"]);
-      expect(specialKey["__proto__"]).toContain(JSON.stringify(path));
+      expect(specialKey["__proto__"]).toContain(JSON.stringify(linked));
     }).pipe(Effect.provide(layer)),
   );
   it.effect("does not send an unavailable attachment path", () =>
@@ -1318,6 +1334,7 @@ describe("question answer paths", () => {
       const result = yield* appendUserInputAttachmentPaths({
         answers: { q: "" },
         attachmentsDir: config.attachmentsDir,
+        threadId,
         attachmentsByQuestionId: { q: [attachment] },
       }).pipe(Effect.result);
       expect(result._tag).toBe("Failure");

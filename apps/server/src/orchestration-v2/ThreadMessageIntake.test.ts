@@ -27,6 +27,7 @@ import {
   createPendingAttachmentId,
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
+import { threadAttachmentPath } from "../threadAttachments.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -134,9 +135,15 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     });
     expect(path).not.toBeNull();
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
+    const linked = threadAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      threadId: "thread-answer",
+      attachment: attachment!,
+    });
+    expect(linked?.startsWith(`${config.attachmentsDir}/`)).toBe(false);
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": ${JSON.stringify(path)}`,
+      `Attached image "screen.png": ${JSON.stringify(linked)}`,
     ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

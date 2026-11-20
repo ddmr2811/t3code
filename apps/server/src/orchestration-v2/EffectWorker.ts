@@ -667,6 +667,9 @@ export const layerExecutor: Layer.Layer<
               yield* resourceCleanup.cleanupAttachments(
                 request.attachmentIds.filter((id) => !referenced.has(id)),
               );
+              if (request.removeThreadFolder) {
+                yield* resourceCleanup.cleanupThreadAttachmentFolder(effect.threadId);
+              }
             }).pipe(
               Effect.mapError(
                 (cause) =>

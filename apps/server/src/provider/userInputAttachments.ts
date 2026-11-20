@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { threadAttachmentPath } from "../threadAttachments.ts";
 import * as DocumentText from "./DocumentText.ts";
 class UserInputAttachmentError extends Schema.TaggedError<UserInputAttachmentError>()(
   "UserInputAttachmentError",
@@ -21,6 +22,7 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
     answers: ProviderUserInputAnswers;
     attachmentsByQuestionId?: UserInputAttachments | undefined;
     attachmentsDir: string;
+    threadId: string;
   }) {
     const answers = new Map(Object.entries(input.answers));
     const fs = yield* FileSystem.FileSystem;
@@ -48,9 +50,24 @@ export const appendUserInputAttachmentPaths = Effect.fn("appendUserInputAttachme
             issue: `Attachment '${attachment.name}' is no longer available. Attach it again.`,
           });
         }
-        const extracted = yield* documents.ensure(path);
+        // Extract in the store first so the thread folder links the sidecar too.
+        const extracted = (yield* documents.ensure(path)) !== undefined;
+        const threadPath = threadAttachmentPath({
+          attachmentsDir: input.attachmentsDir,
+          threadId: input.threadId,
+          attachment,
+        });
+        if (threadPath === null) {
+          return yield* new UserInputAttachmentError({
+            operation: "respondToUserInput",
+            issue: `Could not access attachment '${attachment.name}'.`,
+          });
+        }
+        const sidecar = `${threadPath}.txt`;
+        const linkedText =
+          extracted && (yield* fs.exists(sidecar).pipe(Effect.orElseSucceed(() => false)));
         references.push(
-          `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(path)}${extracted ? ` (text extracted to: ${quoteReference(extracted)})` : ""}`,
+          `Attached ${attachment.type} ${quoteReference(attachment.name)}: ${quoteReference(threadPath)}${linkedText ? ` (text extracted to: ${quoteReference(sidecar)})` : ""}`,
         );
       }
       const answer = answers.get(questionId);
