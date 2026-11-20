@@ -36,9 +36,18 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         const screenshot = image("oc2-title-screenshot", "screen.png", "image/png");
         const missing = image("oc2-title-missing", "missing.png", "image/png");
         const unsupported = image("oc2-title-diagram", "diagram.svg", "image/svg+xml");
-        const screenshotPath = host.resolveAttachmentPath(screenshot)!;
+        const threadId = `oc2-title-thread-${external}`;
+        // The thread's own copies; `missing` exists only in the shared store, as an old row's file.
+        const screenshotPath = host.resolveThreadAttachmentPath(threadId, screenshot)!;
+        yield* fileSystem.makeDirectory(host.resolveThreadAttachmentsDir(threadId)!, {
+          recursive: true,
+        });
         yield* fileSystem.writeFileString(screenshotPath, "data");
-        yield* fileSystem.writeFileString(host.resolveAttachmentPath(unsupported)!, "<svg/>");
+        yield* fileSystem.writeFileString(
+          host.resolveThreadAttachmentPath(threadId, unsupported)!,
+          "<svg/>",
+        );
+        yield* fileSystem.writeFileString(host.resolveAttachmentPath(missing)!, "store only");
         const prompts: Array<unknown> = [];
         const server = yield* OpenCode2AdapterV2Testkit.replayServer(
           {
@@ -57,6 +66,7 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
           cwd: process.cwd(),
           message: "fix the login redirect loop after oauth",
           attachments: [screenshot, missing, unsupported],
+          threadId,
           modelSelection: {
             instanceId: ProviderInstanceId.make("opencode"),
             model: "opencode/big-pickle",

@@ -26,6 +26,7 @@ import { expect } from "vite-plus/test";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import { placeThreadAttachments, threadAttachmentsDir } from "../threadAttachments.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import * as TextGenerators from "./TextGenerators.ts";
@@ -583,53 +584,58 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({
-          branch: "fix/ui-regression",
-        }),
-        requireImage: true,
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-          const attachmentId = "thread-1-attachment";
-          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
-          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-          yield* fs.writeFile(imagePath, Buffer.from("hello"));
-
-          const generated = yield* textGeneration
-            .generateBranchName({
+  it.effect.each(["copied", "not copied"] as const)(
+    "gives codex only the thread's own image copy, never the store (%s)",
+    (copy) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+        const threadId = `thread-${copy.replace(" ", "-")}`;
+        const attachment = {
+          type: "image" as const,
+          id: `${threadId}-attachment`,
+          name: "bug.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+        };
+        const storePath = path.join(attachmentsDir, `${attachment.id}.png`);
+        yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+        yield* fs.writeFile(storePath, Buffer.from("hello"));
+        if (copy === "copied") {
+          yield* placeThreadAttachments({
+            attachmentsDir,
+            threadId,
+            attachments: [attachment],
+          });
+        }
+        const copyPath = path.join(
+          threadAttachmentsDir({ attachmentsDir, threadId })!,
+          `${attachment.id}.png`,
+        );
+        const generated = yield* withFakeCodexEnv(
+          copy === "copied"
+            ? {
+                output: JSON.stringify({ branch: "fix/ui-regression" }),
+                requireImage: true,
+                requireArg: `--image ${copyPath}`,
+                forbidArg: `--image ${storePath}`,
+              }
+            : {
+                output: JSON.stringify({ branch: "fix/ui-regression" }),
+                forbidArg: "--image",
+              },
+          (textGeneration) =>
+            textGeneration.generateBranchName({
               modelSelection: DEFAULT_TEST_MODEL_SELECTION,
               cwd: process.cwd(),
               message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "bug.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(
-              Effect.tap(() =>
-                fs.stat(imagePath).pipe(
-                  Effect.map((fileInfo) => {
-                    expect(fileInfo.type).toBe("File");
-                  }),
-                ),
-              ),
-              Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)),
-            );
-
-          expect(generated.branch).toBe("fix/ui-regression");
-        }),
-    ),
+              attachments: [attachment],
+              threadId,
+            }),
+        );
+        expect(generated.branch).toBe("fix/ui-regression");
+      }),
   );
 });
 

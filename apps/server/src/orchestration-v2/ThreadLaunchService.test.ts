@@ -7,7 +7,11 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
-import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import {
+  createAttachmentId,
+  createPendingAttachmentId,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -1149,6 +1153,41 @@ it.effect("renames a temporary branch with a configured prefix when generation s
       harness.renameBranch.mock.calls[0]?.[0]?.oldBranch ?? "",
       /^my-prefix\/[0-9a-f]{8}$/,
     );
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("names a branch with none of another thread's files from a stored message", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const image = (thread: string) => ({
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId(thread)!),
+      name: `${thread}.png`,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    const own = image("branch-files-thread");
+    // An older server let this other thread's file into the stored message.
+    const foreign = image("branch-files-elsewhere");
+    const input = launchInput({
+      command: "branch-files",
+      thread: "branch-files-thread",
+      message: "Fix the screenshot",
+      workspace: { type: "worktree", baseRef: "main" },
+    });
+    const launched = yield* launches.launch({
+      ...input,
+      initialMessage: { ...input.initialMessage!, attachments: [own, foreign] },
+    });
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter((stored) => stored.commandId === "branch-files:branch-rename"),
+      Stream.runHead,
+    );
+    const call = harness.generateBranchName.mock.calls[0]?.[0];
+    assert.deepEqual(call?.attachments, [own]);
+    assert.equal(call?.threadId, launched.threadId);
   }).pipe(Effect.provide(harness.layer));
 });
 

@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { threadAttachmentPath } from "../threadAttachments.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
@@ -136,10 +136,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       ),
     );
 
+  // Images reach Codex only as the thread's own copies, never from the shared store.
   const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
     attachments: TextGenerationOperations.Request<Schema.Top>["attachments"],
+    threadId: string | undefined,
   ) {
-    if (!attachments || attachments.length === 0) {
+    if (!attachments || attachments.length === 0 || threadId === undefined) {
       return [];
     }
 
@@ -149,8 +151,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         continue;
       }
 
-      const resolvedPath = resolveAttachmentPath({
+      const resolvedPath = threadAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
+        threadId,
         attachment,
       });
       if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
@@ -230,13 +233,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     outputSchema: outputSchemaJson,
     modelSelection,
     attachments,
+    threadId,
     investigate,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
     S["DecodingServices"]
   > {
-    const imagePaths = yield* materializeImageAttachments(attachments);
+    const imagePaths = yield* materializeImageAttachments(attachments, threadId);
     const schemaJson = yield* encodeJsonForOperation(
       operation,
       toJsonSchemaObject(outputSchemaJson),

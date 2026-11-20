@@ -554,6 +554,16 @@ const make = Effect.gen(function* () {
                   yield* providerRegistry.getProviders,
                   input.projectId,
                 );
+          // A retried preparation carries the stored message, which an older server may have let
+          // name another thread's file.
+          const visible =
+            message.attachments.length === 0
+              ? new Set<string>()
+              : new Set(
+                  yield* threads
+                    .getThreadVisibleAttachmentIds(threadId)
+                    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
+                );
           return yield* textGeneration
             .generateBranchName({
               naming: {
@@ -563,7 +573,8 @@ const make = Effect.gen(function* () {
               },
               cwd,
               message: message.text,
-              attachments: message.attachments,
+              attachments: message.attachments.filter((attachment) => visible.has(attachment.id)),
+              threadId,
               ...(message.context ? { context: message.context } : {}),
               modelSelection,
               projectId: input.projectId,

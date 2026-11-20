@@ -31,7 +31,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
 ) {
-  const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
+  const { resolveThreadAttachmentPath } = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const { client } = connection;
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
@@ -137,10 +137,14 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     );
     const images: Array<{ uri: string; name: string }> = [];
     // As in the adapter: an external server may not share T3's attachment directory, and
-    // OpenCode rejects the whole prompt if an attached file is missing.
-    for (const attachment of connection.external ? [] : (input.attachments ?? [])) {
-      if (!isProviderNativeImageAttachment(attachment)) continue;
-      const path = resolveAttachmentPath(attachment);
+    // OpenCode rejects the whole prompt if an attached file is missing. Images come only from
+    // the thread's own copies, never the shared store, so without a thread there are none.
+    const threadId = input.threadId;
+    const attachments =
+      connection.external || threadId === undefined ? [] : (input.attachments ?? []);
+    for (const attachment of attachments) {
+      if (!isProviderNativeImageAttachment(attachment) || threadId === undefined) continue;
+      const path = resolveThreadAttachmentPath(threadId, attachment);
       if (path === null) continue;
       const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
       if (exists) images.push({ uri: NodeURL.pathToFileURL(path).href, name: attachment.name });
