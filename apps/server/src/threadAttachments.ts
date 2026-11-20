@@ -93,7 +93,19 @@ async function serverDirectory(path: string, create: boolean): Promise<boolean> 
     await NodeFSP.mkdir(path, { mode: 0o700 }).catch(() => undefined);
     stats = await lstatOrNull(path);
   }
-  return stats !== null && stats.isDirectory() && ownedByServer(stats);
+  if (stats === null || !stats.isDirectory() || !ownedByServer(stats)) return false;
+  if (create && (stats.mode & 0o077) !== 0) await NodeFSP.chmod(path, 0o700).catch(() => undefined);
+  return true;
+}
+
+// Node has no openat, so these paths are checked again right before each rename or removal. A
+// process of the same user that can write to attachments-by-thread/ could still swap a folder in
+// between; that process can already read ~/.t3/userdata itself, so it gains nothing new.
+async function folderIntact(threadDir: string): Promise<boolean> {
+  return (
+    (await serverDirectory(NodePath.dirname(threadDir), false)) &&
+    (await serverDirectory(threadDir, false))
+  );
 }
 
 async function ensureFolder(input: {
@@ -110,31 +122,36 @@ async function ensureFolder(input: {
 
 /** Publishes a read-only copy by rename, so a reader never sees a partial file. */
 async function copyStoredFile(source: string, threadDir: string, fileName: string) {
-  const sourceStats = await lstatOrNull(source);
-  if (sourceStats === null || !sourceStats.isFile()) return;
   const target = NodePath.join(threadDir, fileName);
   const existing = await lstatOrNull(target);
   if (existing?.isFile()) return;
-  // rm does not follow links; rename below replaces any other non-directory without following it.
-  if (existing?.isDirectory()) await NodeFSP.rm(target, { recursive: true, force: true });
+  const { O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_WRONLY } = NodeFS.constants;
+  // O_NONBLOCK keeps a FIFO from holding the open; fstat then refuses all but a regular file.
+  const input = await NodeFSP.open(source, O_RDONLY | O_NOFOLLOW | O_NONBLOCK).catch(() => null);
+  if (input === null) return;
   const temporary = NodePath.join(threadDir, `.${fileName}.${NodeCrypto.randomUUID()}.tmp`);
   try {
-    await NodeFSP.copyFile(
-      source,
+    if (!(await input.stat()).isFile()) return;
+    // rm does not follow links; rename below replaces any other non-directory without following it.
+    if (existing?.isDirectory()) await NodeFSP.rm(target, { recursive: true, force: true });
+    const output = await NodeFSP.open(
       temporary,
-      NodeFS.constants.COPYFILE_EXCL | NodeFS.constants.COPYFILE_FICLONE,
-    );
-    const handle = await NodeFSP.open(
-      temporary,
-      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+      O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK,
+      0o444,
     );
     try {
-      await handle.chmod(0o444);
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      for (;;) {
+        const { bytesRead } = await input.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        await output.write(buffer, 0, bytesRead);
+      }
     } finally {
-      await handle.close();
+      await output.close();
     }
-    await NodeFSP.rename(temporary, target);
+    if (await folderIntact(threadDir)) await NodeFSP.rename(temporary, target);
   } finally {
+    await input.close();
     await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
   }
 }
@@ -183,8 +200,10 @@ async function place(input: {
 
 async function remove(input: { readonly attachmentsDir: string; readonly threadId: string }) {
   const threadDir = threadAttachmentsDir(input);
-  // Through a linked parent the folder path would name a directory elsewhere.
-  if (threadDir === null || !(await serverDirectory(NodePath.dirname(threadDir), false))) return;
+  if (threadDir === null || (await lstatOrNull(threadDir)) === null) return;
+  // Through a linked parent the folder path would name a directory elsewhere. rm itself never
+  // follows links, so a linked thread folder is removed as the link.
+  if (!(await serverDirectory(NodePath.dirname(threadDir), false))) return;
   await NodeFSP.rm(threadDir, { recursive: true, force: true });
 }
 
@@ -209,6 +228,19 @@ function serialized<A>(threadId: string, work: () => Promise<A>): Promise<A> {
 export const ensureThreadAttachmentsDir = Effect.fn("ThreadAttachments.ensureDir")(
   function* (input: { readonly attachmentsDir: string; readonly threadId: string }) {
     return yield* Effect.promise(() => serialized(input.threadId, () => ensureFolder(input)));
+  },
+);
+
+/** The thread folder's device and inode, while it and its parent are the server's directories. */
+export const threadAttachmentsDirIdentity = Effect.fn("ThreadAttachments.identity")(
+  function* (input: { readonly attachmentsDir: string; readonly threadId: string }) {
+    const threadDir = threadAttachmentsDir(input);
+    if (threadDir === null) return null;
+    return yield* Effect.promise(async () => {
+      if (!(await folderIntact(threadDir))) return null;
+      const stats = await lstatOrNull(threadDir);
+      return stats === null ? null : { dev: stats.dev, ino: stats.ino };
+    });
   },
 );
 

@@ -31,6 +31,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -407,7 +408,7 @@ describe("ThreadTitleRegenerationService", () => {
             const attachments = [
               {
                 type: "image" as const,
-                id: ChatAttachmentId.make("diagram"),
+                id: ChatAttachmentId.make(createAttachmentId(threadId)!),
                 name: "diagram.png",
                 mimeType: "image/png",
                 sizeBytes: 10,

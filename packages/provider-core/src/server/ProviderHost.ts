@@ -53,6 +53,8 @@ export class ProviderHost extends Context.Service<
       threadId: string,
       attachment: ChatAttachment,
     ) => string | null;
+    /** The thread's own attachment folder, the only one its agents may read. */
+    readonly resolveThreadAttachmentsDir: (threadId: string) => string | null;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly credentials: (
       namespace: string,

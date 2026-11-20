@@ -445,26 +445,47 @@ export const layerWithOptions = (
       const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
       const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
       const preparedAttachmentThreads = new Set<ThreadId>();
-      // A thread's folder holds copies of every file it can see. A turn or steer that sends files
+      // Every provider gets a message through here, so this is where its files are authorized.
+      // A thread's folder holds copies of every file it can see: a turn or steer that sends files
       // refreshes it, and so does the thread's first turn in this process, for older history.
-      const prepareThreadAttachments = Effect.fn(
-        "ProviderSessionManagerV2.prepareThreadAttachments",
-      )(
-        function* (threadId: ThreadId, sending: number) {
-          if (Option.isNone(serverConfig)) return;
-          if (sending === 0 && preparedAttachmentThreads.has(threadId)) return;
-          const attachmentIds = yield* projectionStore.getThreadVisibleAttachmentIds(threadId);
-          yield* placeThreadAttachments({
-            attachmentsDir: serverConfig.value.attachmentsDir,
-            threadId,
-            attachmentIds,
-          });
-          preparedAttachmentThreads.add(threadId);
+      const deliverableMessage = Effect.fn("ProviderSessionManagerV2.deliverableMessage")(
+        function* (threadId: ThreadId, message: ProviderAdapter.ProviderAdapterV2TurnMessage) {
+          if (message.attachments.length === 0 && preparedAttachmentThreads.has(threadId))
+            return message;
+          const visible = yield* projectionStore.getThreadVisibleAttachmentIds(threadId).pipe(
+            Effect.map((ids) => new Set(ids)),
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration-v2.thread-attachments.read-failed", {
+                cause,
+              }).pipe(Effect.as(undefined)),
+            ),
+          );
+          if (visible !== undefined && Option.isSome(serverConfig)) {
+            yield* placeThreadAttachments({
+              attachmentsDir: serverConfig.value.attachmentsDir,
+              threadId,
+              attachmentIds: [...visible],
+            });
+            preparedAttachmentThreads.add(threadId);
+          }
+          // A message queued or steered by an older server may still name another thread's file;
+          // the provider gets neither its bytes nor its path.
+          const unseen = message.attachments.filter((attachment) => !visible?.has(attachment.id));
+          if (unseen.length === 0) return message;
+          return {
+            ...message,
+            attachments: message.attachments.filter((attachment) => visible?.has(attachment.id)),
+            text: [
+              message.text,
+              ...unseen.map(
+                (attachment) =>
+                  `[Attached ${attachment.type} "${attachment.name}" is unavailable: it is not part of this thread.]`,
+              ),
+            ]
+              .filter((part) => part.length > 0)
+              .join("\n\n"),
+          };
         },
-        // A failed read leaves the folder as it was; the turn still starts.
-        Effect.catch((cause) =>
-          Effect.logWarning("orchestration-v2.thread-attachments.prepare-failed", { cause }),
-        ),
       );
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
       // Unreadable settings keep it off.
@@ -2483,10 +2504,8 @@ export const layerWithOptions = (
                   providerThread: input.providerThread,
                 }),
               ),
-              Effect.andThen(
-                prepareThreadAttachments(input.threadId, input.message.attachments.length),
-              ),
-              Effect.andThen(
+              Effect.andThen(deliverableMessage(input.threadId, input.message)),
+              Effect.flatMap((message) =>
                 Effect.acquireUseRelease(
                   markBusy(
                     providerSessionId,
@@ -2516,7 +2535,9 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    runtime
+                      .startTurn(message === input.message ? input : { ...input, message })
+                      .pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -2529,10 +2550,12 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(
-                prepareThreadAttachments(input.threadId, input.message.attachments.length),
+              Effect.andThen(deliverableMessage(input.threadId, input.message)),
+              Effect.flatMap((message) =>
+                runtime
+                  .steerTurn(message === input.message ? input : { ...input, message })
+                  .pipe(turnMetrics("steer")),
               ),
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>

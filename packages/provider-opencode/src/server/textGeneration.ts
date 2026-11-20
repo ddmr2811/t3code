@@ -191,10 +191,17 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       });
     }
 
-    const fileParts = OpenCodeRuntime.toOpenCodeFileParts({
-      attachments: input.attachments?.filter((attachment) => attachment.type === "image"),
-      resolveAttachmentPath: host.resolveAttachmentPath,
-    });
+    // Files reach OpenCode only as the thread's own copies, never from the shared store.
+    const threadId = input.threadId;
+    const threadFolder = threadId === undefined ? null : host.resolveThreadAttachmentsDir(threadId);
+    const fileParts =
+      threadId === undefined || threadFolder === null
+        ? []
+        : OpenCodeRuntime.toOpenCodeFileParts({
+            attachments: input.attachments?.filter((attachment) => attachment.type === "image"),
+            resolveAttachmentPath: (attachment) =>
+              host.resolveThreadAttachmentPath(threadId, attachment),
+          });
 
     const runAgainstServer = Effect.fn("runOpenCodeJson.runAgainstServer")(
       function* (
@@ -213,10 +220,15 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             client.session.create(
               {
                 title: `T3 Code ${input.operation}`,
-                // OpenCode Zen refuses free-model requests that carry no tools, so keep read.
+                // OpenCode Zen refuses free-model requests that carry no tools, so keep read,
+                // limited to the thread's copies (or the checkout when there is no thread).
                 permission: [
                   { permission: "*", pattern: "*", action: "deny" },
-                  { permission: "read", pattern: "*", action: "allow" },
+                  {
+                    permission: "read",
+                    pattern: `${threadFolder ?? input.cwd}/*`,
+                    action: "allow",
+                  },
                 ],
               },
               { signal },

@@ -52,6 +52,8 @@ export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** The thread these files belong to; providers that read files get only its copies. */
+  threadId?: string | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;
 }
@@ -68,6 +70,8 @@ export interface ThreadTitleGenerationInput {
   previousTitle?: string | undefined;
   forkSource?: ThreadTitleForkSource | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** The thread these files belong to; providers that read files get only its copies. */
+  threadId?: string | undefined;
   instructions?: string | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;

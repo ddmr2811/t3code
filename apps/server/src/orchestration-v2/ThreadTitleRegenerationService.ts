@@ -218,11 +218,21 @@ const make = Effect.gen(function* () {
       const worktreeExists =
         worktreePath !== null &&
         (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
+      // Rows an older server wrote may name another thread's file; a title never reads one.
+      const visible =
+        context.attachments.length === 0
+          ? new Set<string>()
+          : new Set(
+              yield* threads
+                .getThreadVisibleAttachmentIds(input.threadId)
+                .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
+            );
       const result = yield* textGeneration.generateThreadTitle({
         cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
         message: context.message,
         projectTitle: project.value.title,
-        attachments: context.attachments,
+        attachments: context.attachments.filter((attachment) => visible.has(attachment.id)),
+        threadId: input.threadId,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,

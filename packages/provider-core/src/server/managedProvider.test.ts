@@ -122,6 +122,7 @@ function layerProviderHost(input: {
       ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       resolveThreadAttachmentPath: () => null,
+      resolveThreadAttachmentsDir: () => null,
       credentials: () => Effect.die("unused"),
     }),
   );

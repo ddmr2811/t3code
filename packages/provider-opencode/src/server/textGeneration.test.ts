@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import { ProviderInstanceId, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
@@ -15,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -30,6 +32,7 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
+    sessionCreateInputs: [] as unknown[],
     sessionCalls: [] as string[],
     onSessionCreate: undefined as ((signal?: AbortSignal) => Promise<never>) | undefined,
     onPrompt: undefined as
@@ -52,6 +55,7 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
+    this.state.sessionCreateInputs.length = 0;
     this.state.sessionCalls.length = 0;
     this.state.onSessionCreate = undefined;
     this.state.onPrompt = undefined;
@@ -117,8 +121,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
         }),
       },
       session: {
-        create: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
+        create: async (input: unknown, options?: { readonly signal?: AbortSignal }) => {
           runtimeMock.state.sessionCreateCalls += 1;
+          runtimeMock.state.sessionCreateInputs.push(input);
           if (runtimeMock.state.onSessionCreate) {
             return runtimeMock.state.onSessionCreate(options?.signal);
           }
@@ -381,41 +386,61 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("excludes generic files from thread title generation", () =>
+  it.effect("titles with only the thread's own image copies, and none without a thread", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
+        const host = yield* ProviderHost.ProviderHost;
         runtimeMock.state.promptResult = {
           data: {
             parts: [{ type: "text", text: '{"title":"Review uploaded report"}' }],
           },
         };
-
-        yield* textGeneration.generateThreadTitle({
+        const input = {
           cwd: process.cwd(),
           message: "Review these attachments.",
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           attachments: [
             {
-              type: "image",
+              type: "image" as const,
               id: "thread-image-attachment",
               name: "screenshot.png",
               mimeType: "image/png",
               sizeBytes: 3,
             },
             {
-              type: "file",
+              type: "file" as const,
               id: "thread-report-attachment-pdf",
               name: "report.pdf",
               mimeType: "application/pdf",
               sizeBytes: 42,
             },
           ],
-        });
+        };
 
+        yield* textGeneration.generateThreadTitle(input);
+        // Without a thread nothing points at the shared store.
         expect(runtimeMock.state.promptParts[0]).toEqual([
           expect.objectContaining({ type: "text" }),
-          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
         ]);
+
+        yield* textGeneration.generateThreadTitle({ ...input, threadId: "thread-title" });
+        const folder = host.resolveThreadAttachmentsDir("thread-title")!;
+        expect(runtimeMock.state.promptParts[1]).toEqual([
+          expect.objectContaining({ type: "text" }),
+          expect.objectContaining({
+            type: "file",
+            filename: "screenshot.png",
+            url: NodeURL.pathToFileURL(
+              host.resolveThreadAttachmentPath("thread-title", input.attachments[0]!)!,
+            ).href,
+          }),
+        ]);
+        expect(runtimeMock.state.sessionCreateInputs[1]).toMatchObject({
+          permission: [
+            { permission: "*", pattern: "*", action: "deny" },
+            { permission: "read", pattern: `${folder}/*`, action: "allow" },
+          ],
+        });
       }),
     ),
   );

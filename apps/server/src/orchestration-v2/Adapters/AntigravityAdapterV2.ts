@@ -33,7 +33,11 @@ import {
   describeAntigravitySubagentLaunches,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
-import { ensureThreadAttachmentsDir, threadAttachmentsDir } from "../../threadAttachments.ts";
+import {
+  ensureThreadAttachmentsDir,
+  threadAttachmentsDir,
+  threadAttachmentsDirIdentity,
+} from "../../threadAttachments.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -136,13 +140,28 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
-  const threadFolder = (threadId: string) =>
-    threadAttachmentsDir({ attachmentsDir: options.host.paths.attachmentsDir, threadId });
   // The agent reads its own thread's attachment folder, never the store every thread shares.
-  const antigravityClientFileRoots = (cwd: string | null, threadId: string) => {
-    const folder = threadFolder(threadId);
+  // Roots are compared after resolving links, so the folder must still be the directory this
+  // session opened: one swapped for a link elsewhere is no longer a root.
+  const openedFolders = new Map<string, { readonly dev: number; readonly ino: number }>();
+  const antigravityClientFileRoots = Effect.fn("AntigravityAdapterV2.clientFileRoots")(function* (
+    cwd: string | null,
+    threadId: string,
+  ) {
+    const opened = openedFolders.get(threadId);
+    const current = yield* threadAttachmentsDirIdentity({
+      attachmentsDir: options.host.paths.attachmentsDir,
+      threadId,
+    });
+    const folder =
+      opened !== undefined &&
+      current !== null &&
+      current.dev === opened.dev &&
+      current.ino === opened.ino
+        ? threadAttachmentsDir({ attachmentsDir: options.host.paths.attachmentsDir, threadId })
+        : null;
     return [...(cwd === null ? [] : [cwd]), ...(folder === null ? [] : [folder])];
-  };
+  });
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -150,6 +169,12 @@ export function makeAntigravityAcpAdapterFlavor(
         attachmentsDir: options.host.paths.attachmentsDir,
         threadId: input.threadId,
       });
+      const identity = yield* threadAttachmentsDirIdentity({
+        attachmentsDir: options.host.paths.attachmentsDir,
+        threadId: input.threadId,
+      });
+      if (identity === null) openedFolders.delete(input.threadId);
+      else openedFolders.set(input.threadId, identity);
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
@@ -264,12 +289,16 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd, threadId) =>
-        readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd, threadId),
-          request,
-        }),
+        antigravityClientFileRoots(cwd, threadId).pipe(
+          Effect.flatMap((allowedRoots) =>
+            readAntigravityClientTextFile({
+              fileSystem: options.fileSystem,
+              path: options.path,
+              allowedRoots,
+              request,
+            }),
+          ),
+        ),
     },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {

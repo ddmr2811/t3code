@@ -30,6 +30,8 @@ export interface Request<S extends Schema.Top> {
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** The thread the attachments belong to; without one no stored file is read. */
+  readonly threadId?: string | undefined;
   /** Investigate cwd with read-only tools across turns; fail if the runner cannot guarantee read-only access. */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
 }
@@ -138,6 +140,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      threadId: input.threadId,
       ...buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
@@ -155,6 +158,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       cwd: input.cwd,
       modelSelection: input.modelSelection,
       attachments: input.attachments,
+      threadId: input.threadId,
       ...buildThreadTitlePrompt({
         message: input.message,
         projectTitle: input.projectTitle,

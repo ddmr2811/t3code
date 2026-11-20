@@ -62,6 +62,8 @@ export const layer = (
         resolveAttachmentPath: (attachment) => path.join(attachmentsDir, attachment.id),
         resolveThreadAttachmentPath: (threadId, attachment) =>
           path.join(stateDir, "attachments-by-thread", threadId, attachment.id),
+        resolveThreadAttachmentsDir: (threadId) =>
+          path.join(stateDir, "attachments-by-thread", threadId),
         credentials: Effect.fn("ProviderHost.credentials")(function (namespace, bindingId) {
           return Effect.sync(() => {
             const key = `${namespace}:${bindingId}`;

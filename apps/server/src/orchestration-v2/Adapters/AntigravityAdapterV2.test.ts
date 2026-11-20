@@ -394,6 +394,14 @@ describe("AntigravityAdapterV2 client file system", () => {
         ).pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(foreignRead), `${foreign} is outside this thread's folder`);
       }
+      // A folder swapped for a link after the session opened is no longer this thread's folder.
+      yield* fileSystem.remove(folderOf(threadId), { recursive: true });
+      yield* fileSystem.symlink(outside, folderOf(threadId));
+      const swappedRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(folderOf(threadId), "secret.txt") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(swappedRead), "a swapped attachment folder is not a root");
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },

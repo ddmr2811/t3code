@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -116,6 +117,32 @@ describe("thread attachment folders", () => {
       expect(NodeFS.existsSync(store.folder)).toBe(false);
       expect(outsideEntries(store.outside)).toEqual(["keep.txt"]);
       expect(NodeFS.readFileSync(store.stored, "utf8")).toBe("notes");
+    }),
+  );
+
+  it.effect("skips a FIFO in the store without holding the thread folder", () =>
+    Effect.gen(function* () {
+      using store = makeStore();
+      const fifo = { ...file, id: "thread-a-00000000-0000-4000-8000-0000000000cc-txt" };
+      NodeChildProcess.execFileSync("mkfifo", [
+        NodePath.join(store.input.attachmentsDir, `${fifo.id}.txt`),
+      ]);
+      yield* placeThreadAttachments({ ...store.input, attachments: [fifo] });
+      yield* placeThreadAttachments({ ...store.input, attachments: [file] });
+      expect(threadAttachmentPath({ ...store.input, attachment: fifo })).toBeNull();
+      expect(threadAttachmentPath({ ...store.input, attachment: file })).not.toBeNull();
+    }),
+  );
+
+  it.effect("keeps the folders private to the server", () =>
+    Effect.gen(function* () {
+      using store = makeStore();
+      NodeFS.mkdirSync(NodePath.dirname(store.folder), { mode: 0o755 });
+      NodeFS.chmodSync(NodePath.dirname(store.folder), 0o755);
+      yield* placeThreadAttachments({ ...store.input, attachments: [file] });
+      for (const folder of [NodePath.dirname(store.folder), store.folder]) {
+        expect(NodeFS.lstatSync(folder).mode & 0o777).toBe(0o700);
+      }
     }),
   );
 

@@ -467,6 +467,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    /** Collects each turn exactly as the adapter receives it. */
+    readonly turnInputs?: Array<ProviderAdapter.ProviderAdapterV2TurnInput>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
@@ -583,7 +585,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => options.startTurn ?? Effect.void,
+          startTurn: (turnInput) =>
+            Effect.sync(() => options.turnInputs?.push(turnInput)).pipe(
+              Effect.andThen(options.startTurn ?? Effect.void),
+            ),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -649,6 +654,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly turnInputs?: Array<ProviderAdapter.ProviderAdapterV2TurnInput>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
@@ -698,6 +704,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.turnInputs === undefined ? {} : { turnInputs: input.turnInputs }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
@@ -1643,104 +1650,118 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
   }),
 );
 
-it.effect("ProviderSessionManagerV2 links a thread's earlier files before its first turn", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-session-thread-files-",
-    }).pipe(Layer.provide(NodeServices.layer), Layer.orDie);
-    yield* Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread-provider-session-manager-files");
-      yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-      });
-      // A message from before folders existed, as after a restart onto this version.
-      const earlier = {
-        type: "file" as const,
-        id: "thread-provider-session-manager-files-00000000-0000-4000-8000-0000000000aa-txt",
-        name: "earlier.txt",
-        mimeType: "text/plain",
-        sizeBytes: 7,
-      };
-      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${earlier.id}.txt`), "earlier");
-      yield* projectionStore.apply({
-        id: EventId.make("event:thread-files:earlier"),
-        type: "message.updated",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: MessageId.make("message:thread-files:earlier"),
+it.effect(
+  "ProviderSessionManagerV2 gives a turn its thread's files and never another thread's",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const turnInputs: Array<ProviderAdapter.ProviderAdapterV2TurnInput> = [];
+      const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-session-thread-files-",
+      }).pipe(Layer.provide(NodeServices.layer), Layer.orDie);
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-files");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        // A message from before folders existed, as after a restart onto this version.
+        const earlier = {
+          type: "file" as const,
+          id: "thread-provider-session-manager-files-00000000-0000-4000-8000-0000000000aa-txt",
+          name: "earlier.txt",
+          mimeType: "text/plain",
+          sizeBytes: 7,
+        };
+        NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${earlier.id}.txt`), "earlier");
+        // Another thread's stored file, named by a message an older server queued.
+        const foreign = {
+          ...earlier,
+          id: "thread-provider-session-manager-other-00000000-0000-4000-8000-0000000000bb-txt",
+          name: "foreign.txt",
+        };
+        NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${foreign.id}.txt`), "secret");
+        yield* projectionStore.apply({
+          id: EventId.make("event:thread-files:earlier"),
+          type: "message.updated",
           threadId,
-          runId: null,
-          nodeId: null,
-          role: "user",
-          text: "earlier",
-          attachments: [earlier],
-          streaming: false,
-          createdBy: "user",
-          creationSource: "web",
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-      const folder = threadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId })!;
-      assert.isFalse(NodeFS.existsSync(folder));
-      const providerSessionId = idAllocator.derive.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-      });
-      const runtime = yield* manager.open({
-        threadId,
-        providerSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = makeProviderThread({
-        idAllocator,
-        threadId,
-        providerSessionId,
-        now,
-        nativeThreadId: `native-${threadId}`,
-      });
-      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-      yield* runtime.startTurn({
-        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
-        threadId,
-        runId,
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-        rootNodeId: idAllocator.derive.rootNode({ runId }),
-        providerThread,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
-          text: "turn",
-          attachments: [],
-        },
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.deepEqual(NodeFS.readdirSync(folder), [`${earlier.id}.txt`]);
-      assert.equal(
-        NodeFS.readFileSync(NodePath.join(folder, `${earlier.id}.txt`), "utf8"),
-        "earlier",
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          layerTest({ state, idleTimeoutMs: 60_000, serverConfigLayer }),
-          serverConfigLayer,
+          occurredAt: now,
+          payload: {
+            id: MessageId.make("message:thread-files:earlier"),
+            threadId,
+            runId: null,
+            nodeId: null,
+            role: "user",
+            text: "earlier",
+            attachments: [earlier],
+            streaming: false,
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        const folder = threadAttachmentsDir({ attachmentsDir: config.attachmentsDir, threadId })!;
+        assert.isFalse(NodeFS.existsSync(folder));
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: `native-${threadId}`,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "turn",
+            attachments: [earlier, foreign],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const delivered = turnInputs[0]!.message;
+        assert.deepEqual(delivered.attachments, [earlier]);
+        assert.include(delivered.text, `"foreign.txt" is unavailable`);
+        assert.notInclude(delivered.text, foreign.id);
+        assert.deepEqual(NodeFS.readdirSync(folder), [`${earlier.id}.txt`]);
+        assert.equal(
+          NodeFS.readFileSync(NodePath.join(folder, `${earlier.id}.txt`), "utf8"),
+          "earlier",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            layerTest({ state, idleTimeoutMs: 60_000, serverConfigLayer, turnInputs }),
+            serverConfigLayer,
+          ),
         ),
-      ),
-    );
-  }),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 still idles out a session releaseUnlessBusy kept", () =>
