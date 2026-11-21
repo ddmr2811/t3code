@@ -199,8 +199,9 @@ function buildRepositoryIdentity(input: {
   readonly rootPath: string;
 }): RepositoryIdentity {
   const canonicalKey = sourceControlDefinitions.repositoryKeyFromRemote(input.keyUrl);
-  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.remoteUrl);
-  const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
+  // keyUrl names the host ssh config resolves an alias to, so a deploy-key alias keeps its forge.
+  const sourceControlProvider = sourceControlDefinitions.recognizeRemote(input.keyUrl);
+  const repositoryPath = repositoryPathOf(canonicalKey, input.keyUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);

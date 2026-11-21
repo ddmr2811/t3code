@@ -93,18 +93,18 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       });
 
       yield* git(aliasDir, ["init"]);
-      yield* git(aliasDir, ["remote", "add", "origin", "git@github.com-personal:owner/repo.git"]);
+      yield* git(aliasDir, ["remote", "add", "origin", "git@github-deploy:owner/repo.git"]);
       yield* git(plainDir, ["init"]);
       yield* git(plainDir, ["remote", "add", "origin", "git@github.com:owner/repo.git"]);
 
       const runner = yield* ProcessRunner.ProcessRunner;
-      // Stands in for `Host github.com-personal` / `HostName github.com` in ~/.ssh/config.
+      // Stands in for `Host github-deploy` / `HostName github.com` in ~/.ssh/config.
       const resolver = yield* RepositoryIdentityResolver.make().pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, {
           run: (input) =>
             input.command === "ssh" && input.args.includes("-G")
               ? Effect.succeed({
-                  stdout: input.args.some((arg) => arg.includes("github.com-personal"))
+                  stdout: input.args.some((arg) => arg.includes("github-deploy"))
                     ? "user git\nhostname github.com\nport 22\n"
                     : `hostname ${input.args.at(-1) ?? ""}\nport 22\n`,
                   stderr: "",
@@ -124,7 +124,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(plainIdentity?.canonicalKey).toBe("github.com/owner/repo");
       expect(aliasIdentity?.canonicalKey).toBe(plainIdentity?.canonicalKey);
-      expect(aliasIdentity?.locator.remoteUrl).toBe("git@github.com-personal:owner/repo.git");
+      expect(aliasIdentity?.locator.remoteUrl).toBe("git@github-deploy:owner/repo.git");
+      expect(aliasIdentity?.provider).toBe("github");
+      expect(aliasIdentity?.displayName).toBe("owner/repo");
     }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
