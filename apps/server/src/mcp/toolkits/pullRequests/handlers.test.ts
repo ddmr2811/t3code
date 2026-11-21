@@ -16,6 +16,7 @@ import {
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
   SourceControlProviderKind,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -155,6 +156,7 @@ interface HarnessOptions {
   >;
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly git?: Partial<GitManager.GitManager["Service"]>;
+  readonly callerRuntimeMode?: RuntimeMode;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -210,7 +212,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
     Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
-    McpToolAccessTestkit.liveThreadsLayer,
+    McpToolAccessTestkit.liveThreadsLayerIn({ runtimeMode: options.callerRuntimeMode }),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
     Effect.provide(
@@ -237,6 +239,31 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
 });
 
 describe("pull request toolkit handlers", () => {
+  it.effect("refuses code host changes from a caller that would need approval for them", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ callerRuntimeMode: "approval-required" });
+      const refusals = [
+        yield* harness.call("pull_request_create", { title: "T", body: "B" }).pipe(Effect.flip),
+        yield* harness.call("pull_request_update", { state: "closed" }).pipe(Effect.flip),
+        yield* harness
+          .call("pull_request_respond", { reviewThreadId: "t", body: "Fixed." })
+          .pipe(Effect.flip),
+        yield* harness
+          .call("pull_request_review", { verdict: "approve", body: "Ok." })
+          .pipe(Effect.flip),
+        yield* harness.call("pull_request_merge", { expectedHeadSha: "abc123" }).pipe(Effect.flip),
+        yield* harness.call("ci_rerun", {}).pipe(Effect.flip),
+      ];
+      for (const refusal of refusals) {
+        expect(refusal).toMatchObject({
+          _tag: "OrchestratorMcpFailure",
+          code: "capability_denied",
+        });
+      }
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
   it.effect("refuses a credential without the pull-requests capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

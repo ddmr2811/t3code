@@ -28,6 +28,9 @@ import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
+const autoThreadId = ThreadId.make("thread:auto");
+const autoEditsThreadId = ThreadId.make("thread:auto-accept-edits");
+const fullAccessPlanThreadId = ThreadId.make("thread:full-access-plan");
 const endedThreadId = ThreadId.make("thread:ended");
 const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
@@ -48,6 +51,9 @@ const shells = new Map([
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [autoThreadId, liveThreadShell(autoThreadId, { runtimeMode: "auto" })],
+  [autoEditsThreadId, liveThreadShell(autoEditsThreadId, { runtimeMode: "auto-accept-edits" })],
+  [fullAccessPlanThreadId, liveThreadShell(fullAccessPlanThreadId, { interactionMode: "plan" })],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
@@ -125,6 +131,7 @@ const ProbeToolkit = Toolkit.make(
   ),
   Tool.make("writes", probe),
   Tool.make("writes_with_capability", probe),
+  Tool.make("writes_outside", probe),
   Tool.make("writes_threads", {
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
@@ -145,6 +152,7 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   acts_as_caller: McpToolAccess.actsAsCaller(() => ran),
   writes: McpToolAccess.writes(() => ran),
   writes_with_capability: McpToolAccess.writesWithCapability(() => ran),
+  writes_outside: McpToolAccess.writesOutside(() => ran),
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
@@ -191,6 +199,7 @@ export const refusedAtCompileTime = () => {
       acts_as_caller: unchecked,
       writes: unchecked,
       writes_with_capability: unchecked,
+      writes_outside: unchecked,
       writes_threads: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
@@ -228,6 +237,9 @@ const call = (
 const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
+const auto = threadCaller(autoThreadId);
+const autoEdits = threadCaller(autoEditsThreadId);
+const fullAccessPlan = threadCaller(fullAccessPlanThreadId);
 const ended = threadCaller(endedThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -239,6 +251,13 @@ const mismatchedProvider = {
 };
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
+const narrowedClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessClient,
+  client: {
+    ...fullAccessClient.client!,
+    narrowedTo: { runtimeMode: "approval-required", interactionMode: "default" },
+  },
+};
 const readOnlyClient = clientCaller("read-only");
 const linkedClient: McpInvocationContext.McpInvocationScope = {
   ...supervisedClient,
@@ -285,6 +304,22 @@ it.effect.each([
   ["writes_with_capability", linkedClient, {}, "capability_denied"],
   ["writes", fullAccessLinkedClient, {}, "ran"],
   ["writes_with_capability", fullAccessLinkedClient, {}, "ran"],
+
+  // Code hosts and issue trackers sit outside T3's approvals, so only callers that skip them reach them.
+  ["writes_outside", supervised, {}, "capability_denied"],
+  ["writes_outside", autoEdits, {}, "capability_denied"],
+  ["writes_outside", auto, {}, "ran"],
+  ["writes_outside", fullAccess, {}, "ran"],
+  ["writes_outside", plan, {}, "capability_denied"],
+  ["writes_outside", fullAccessPlan, {}, "capability_denied"],
+  ["writes_outside", background, {}, "ran"],
+  ["writes_outside", ended, {}, "parent_not_active"],
+  ["writes_outside", readOnlyClient, {}, "capability_denied"],
+  ["writes_outside", supervisedClient, {}, "capability_denied"],
+  ["writes_outside", narrowedClient, {}, "capability_denied"],
+  ["writes_outside", fullAccessClient, {}, "ran"],
+  ["writes_outside", linkedClient, {}, "capability_denied"],
+  ["writes_outside", fullAccessLinkedClient, {}, "ran"],
 
   ["writes_threads", supervised, {}, "ran"],
   ["writes_threads", supervised, { threadId: planThreadId }, "ran"],
@@ -379,6 +414,7 @@ const LinkedProbeToolkit = Toolkit.make(
   Tool.make("reads", linkedProbe),
   Tool.make("writes", linkedProbe),
   Tool.make("writes_with_capability", linkedProbe),
+  Tool.make("writes_outside", linkedProbe),
   Tool.make("writes_threads", linkedProbe),
   Tool.make("starts_threads", linkedProbe),
   Tool.make("writes_environment", linkedProbe),
@@ -393,6 +429,7 @@ const linkedProbeServer = McpHttpServer.toolkitRegistration(
     reads: McpToolAccess.reads(ranHere),
     writes: McpToolAccess.writes(ranHere),
     writes_with_capability: McpToolAccess.writesWithCapability(ranHere),
+    writes_outside: McpToolAccess.writesOutside(ranHere),
     writes_threads: McpToolAccess.writesThreads((input) => [input.threadId], ranHere),
     starts_threads: McpToolAccess.startsThreads((input) => input, ranHere, "stamped"),
     writes_environment: McpToolAccess.writesEnvironment(ranHere),
@@ -423,6 +460,9 @@ it.effect.each([
   ["writes", ended, { environmentId: box }, "parent_not_active"],
   ["writes", supervised, { environmentId: box }, "writes in environment-box"],
   ["writes_with_capability", readOnlyClient, { environmentId: box }, "capability_denied"],
+  ["writes_outside", supervised, { environmentId: box }, "capability_denied"],
+  ["writes_outside", plan, { environmentId: box }, "capability_denied"],
+  ["writes_outside", auto, { environmentId: box }, "writes_outside in environment-box"],
   [
     "starts_threads",
     plan,

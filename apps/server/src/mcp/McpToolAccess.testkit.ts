@@ -19,8 +19,8 @@ const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
 export const liveThreadShell = (
   id: ThreadId,
   modes: {
-    readonly runtimeMode?: RuntimeMode;
-    readonly interactionMode?: ProviderInteractionMode;
+    readonly runtimeMode?: RuntimeMode | undefined;
+    readonly interactionMode?: ProviderInteractionMode | undefined;
     readonly activeRunId?: RunId | null;
   } = {},
 ): OrchestrationV2ThreadShell => {
@@ -59,9 +59,12 @@ export const liveThreadShell = (
   };
 };
 
-export const liveThreadsLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
-  getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
-});
+export const liveThreadsLayerIn = (modes: Parameters<typeof liveThreadShell>[1] = {}) =>
+  Layer.mock(ThreadManagement.ThreadManagementService)({
+    getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId, modes)),
+  });
+
+export const liveThreadsLayer = liveThreadsLayerIn();
 
 export const idleThreadProjection = (
   shell: OrchestrationV2ThreadShell,

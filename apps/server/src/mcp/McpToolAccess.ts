@@ -19,6 +19,7 @@ import { McpSchema } from "effect/ai";
 import type { Tool, Toolkit } from "effect/ai";
 
 import {
+  actsOutsideWithoutApproval,
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
@@ -199,6 +200,31 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
         Effect.flatMap(() => handle(params)),
       ),
     () => writingCaller,
+  );
+
+const assertActsOutsideWithoutApproval = ({ limits }: Caller) =>
+  actsOutsideWithoutApproval(limits)
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `This tool changes the code host, issue tracker or CI, which needs a caller in auto or full-access mode outside plan mode. This caller runs in ${limits.runtimeMode}/${limits.interactionMode}. Ask the user to do it, or run the host's CLI (such as \`gh\`) in the shell, where it goes through approval.`,
+        }),
+      );
+
+/**
+ * `writesWithCapability` for changes outside T3 (pull requests, issues, CI). Approvals never see
+ * MCP calls, so callers that would be asked to approve the shell equivalent are refused.
+ */
+export const writesOutside = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+  declare(
+    (params: P) =>
+      writingCaller.pipe(
+        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+        Effect.tap(assertActsOutsideWithoutApproval),
+        Effect.flatMap(() => handle(params)),
+      ),
+    () => writingCaller.pipe(Effect.tap(assertActsOutsideWithoutApproval)),
   );
 
 export const writesThreads = <P, A, E, R>(

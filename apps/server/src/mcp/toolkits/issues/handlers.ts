@@ -231,7 +231,7 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    create_issue: McpToolAccess.writesWithCapability((input) =>
+    create_issue: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
         const created = yield* issues.create({
@@ -249,14 +249,14 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    comment_on_issue: McpToolAccess.writesWithCapability((input) =>
+    comment_on_issue: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
         yield* issues.comment({ ...refOf(target), body: input.body });
         return identityOf(target);
       }),
     ),
-    set_issue_state: McpToolAccess.writesWithCapability((input) =>
+    set_issue_state: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
         yield* issues.setState({

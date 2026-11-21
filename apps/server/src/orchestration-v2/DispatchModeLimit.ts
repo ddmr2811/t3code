@@ -40,6 +40,13 @@ export const exceededDispatchModeLimit = (
       ? "interaction"
       : undefined;
 
+/**
+ * Whether a caller in `modes` may change code hosts, issue trackers or CI without the user's
+ * approval. Their shell equivalent (`gh pr merge`) asks for approval below auto and in plan mode.
+ */
+export const actsOutsideWithoutApproval = (modes: DispatchModes): boolean =>
+  !isRuntimeModeAbove("auto", modes.runtimeMode) && modes.interactionMode === "default";
+
 /** The administrator's `limits.maxRuntimeMode`, which applies to every caller, the user included. */
 export interface RuntimeModeCeiling {
   readonly organization: string;

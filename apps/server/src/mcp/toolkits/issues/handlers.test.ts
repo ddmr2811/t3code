@@ -8,6 +8,7 @@ import {
   type OrchestrationProjectShell,
   type ThreadIssueLink,
   SourceControlProviderKind,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -148,6 +149,7 @@ const projectLayer = Layer.mock(ProjectService.ProjectService)({
 const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issues: ReadonlyArray<ThreadIssueLink> = [],
   issueLayer?: Layer.Layer<IssueService.IssueService>,
+  callerRuntimeMode?: RuntimeMode,
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
   const layerDependencies = Layer.mergeAll(
@@ -182,7 +184,7 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
         ),
       unlink: () => Effect.succeed({ wasLinked: true }),
     }),
-    McpToolAccessTestkit.liveThreadsLayer,
+    McpToolAccessTestkit.liveThreadsLayerIn({ runtimeMode: callerRuntimeMode }),
   );
   const toolkit = yield* IssuesToolkit.pipe(
     Effect.provide(
@@ -209,6 +211,24 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
 });
 
 describe("issue toolkit handlers", () => {
+  it.effect("refuses tracker changes from a caller that would need approval for them", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([], undefined, "approval-required");
+      const url = "https://github.com/T3Tools/T3Code/issues/7";
+      const refusals = [
+        yield* harness.call("create_issue", { title: "Flaky test" }).pipe(Effect.flip),
+        yield* harness.call("comment_on_issue", { url, body: "Seen it." }).pipe(Effect.flip),
+        yield* harness.call("set_issue_state", { url, state: "closed" }).pipe(Effect.flip),
+      ];
+      for (const refusal of refusals) {
+        expect(refusal).toMatchObject({
+          _tag: "OrchestratorMcpFailure",
+          code: "capability_denied",
+        });
+      }
+    }),
+  );
+
   it.effect("returns a Linear issue by URL with one issue read left before the rate limit", () =>
     Effect.gen(function* () {
       const tracker = IssueTrackerKind.make("linear");

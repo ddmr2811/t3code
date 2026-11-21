@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { DispatchModeLimit } from "./DispatchModeLimit.ts";
+import { actsOutsideWithoutApproval, DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -357,3 +357,18 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
     }),
   );
 });
+
+it.each([
+  ["approval-required", "default", false],
+  ["auto-accept-edits", "default", false],
+  ["auto", "default", true],
+  ["full-access", "default", true],
+  ["approval-required", "plan", false],
+  ["auto", "plan", false],
+  ["full-access", "plan", false],
+] as const)(
+  "a %s/%s caller acts outside T3 without approval: %s",
+  (runtimeMode, interactionMode, expected) => {
+    assert.strictEqual(actsOutsideWithoutApproval({ runtimeMode, interactionMode }), expected);
+  },
+);

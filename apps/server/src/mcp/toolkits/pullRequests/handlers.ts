@@ -1037,7 +1037,7 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    pull_request_create: McpToolAccess.writesWithCapability((input) =>
+    pull_request_create: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestForgeError, undefined);
         const project = yield* projectOf(thread, PullRequestForgeError);
@@ -1071,7 +1071,7 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    pull_request_update: McpToolAccess.writesWithCapability((input) =>
+    pull_request_update: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         if (
           input.title === undefined &&
@@ -1127,7 +1127,7 @@ const make = Effect.gen(function* () {
         return identityOf(target);
       }),
     ),
-    pull_request_respond: McpToolAccess.writesWithCapability((input) =>
+    pull_request_respond: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         if (
           input.body === undefined &&
@@ -1173,7 +1173,7 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    pull_request_review: McpToolAccess.writesWithCapability((input) =>
+    pull_request_review: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const { target, ref } = yield* locate(input);
         const comments = yield* reviewComments(ref, input.comments ?? []);
@@ -1183,7 +1183,7 @@ const make = Effect.gen(function* () {
         return identityOf(target);
       }),
     ),
-    pull_request_merge: McpToolAccess.writesWithCapability((input) =>
+    pull_request_merge: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const { target, ref } = yield* locate(input);
         const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
@@ -1215,7 +1215,7 @@ const make = Effect.gen(function* () {
         return { ...identityOf(target), checks };
       }),
     ),
-    ci_rerun: McpToolAccess.writesWithCapability((input) =>
+    ci_rerun: McpToolAccess.writesOutside((input) =>
       Effect.gen(function* () {
         const { thread, target, ref } = yield* locate(input);
         const checks = yield* pullRequests
