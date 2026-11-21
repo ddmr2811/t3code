@@ -516,10 +516,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.language !== DEFAULT_UNIFIED_SETTINGS.language ? [gt("Language")] : []),
     ...(settings.forkOpenDashboardOnStart !== DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart
-      ? ["Open Dashboard on start"]
+      ? [gt("Open Dashboard on start")]
       : []),
     ...(settings.forkNewThreadWidgets !== DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets
-      ? ["Charts under new threads"]
+      ? [gt("Charts under new threads")]
       : []),
     ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
       ? [gt("Time format")]

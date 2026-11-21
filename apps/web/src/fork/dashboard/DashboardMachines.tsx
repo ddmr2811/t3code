@@ -377,6 +377,7 @@ function useTailnet(
   exporters: ReadonlyArray<ForkNodeExporterReading>,
   presentations: ReadonlyMap<EnvironmentId, EnvironmentPresentation>,
 ): TailnetView {
+  const m = useMessages();
   const registry = useContext(RegistryContext);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentsWithScope(environments, AuthDiagnosticsReadScope);
@@ -424,10 +425,10 @@ function useTailnet(
     // With no machine able to read the tailnet, say why the first one could not.
     problem:
       sourceEnvironmentId === null
-        ? (readings[0]?.status?.problem ?? "No data")
+        ? (readings[0]?.status?.problem ?? m(msg("No data")))
         : sourceStatus === null
           ? null
-          : (sourceStatus.problem ?? "No data"),
+          : (sourceStatus.problem ?? m(msg("No data"))),
     nodes: linkTailnet({
       peers: sourceStatus?.available ? sourceStatus.peers : [],
       readings,
@@ -752,7 +753,7 @@ export function DashboardMachines({
 }) {
   const { environments, tailnet } = data;
   const m = useMessages();
-  const sections = placeMachines(layout, data.live);
+  const sections = placeMachines(layout, data.live, m);
 
   if (onLayoutChange) {
     return (

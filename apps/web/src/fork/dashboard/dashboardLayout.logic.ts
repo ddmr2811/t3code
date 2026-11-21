@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
+
 export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads" | "activity";
 
 const DASHBOARD_PANELS: ReadonlyArray<{
@@ -169,9 +171,11 @@ export type MachineKind = "environment" | "exporter" | "peer";
 export const T3_SECTION = "t3";
 export const TAILNET_SECTION = "tailnet";
 export const BUILT_IN_SECTIONS = {
-  [T3_SECTION]: "Connected machines",
-  [TAILNET_SECTION]: "Tailnet · without T3 Code",
+  [T3_SECTION]: msg("Connected machines"),
+  [TAILNET_SECTION]: msg("Tailnet · without T3 Code"),
 } as const;
+/** Saved in English like any name the user types; only its display is translated. */
+export const NEW_SECTION_NAME = msg("New section");
 
 export const MACHINE_ICONS = [
   "monitor",
@@ -325,6 +329,7 @@ function assignEntries<T>(
 export function placeMachines<T>(
   layout: ForkDashboardLayout,
   live: ReadonlyArray<LiveMachine<T>>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<PlacedSection<T>> {
   const customIds = new Set(layout.sections.map((section) => section.id));
   const { owner, ambiguous } = assignEntries(layout, live);
@@ -397,19 +402,19 @@ export function placeMachines<T>(
   return [
     {
       id: T3_SECTION,
-      name: BUILT_IN_SECTIONS[T3_SECTION],
+      name: resolve(BUILT_IN_SECTIONS[T3_SECTION]),
       custom: false,
       machines: inSection(T3_SECTION),
     },
     ...layout.sections.map((section) => ({
       id: section.id,
-      name: section.name,
+      name: section.name === NEW_SECTION_NAME ? resolve(NEW_SECTION_NAME) : section.name,
       custom: true,
       machines: inSection(section.id),
     })),
     {
       id: TAILNET_SECTION,
-      name: BUILT_IN_SECTIONS[TAILNET_SECTION],
+      name: resolve(BUILT_IN_SECTIONS[TAILNET_SECTION]),
       custom: false,
       machines: inSection(TAILNET_SECTION),
     },
@@ -554,7 +559,10 @@ export function addSection(
   id: string,
   name: string,
 ): ForkDashboardLayout {
-  return { ...layout, sections: [...layout.sections, { id, name: name.trim() || "New section" }] };
+  return {
+    ...layout,
+    sections: [...layout.sections, { id, name: name.trim() || NEW_SECTION_NAME }],
+  };
 }
 
 export function renameSection(

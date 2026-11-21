@@ -372,6 +372,8 @@ function ApprovalCard(props: {
   const options = approval.options ?? DEFAULT_APPROVAL_OPTIONS;
   const gt = useGT();
   const m = useMessages();
+  // Provider options carry server-authored labels; only the built-in defaults are translated.
+  const optionLabel = (label: string) => (options === DEFAULT_APPROVAL_OPTIONS ? m(label) : label);
 
   const decide = async (decision: ProviderApprovalDecision) => {
     if (!canRespond || responding) return;
@@ -404,7 +406,7 @@ function ApprovalCard(props: {
       {options.map((option) =>
         option.warning ? (
           <p key={option.decision} className="text-2xs text-warning-foreground">
-            {m(option.label)}: {option.warning}
+            {optionLabel(option.label)}: {option.warning}
           </p>
         ) : null,
       )}
@@ -422,7 +424,7 @@ function ApprovalCard(props: {
               )}
               onClick={() => void decide(option.decision)}
             >
-              {m(option.label)}
+              {optionLabel(option.label)}
             </button>
           ))}
         </div>
@@ -540,9 +542,10 @@ function WaitingPanel({ threads }: { readonly threads: ReadonlyArray<Environment
   const router = useRouter();
   const { settleThread } = useThreadActions();
   const gt = useGT();
+  const m = useMessages();
   // What can be answered right here comes first.
   const answerable = (thread: EnvironmentThreadShell) =>
-    Number(forkWaitingReason(thread).answerable);
+    Number(forkWaitingReason(thread, m).answerable);
   const ordered = threads.toSorted((left, right) => answerable(right) - answerable(left));
   return (
     <div
@@ -596,6 +599,7 @@ function MachineDetails(props: {
 }) {
   const { snapshot, share } = props;
   const gt = useGT();
+  const m = useMessages();
   const all = snapshot.groups.allT3;
   const groups = [
     { label: gt("Agents + server"), aggregate: snapshot.groups.backend },
@@ -608,7 +612,7 @@ function MachineDetails(props: {
       aggregate: snapshot.groups.monitor,
     },
   ].filter((group) => group.aggregate.processCount > 0);
-  const processes = forkWidgetTopProcesses(snapshot.processes, FORK_WIDGET_PROCESS_COUNT);
+  const processes = forkWidgetTopProcesses(snapshot.processes, FORK_WIDGET_PROCESS_COUNT, m);
   const heading =
     "truncate text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70";
   const figure = "truncate text-end font-mono";

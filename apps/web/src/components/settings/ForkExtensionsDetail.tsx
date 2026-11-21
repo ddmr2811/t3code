@@ -284,12 +284,12 @@ function CellDetail({
     );
   }
   if (!isSnapshotCell(cell)) {
-    return <span className="text-muted-foreground">{forkCellStateLabel(cell)}</span>;
+    return <span className="text-muted-foreground">{forkCellStateLabel(cell, resolve)}</span>;
   }
   return (
     <>
       <span className={cell.state === "needsAttention" ? "text-warning" : undefined}>
-        {forkCellStateLabel(cell)}
+        {forkCellStateLabel(cell, resolve)}
         <span className="text-muted-foreground">
           {" · "}
           {usageLabel(cell.usageCount, cell.lastUsedAt, nowMs, resolve)}
@@ -474,7 +474,7 @@ export function ForkPerProjectSection({
   const resolve = useMessages();
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [requested, setRequested] = useState<ReadonlyMap<string, ProjectToggleRequest>>(new Map());
-  const groups = forkProjectToggleGroups(row, columns);
+  const groups = forkProjectToggleGroups(row, columns, resolve);
   if (groups.length === 0) return null;
   const { item } = row;
 

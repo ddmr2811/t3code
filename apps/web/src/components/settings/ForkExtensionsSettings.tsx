@@ -157,8 +157,8 @@ export function ForkExtensionsSettings() {
     const item = row.itemsByMachine.get(column.environmentId) ?? row.item;
     // An amber cell's click only explains; its detail's "Turn off" switches it.
     const action =
-      (fromDetail ? forkDetailTurnOff(column, cell, item) : null) ??
-      forkCellAction(column, cell, item);
+      (fromDetail ? forkDetailTurnOff(column, cell, item, m) : null) ??
+      forkCellAction(column, cell, item, m);
     if (action.kind === "none") return;
     if (action.kind === "details") {
       setSelectedId(row.item.id);
@@ -222,7 +222,8 @@ export function ForkExtensionsSettings() {
       onNotices={(next) => addNotices(detailRow.item.kind, next)}
       renderCellActions={(context) => {
         const canTurnOff =
-          forkDetailTurnOff(context.column, context.cell, context.item ?? detailRow.item) !== null;
+          forkDetailTurnOff(context.column, context.cell, context.item ?? detailRow.item, m) !==
+          null;
         const turnOffKey = `${detailRow.item.id}
 ${context.column.key}`;
         return (
@@ -543,14 +544,15 @@ function MatrixCellButton({
   readonly pending: boolean;
   readonly onClick: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const action = forkCellAction(
     column,
     cell,
     row.itemsByMachine.get(column.environmentId) ?? row.item,
+    m,
   );
-  const gt = useGT();
-  const m = useMessages();
-  const stateLabel = forkCellStateLabel(cell);
+  const stateLabel = forkCellStateLabel(cell, m);
   const hint =
     action.kind === "none" || action.kind === "details"
       ? action.reason

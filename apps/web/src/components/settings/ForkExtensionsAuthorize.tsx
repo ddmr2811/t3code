@@ -373,7 +373,8 @@ export function ForkAuthorizeButton({
   readonly context: ForkDetailCellContext;
   readonly onLogin: (agent: ForkExtensionAgent) => void;
 }) {
-  const action = forkAuthorizeAction(column, cell, item);
+  const m = useMessages();
+  const action = forkAuthorizeAction(column, cell, item, m);
   switch (action.kind) {
     case "none":
       return null;

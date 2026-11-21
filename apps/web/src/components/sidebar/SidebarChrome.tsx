@@ -301,7 +301,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
-          <SidebarUtilityItem icon={<HouseIcon />} label="Home" onClick={handleHomeClick} />
+          <SidebarUtilityItem icon={<HouseIcon />} label={gt("Home")} onClick={handleHomeClick} />
           <SidebarUtilityItem
             icon={<LayoutDashboardIcon />}
             label={gt("Dashboard")}

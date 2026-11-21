@@ -186,9 +186,9 @@ function ForkOptions() {
 }
 
 export function ForkHome() {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
-  const navigate = useNavigate();
   const gt = useGT();
+  const contentArea = workspaceAreaProps("home", 1, gt("Home", { $context: "the home screen" }));
+  const navigate = useNavigate();
   const m = useMessages();
   const handleNewThread = useNewThreadHandler();
   const allProjects = useProjects();

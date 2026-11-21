@@ -150,17 +150,20 @@ export interface ForkWidgetProcess {
 
 /** The app's own processes all carry the app's name, which tells them apart from nothing. */
 const CATEGORY_NAMES: Partial<Record<ProcessInput["category"], string>> = {
-  server: "T3 server",
-  "electron-main": "App",
-  "electron-renderer": "App window",
-  "electron-gpu": "App graphics",
-  "electron-utility": "App helper",
-  "resource-monitor": "Resource monitor",
+  server: msg("T3 server"),
+  "electron-main": msg("App", { $context: "the desktop app's main process" }),
+  "electron-renderer": msg("App window"),
+  "electron-gpu": msg("App graphics"),
+  "electron-utility": msg("App helper"),
+  "resource-monitor": msg("Resource monitor"),
 };
 
-function processName(process: Pick<ProcessInput, "name" | "command" | "category">): string {
+function processName(
+  process: Pick<ProcessInput, "name" | "command" | "category">,
+  resolve: MessageResolver,
+): string {
   const byCategory = CATEGORY_NAMES[process.category];
-  if (byCategory !== undefined) return byCategory;
+  if (byCategory !== undefined) return resolve(byCategory);
   const first = (process.command.trim().split(/\s+/)[0] ?? "").replace(/^['"]|['"]$/g, "");
   const fromCommand = first.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? first;
   return (process.name.trim() || fromCommand || "process").replace(/\.exe$/i, "");
@@ -170,6 +173,7 @@ function processName(process: Pick<ProcessInput, "name" | "command" | "category"
 export function forkWidgetTopProcesses(
   processes: ReadonlyArray<ProcessInput>,
   count: number,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ForkWidgetProcess> {
   return processes
     .toSorted(
@@ -179,7 +183,7 @@ export function forkWidgetTopProcesses(
     .slice(0, count)
     .map((process) => ({
       pid: process.identity.pid,
-      name: processName(process),
+      name: processName(process, resolve),
       cpuPercent: process.cpuPercent,
       residentBytes: process.residentBytes,
       readBytesPerSecond: process.ioReadBytesPerSecond,

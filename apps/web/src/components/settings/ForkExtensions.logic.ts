@@ -355,19 +355,19 @@ export function forkSourceTag(item: ForkExtensionItem): string {
 }
 
 const CELL_STATE_LABELS: Readonly<Record<MatrixCell["state"], string>> = {
-  working: "Working",
-  needsAttention: "Needs attention",
-  disabled: "Disabled",
-  notInstalled: "Not installed",
-  notApplicable: "Not available",
-  unknown: "Installed, not checked yet",
-  agentUnavailable: "Agent unavailable",
-  needsForkUpdate: "Needs a fork update",
-  offline: "Offline",
+  working: msg("Working", { $context: "extension health state" }),
+  needsAttention: msg("Needs attention"),
+  disabled: msg("Disabled", { $context: "extension state" }),
+  notInstalled: msg("Not installed"),
+  notApplicable: msg("Not available"),
+  unknown: msg("Installed, not checked yet"),
+  agentUnavailable: msg("Agent unavailable"),
+  needsForkUpdate: msg("Needs a fork update"),
+  offline: msg("Offline"),
 };
 
-export function forkCellStateLabel(cell: MatrixCell): string {
-  return CELL_STATE_LABELS[cell.state];
+export function forkCellStateLabel(cell: MatrixCell, resolve: MessageResolver = m): string {
+  return resolve(CELL_STATE_LABELS[cell.state]);
 }
 
 export function forkColumnLabel(column: MatrixColumn): string {
@@ -379,10 +379,14 @@ export function forkColumnLabel(column: MatrixColumn): string {
 /** Where claude.ai connectors are connected; they belong to the account, not to a machine. */
 export const CLAUDE_AI_CONNECTORS_URL = "https://claude.ai/settings/connectors";
 
-const CLAUDE_AI_TURN_OFF = "Turn it off in claude.ai → Settings → Connectors.";
+const CLAUDE_AI_TURN_OFF = msg("Turn it off in claude.ai → Settings → Connectors.");
 
-const readOnlyMachineReason = (column: MatrixColumn) =>
-  `You can view extensions on ${column.machineLabel} but not change them.`;
+const readOnlyMachineReason = (column: MatrixColumn, resolve: MessageResolver) =>
+  resolve(
+    msg("You can view extensions on {machine} but not change them.", {
+      machine: column.machineLabel,
+    }),
+  );
 
 export type ForkCellAction =
   | { readonly kind: "toggle"; readonly agent: ForkExtensionAgent; readonly enabled: boolean }
@@ -398,23 +402,34 @@ export function forkCellAction(
   column: MatrixColumn,
   cell: MatrixCell,
   item: ForkExtensionItem,
+  resolve: MessageResolver = m,
 ): ForkCellAction {
   if (column.support === "needsForkUpdate") {
     return {
       kind: "none",
-      reason: `${column.machineLabel} needs a fork update to manage extensions.`,
+      reason: resolve(
+        msg("{machine} needs a fork update to manage extensions.", {
+          machine: column.machineLabel,
+        }),
+      ),
     };
   }
   if (column.support === "offline") {
-    return { kind: "none", reason: `${column.machineLabel} is offline.` };
+    return {
+      kind: "none",
+      reason: resolve(msg("{machine} is offline.", { machine: column.machineLabel })),
+    };
   }
-  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell) };
+  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell, resolve) };
   const agent = FORK_AGENT_LABELS[column.agent];
   if (cell.state === "agentUnavailable") {
-    return { kind: "none", reason: column.problem?.summary ?? `${agent} is unavailable.` };
+    return {
+      kind: "none",
+      reason: column.problem?.summary ?? resolve(msg("{agent} is unavailable.", { agent })),
+    };
   }
   if (cell.state === "notApplicable") {
-    return { kind: "none", reason: `Not available for ${agent}.` };
+    return { kind: "none", reason: resolve(msg("Not available for {agent}.", { agent })) };
   }
   // An amber cell explains itself rather than being switched off by a click.
   if (cell.state === "needsAttention") {
@@ -423,11 +438,11 @@ export function forkCellAction(
       kind: "details",
       reason:
         problem === null
-          ? "Click for details"
+          ? resolve(msg("Click for details"))
           : `${sentence(problem.summary)} ${problem.nextStep}`.trim(),
     };
   }
-  return forkSwitchAction(column, cell, item);
+  return forkSwitchAction(column, cell, item, resolve);
 }
 
 /** What switching the cell does, ignoring that an amber cell's click opens its detail. */
@@ -435,19 +450,26 @@ function forkSwitchAction(
   column: MatrixColumn,
   cell: MatrixCell,
   item: ForkExtensionItem,
+  resolve: MessageResolver,
 ): ForkCellAction {
-  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell) };
-  if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column) };
+  if (column.agent === null) return { kind: "none", reason: forkCellStateLabel(cell, resolve) };
+  if (!column.canOperate) return { kind: "none", reason: readOnlyMachineReason(column, resolve) };
   if (cell.state === "notInstalled") return { kind: "install", agent: column.agent };
   // Connectors belong to the claude.ai account: no CLI here can switch or remove them.
-  if (item.transport === "claudeAi") return { kind: "none", reason: CLAUDE_AI_TURN_OFF };
+  if (item.transport === "claudeAi") {
+    return { kind: "none", reason: resolve(CLAUDE_AI_TURN_OFF) };
+  }
   if (item.readOnly) {
     return {
       kind: "none",
       reason:
         item.pluginId === null
-          ? "This one can't be changed from here."
-          : `Comes with the ${item.pluginId} plugin. Turn the plugin on or off instead.`,
+          ? resolve(msg("This one can't be changed from here."))
+          : resolve(
+              msg("Comes with the {plugin} plugin. Turn the plugin on or off instead.", {
+                plugin: item.pluginId,
+              }),
+            ),
     };
   }
   return { kind: "toggle", agent: column.agent, enabled: cell.state === "disabled" };
@@ -461,11 +483,12 @@ export function forkDetailTurnOff(
   column: MatrixColumn,
   cell: MatrixCell,
   item: ForkExtensionItem,
+  resolve: MessageResolver = m,
 ): Extract<ForkCellAction, { kind: "toggle" }> | null {
   if (cell.state !== "needsAttention") return null;
-  const action = forkCellAction(column, cell, item);
+  const action = forkCellAction(column, cell, item, resolve);
   if (action.kind !== "details") return null;
-  const turnOff = forkSwitchAction(column, cell, item);
+  const turnOff = forkSwitchAction(column, cell, item, resolve);
   return turnOff.kind === "toggle" && !turnOff.enabled ? turnOff : null;
 }
 
@@ -481,8 +504,9 @@ export function forkTurnOffWarning(
   resolve: MessageResolver = m,
 ): string | null {
   const action = options.fromDetail
-    ? (forkDetailTurnOff(column, cell, item) ?? forkCellAction(column, cell, item))
-    : forkCellAction(column, cell, item);
+    ? (forkDetailTurnOff(column, cell, item, resolve) ??
+      forkCellAction(column, cell, item, resolve))
+    : forkCellAction(column, cell, item, resolve);
   if (action.kind !== "toggle" || action.enabled || action.agent !== "claude") return null;
   if (item.transport !== "http" && item.transport !== "sse") return null;
   if (!isSnapshotCell(cell) || !cell.scopes.includes("user")) return null;
@@ -549,18 +573,25 @@ export function forkAuthorizeAction(
   column: MatrixColumn,
   cell: MatrixCell,
   item: ForkExtensionItem | undefined,
+  resolve: MessageResolver = m,
 ): ForkAuthorizeAction {
   if (column.agent === null || item === undefined || item.kind !== "mcp") return { kind: "none" };
   if (!isSnapshotCell(cell) || cell.problem?.reason !== "needsAuthorization") {
     return { kind: "none" };
   }
   if (item.transport === "claudeAi") return { kind: "connector" };
-  if (!column.canOperate) return { kind: "disabled", reason: readOnlyMachineReason(column) };
+  if (!column.canOperate) {
+    return { kind: "disabled", reason: readOnlyMachineReason(column, resolve) };
+  }
   // The login runs in the user's home, where project and local servers are not visible (Ruling 20).
   if (!cell.scopes.some((scope) => scope === "user" || scope === "plugin")) {
     return {
       kind: "disabled",
-      reason: `Authorize it from a terminal in that project (${AGENT_CLIS[column.agent]} mcp login ${item.name}).`,
+      reason: resolve(
+        msg("Authorize it from a terminal in that project ({command}).", {
+          command: `${AGENT_CLIS[column.agent]} mcp login ${item.name}`,
+        }),
+      ),
     };
   }
   return { kind: "login", agent: column.agent };
@@ -577,6 +608,7 @@ export interface ForkProjectToggleGroup {
 export function forkProjectToggleGroups(
   row: MatrixRow,
   columns: ReadonlyArray<MatrixColumn>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ForkProjectToggleGroup> {
   if (row.item.kind !== "mcp") return [];
   return columns.flatMap((column, index): ReadonlyArray<ForkProjectToggleGroup> => {
@@ -586,9 +618,9 @@ export function forkProjectToggleGroups(
     // A plugin's server is read-only only for its main switch: Claude's per-project list
     // (`disabledMcpServers`) takes it like any other server.
     const blockedReason = !column.canOperate
-      ? readOnlyMachineReason(column)
+      ? readOnlyMachineReason(column, resolve)
       : cell.state === "disabled"
-        ? "Turned off in every project on this machine. Turn it on first."
+        ? resolve(msg("Turned off in every project on this machine. Turn it on first."))
         : null;
     return [{ column, cell, blockedReason }];
   });
