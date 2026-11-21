@@ -7,11 +7,8 @@ import type {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { formatCount, formatTokens, formatUsd, makeWindow } from "@t3tools/shared/usageFormat";
-import {
-  collectLimitAccounts,
-  formatResetsIn,
-  type LimitAccount,
-} from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
+import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 

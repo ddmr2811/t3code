@@ -209,7 +209,10 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
             .filter((project) => project.workspaceRoot === cwd)
             .map((project) => forkTargetBranchFor(settings, project.id)),
         );
-        const status = yield* git.statusDetails(cwd);
+        // Startup checks once, so it waits for the fetch rather than reading the old references.
+        const status = yield* git
+          .statusDetails(cwd)
+          .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
         const skipReason = forkAutoPullSkipReason(status, targetBranch);
         if (skipReason !== null) {
           yield* Effect.logDebug("Skipped automatic project pull", { cwd, reason: skipReason });

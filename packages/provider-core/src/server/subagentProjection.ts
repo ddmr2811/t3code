@@ -22,6 +22,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { derive } from "./IdAllocator.ts";
 import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
@@ -70,6 +71,7 @@ export function makeSubagentChildThread(input: {
     id: input.childThreadId,
     title: input.title,
     titleRegeneration: null,
+    titleRenamed: false,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -196,13 +198,6 @@ export function withExecutedModelNote(
 export const DELEGATED_APPROVAL_DECLINED_REASON =
   "Delegated tasks have no human approval, so this request was declined.";
 
-/** The turn items `subagentResultForRun` reads; load a child's result with exactly these. */
-export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
-  "assistant_message",
-  "error",
-  "approval_request",
-] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
-
 const DECLINED_APPROVALS_LISTED = 5;
 
 /** A delegated result, followed by what the task asked approval for and was refused. */
@@ -228,7 +223,123 @@ function withDeclinedApprovalsNote(
   return `${result}\n\nThis task asked for approval ${declined.length === 1 ? "once" : `${declined.length} times`} and was declined. Delegated Codex tasks can't get approvals; give it what it needs in the brief, or delegate with another provider.\n${listed.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
 }
 
+/** Run signal of the notice that carries a provider's stop reason on a completed run. */
+export const PROVIDER_STOP_REASON_SIGNAL = "provider-stop-reason";
+
+/** Turn item types `subagentResultForRun` reads; load at least these for its projection. */
+export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
+  "assistant_message",
+  "error",
+  "system_notice",
+  "run_interrupt_result",
+  "approval_request",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+/** The item carrying a provider's stop reason for a run, which its delegated result ends with. */
+export function subagentStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+) {
+  // Codex ends a hook-stopped turn as completed or interrupted, depending on its version.
+  const ids = [
+    derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL }),
+    derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+  ];
+  return projection.turnItems.find(
+    (
+      item,
+    ): item is Extract<
+      OrchestrationV2TurnItem,
+      { readonly type: "system_notice" | "run_interrupt_result" }
+    > =>
+      ids.includes(item.id) &&
+      (item.type === "system_notice" || item.type === "run_interrupt_result"),
+  );
+}
+
+function withStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+  text: string,
+): string {
+  const notice = subagentStopNotice(projection, run);
+  return notice === undefined ? text : `${text}\n\n${notice.message}`;
+}
+
+type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
+
+/** Runs that only acknowledge a monitor update are never a task's work. */
+export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
+  return new Set(
+    messages
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
+      .map((message) => message.runId),
+  );
+}
+
+/**
+ * The same task's completed runs before `run`, latest first: where its report is when `run`
+ * completed without saying anything. Ends at another task's run or at any other outcome.
+ */
+export function delegatedTaskReportRuns(
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly messages: ReadonlyArray<MonitorNotice>;
+  },
+  run: OrchestrationV2Run,
+): ReadonlyArray<OrchestrationV2Run> {
+  if (run.status !== "completed") return [];
+  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const earlier = projection.runs
+    .filter(
+      (candidate) =>
+        candidate.id !== run.id &&
+        candidate.startedAt !== null &&
+        candidate.status !== "rolled_back" &&
+        !monitorRuns.has(candidate.id) &&
+        runRanAfter(run, candidate),
+    )
+    .toSorted((a, b) => (runRanAfter(a, b) ? -1 : 1));
+  const end = earlier.findIndex(
+    (candidate) =>
+      candidate.status !== "completed" || candidate.delegatedTaskId !== run.delegatedTaskId,
+  );
+  return end === -1 ? earlier : earlier.slice(0, end);
+}
+
+/**
+ * `runs` scopes where a run that completed without saying anything finds its report, see
+ * `delegatedTaskReportRuns`. The projection must hold the assistant records of every run given.
+ */
 export function subagentResultForRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns"> & {
+    readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+  },
+  run: OrchestrationV2Run,
+) {
+  const result = resultOfRun(projection, run);
+  if (
+    run.status !== "completed" ||
+    result.messageId !== null ||
+    result.turnItemId !== null ||
+    subagentStopNotice(projection, run) !== undefined
+  )
+    return result;
+  for (const earlier of delegatedTaskReportRuns(
+    { runs: projection.runs ?? [], messages: projection.messages },
+    run,
+  )) {
+    const report = resultOfRun(projection, earlier);
+    if (report.messageId !== null || report.turnItemId !== null) return report;
+  }
+  return result;
+}
+
+function resultOfRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): {
@@ -279,18 +390,22 @@ export function subagentResultForRun(
       : failure.failure.class === "usage_limit"
         ? `Out of quota: the provider's usage limit stopped this task. ${failure.failure.message}`
         : failure.failure.message;
-  const report =
+  const report = message?.text ?? turnItem?.text;
+  const result =
     (failureMessage === undefined
       ? undefined
       : reportBeforeFailure === undefined
         ? failureMessage
         : `${failureMessage}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`) ??
-    message?.text ??
-    turnItem?.text ??
-    (run.status === "completed"
-      ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`);
-  const text = withDeclinedApprovalsNote(report, projection.turnItems, run);
+    withStopNotice(
+      projection,
+      run,
+      report ??
+        (run.status === "completed"
+          ? "Child task completed without an assistant result."
+          : `Child task ended with status ${run.status}.`),
+    );
+  const text = withDeclinedApprovalsNote(result, projection.turnItems, run);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,
@@ -332,11 +447,7 @@ export function delegatedTaskProgress(projection: {
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
-  );
+  const monitorRuns = monitorUpdateRunIds(projection.messages);
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );

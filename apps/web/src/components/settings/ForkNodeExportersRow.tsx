@@ -6,7 +6,7 @@ import { Textarea } from "../ui/textarea";
 import { formatNodeExporters, parseNodeExporters } from "./forkNodeExportersRow.logic";
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -17,6 +17,7 @@ const DESCRIPTION =
   "One per line: a name and the exporter's URL, such as prod-cx43 http://100.96.210.49:9100/metrics. This machine reads them for the Dashboard. Use the machine's Tailscale IP: only plain http to Tailscale IPs is read, never names.";
 
 export function ForkNodeExportersRow() {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const { targets, connectedEnvironments } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
@@ -46,7 +47,7 @@ export function ForkNodeExportersRow() {
       resetAction={
         !disabled && (mixed || settings.forkNodeExporters.length > 0) ? (
           <SettingResetButton
-            label="Dashboard exporters"
+            ariaLabel="Reset Dashboard exporters to default"
             onClick={() =>
               updateSettings({ forkNodeExporters: DEFAULT_SERVER_SETTINGS.forkNodeExporters })
             }

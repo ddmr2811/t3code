@@ -48,7 +48,7 @@ import {
   type OnForkInstallHere,
 } from "./ForkExtensionsDetail";
 import { ForkExtensionsInstall, type ForkInstallHereTarget } from "./ForkExtensionsInstall";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useForkExtensions } from "./useForkExtensions";
 
@@ -66,6 +66,7 @@ const EMPTY_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
 };
 
 export function ForkExtensionsSettings() {
+  const searchableSetting = useSearchableSetting();
   const { machines, checkHealth } = useForkExtensions();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);

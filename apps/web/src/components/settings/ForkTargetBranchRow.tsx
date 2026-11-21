@@ -40,7 +40,7 @@ export function ForkTargetBranchRow() {
       resetAction={
         !disabled && (mixed || current !== DEFAULT_SERVER_SETTINGS.forkTargetBranch) ? (
           <SettingResetButton
-            label="target branch"
+            ariaLabel="Reset target branch to default"
             onClick={() =>
               updateSettings({ forkTargetBranch: DEFAULT_SERVER_SETTINGS.forkTargetBranch })
             }

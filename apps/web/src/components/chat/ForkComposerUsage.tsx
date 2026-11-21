@@ -1,11 +1,7 @@
 // Fork-only: the selected provider's usage limits, always visible in the composer footer.
 import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import {
-  collectProviderUsageLimits,
-  formatDuration,
-  limitsNotice,
-  remainingPercent,
-} from "@t3tools/shared/usageLimits";
+import { collectProviderUsageLimits, remainingPercent } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useNowMinute } from "../../hooks/useNowMinute";

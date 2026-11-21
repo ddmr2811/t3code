@@ -3,6 +3,8 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+import { resolveBaseVersion } from "@t3tools/shared/forkVersion";
 import * as NetService from "@t3tools/shared/Net";
 import * as SshAuth from "@t3tools/ssh/auth";
 import { resolveSshTarget } from "@t3tools/ssh/command";
@@ -27,6 +29,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Option from "effect/Option";
+import serverPackageJson from "../../../server/package.json" with { type: "json" };
+
+import type * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
@@ -73,6 +79,32 @@ export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
   readonly resolveLauncherId?: Effect.Effect<string | null>;
 }
+
+declare const __T3CODE_BUILD_BASE_VERSION__: string | undefined;
+
+export const resolveDesktopSshCliRunner = (
+  environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  env: NodeJS.ProcessEnv,
+): SshTunnel.RemoteT3RunnerOptions => {
+  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
+  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+    return {
+      nodeScriptPath: devRemoteEntryPath,
+      nodeEngineRange: serverPackageJson.engines.node,
+    };
+  }
+  const releaseBaseUrl = env[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined;
+  // The remote runtime comes from upstream's releases, which have no fork build numbers.
+  return {
+    archiveVersion: resolveBaseVersion(
+      environment.appVersion,
+      typeof __T3CODE_BUILD_BASE_VERSION__ === "undefined"
+        ? undefined
+        : __T3CODE_BUILD_BASE_VERSION__,
+    ),
+    ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+  };
+};
 
 // Remote servers record this ID as their owner, so it has to outlive restarts,
 // updates and edits to a saved connection. Without a stored one there is none.

@@ -4,11 +4,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
-import {
-  collectLimitAccounts,
-  formatResetsIn,
-  type LimitAccount,
-} from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
+import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
 import { ActivityIcon, ChartColumnBigIcon, ChartSplineIcon, GaugeIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 

@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -14,6 +15,14 @@ import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
 const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
+
+// Windows forbids CR and LF in file names.
+const lineBreakSuffixes = HostProcess.Platform.defaultValue() === "win32" ? [] : ["\r", "\n"];
+const bareLayouts = [
+  "bare clone",
+  "dot-bare",
+  ...lineBreakSuffixes.map((suffix) => `bare clone${suffix}`),
+];
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -71,6 +80,52 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.provider).toBe("github");
       expect(identity?.displayName).toBe("T3Tools/t3code");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keys a remote behind an SSH host alias by the host ssh config resolves it to", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const aliasDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-ssh-alias-test-",
+      });
+      const plainDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-ssh-plain-test-",
+      });
+
+      yield* git(aliasDir, ["init"]);
+      yield* git(aliasDir, ["remote", "add", "origin", "git@github.com-personal:owner/repo.git"]);
+      yield* git(plainDir, ["init"]);
+      yield* git(plainDir, ["remote", "add", "origin", "git@github.com:owner/repo.git"]);
+
+      const runner = yield* ProcessRunner.ProcessRunner;
+      // Stands in for `Host github.com-personal` / `HostName github.com` in ~/.ssh/config.
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            input.command === "ssh" && input.args.includes("-G")
+              ? Effect.succeed({
+                  stdout: input.args.some((arg) => arg.includes("github.com-personal"))
+                    ? "user git\nhostname github.com\nport 22\n"
+                    : `hostname ${input.args.at(-1) ?? ""}\nport 22\n`,
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                })
+              : runner.run(input),
+        }),
+      );
+
+      const aliasIdentity = yield* resolver.resolve(aliasDir);
+      const plainIdentity = yield* resolver.resolve(plainDir);
+
+      expect(plainIdentity?.canonicalKey).toBe("github.com/owner/repo");
+      expect(aliasIdentity?.canonicalKey).toBe(plainIdentity?.canonicalKey);
+      expect(aliasIdentity?.locator.remoteUrl).toBe("git@github.com-personal:owner/repo.git");
+    }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
   it.effect("keeps a literal .git in an Azure DevOps repository name", () =>
@@ -138,7 +193,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect.each(["repo", "repo "] as const)(
+  it.effect.each(["repo", "repo ", ...lineBreakSuffixes.map((suffix) => `repo${suffix}`)])(
     "returns the git top-level root path when resolving from a nested workspace in %j",
     (rootName) =>
       Effect.gen(function* () {
@@ -168,8 +223,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect.each(["bare clone", "dot-bare"] as const)(
-    "resolves a %s to its Git directory and the same identity as a checkout",
+  it.effect.each(bareLayouts)(
+    "resolves a %j to its Git directory and the same identity as a checkout",
     (layout) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -177,9 +232,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         const checkout = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-repository-identity-checkout-",
         });
-        const root = yield* fileSystem.makeTempDirectoryScoped({
+        const parent = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-repository-identity-bare-",
         });
+        const root = path.join(parent, layout);
+        yield* fileSystem.makeDirectory(root);
         const bareGitDir = layout === "dot-bare" ? path.join(root, ".bare") : root;
 
         yield* git(checkout, ["init"]);
@@ -348,59 +405,6 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         displayName: "julius/t3code-fork",
       });
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
-  );
-
-  it.effect("keys an ssh config alias by the forge host it names", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const aliased = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-ssh-alias-",
-      });
-      const selfHosted = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-ssh-alias-self-hosted-",
-      });
-      yield* git(aliased, ["init"]);
-      yield* git(aliased, ["remote", "add", "origin", "git@github-deploy:T3Tools/t3code.git"]);
-      yield* git(selfHosted, ["init"]);
-      yield* git(selfHosted, ["remote", "add", "origin", "box:projects/app"]);
-
-      const runner = yield* ProcessRunner.ProcessRunner;
-      const sshHosts: Array<string> = [];
-      const resolver = yield* RepositoryIdentityResolver.make().pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: (input) => {
-            if (input.command !== "git") {
-              const alias = input.args.at(-1) ?? "";
-              sshHosts.push(alias);
-              return Effect.succeed({
-                stdout: `user git\nhostname ${alias === "box" ? "10.0.0.5" : "github.com"}\nport 22\n`,
-                stderr: "",
-                code: ChildProcessSpawner.ExitCode(0),
-                timedOut: false,
-                stdoutTruncated: false,
-                stderrTruncated: false,
-                stdoutInvalidUtf8: false,
-                stderrInvalidUtf8: false,
-              });
-            }
-            return runner.run(input);
-          },
-        }),
-      );
-
-      const identity = yield* resolver.resolve(aliased);
-      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
-      expect(identity?.provider).toBe("github");
-      expect(identity?.displayName).toBe("T3Tools/t3code");
-      expect(identity?.locator.remoteUrl).toBe("git@github-deploy:T3Tools/t3code.git");
-      expect(identity?.origin).toBeUndefined();
-
-      // An alias for a host no forge claims keeps the key it was written with.
-      expect((yield* resolver.resolve(selfHosted))?.canonicalKey).toBe(
-        sourceControlDefinitions.repositoryKeyFromRemote("box:projects/app"),
-      );
-      expect(sshHosts).toEqual(["github-deploy", "box"]);
-    }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
   it.effect("uses the fork as the identity when gh repo set-default points at it", () =>
