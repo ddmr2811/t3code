@@ -1564,7 +1564,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null) {
+  if (activeThread) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     const muted = activeThreadNotificationsMuted;
     actionItems.push({
