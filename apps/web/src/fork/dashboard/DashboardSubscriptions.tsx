@@ -10,6 +10,7 @@ import { formatCount, formatTokens, formatUsd, makeWindow } from "@t3tools/share
 import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
 import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { Toggle } from "../../components/ui/toggle";
@@ -47,7 +48,9 @@ function WindowMeter(props: {
   readonly compact: boolean;
 }) {
   const { percent, low } = windowRemaining(props.window);
-  const resets = formatResetsIn(props.window, props.nowMs);
+  const m = useMessages();
+  const gt = useGT();
+  const resets = formatResetsIn(props.window, props.nowMs, m);
   return (
     <div
       className={cn(
@@ -57,7 +60,9 @@ function WindowMeter(props: {
     >
       <div className="flex justify-between gap-1">
         <span className="truncate text-muted-foreground">{props.window.label}</span>
-        <span className={cn("shrink-0", low && "text-warning-foreground")}>{percent}% left</span>
+        <span className={cn("shrink-0", low && "text-warning-foreground")}>
+          {gt("{percent}% left", { percent })}
+        </span>
       </div>
       <DotMeter share={percent / 100} color={low ? "var(--warning)" : props.color} />
       <span className="truncate text-muted-foreground">{resets ?? " "}</span>
@@ -72,6 +77,7 @@ function AccountRow(props: {
   readonly compact: boolean;
 }) {
   const { account } = props;
+  const gt = useGT();
   const windows = account.limits.windows.filter((window) => SHOWN_WINDOW_KINDS.has(window.kind));
   const where = account.sourceLabel ?? account.environments.map((entry) => entry.label).join(", ");
   return (
@@ -83,7 +89,7 @@ function AccountRow(props: {
     >
       <div className={cn("flex flex-1 flex-col", props.compact ? "min-w-full" : "min-w-40")}>
         <span className="truncate text-sm">
-          {account.displayName ?? account.email ?? "Account"}
+          {account.displayName ?? account.email ?? gt("Account")}
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
           {account.plan ? (
@@ -94,7 +100,9 @@ function AccountRow(props: {
       </div>
       <div className={props.compact ? "grid w-full grid-cols-2 gap-3" : "flex gap-3"}>
         {windows.length === 0 ? (
-          <span className="text-2xs text-muted-foreground">No 5-hour or weekly window</span>
+          <span className="text-2xs text-muted-foreground">
+            <T>No 5-hour or weekly window</T>
+          </span>
         ) : (
           windows.map((window) => (
             <WindowMeter
@@ -119,6 +127,7 @@ function ProviderPanel(props: {
   readonly compact: boolean;
 }) {
   const presentation = PROVIDER_PRESENTATION[props.provider];
+  const gt = useGT();
   return (
     <section
       aria-label={presentation.label}
@@ -137,18 +146,27 @@ function ProviderPanel(props: {
         />
         <span className="font-medium text-sm">{presentation.label}</span>
         <span className="text-2xs text-muted-foreground">
-          {props.accounts.length} {props.accounts.length === 1 ? "account" : "accounts"}
+          {gt("{count, plural, one {{count} account} other {{count} accounts}}", {
+            count: props.accounts.length,
+          })}
         </span>
         <span
           className={cn("ms-auto font-mono tabular-nums", props.compact ? "text-sm" : "text-lg")}
         >
           {props.spend ? formatUsd(props.spend.costUsd) : "–"}
         </span>
-        {props.compact ? null : <span className="text-2xs text-muted-foreground">list price</span>}
+        {props.compact ? null : (
+          <span className="text-2xs text-muted-foreground">
+            <T>list price</T>
+          </span>
+        )}
       </header>
       {props.spend && !props.compact ? (
         <p className="border-b px-4 py-1.5 font-mono text-2xs text-muted-foreground tabular-nums">
-          {formatCount(props.spend.requests)} requests · {formatTokens(props.spend.tokens)} tokens
+          {gt("{requests} requests · {tokens} tokens", {
+            requests: formatCount(props.spend.requests),
+            tokens: formatTokens(props.spend.tokens),
+          })}
         </p>
       ) : null}
       {props.accounts.length > 0 ? (
@@ -164,7 +182,9 @@ function ProviderPanel(props: {
           ))}
         </ul>
       ) : (
-        <p className="px-4 py-3 text-muted-foreground text-xs">No subscription limits reported.</p>
+        <p className="px-4 py-3 text-muted-foreground text-xs">
+          <T>No subscription limits reported.</T>
+        </p>
       )}
     </section>
   );
@@ -177,9 +197,16 @@ function ProviderChoice(props: {
   readonly onChange: (layout: ForkDashboardLayout) => void;
 }) {
   const hidden = new Set(props.layout.hiddenProviders);
+  const gt = useGT();
   return (
-    <div role="group" aria-label="Providers shown" className="flex flex-wrap items-center gap-1.5">
-      <span className="me-1 text-muted-foreground text-xs">Shown</span>
+    <div
+      role="group"
+      aria-label={gt("Providers shown")}
+      className="flex flex-wrap items-center gap-1.5"
+    >
+      <span className="me-1 text-muted-foreground text-xs">
+        <T context="providers shown on the dashboard">Shown</T>
+      </span>
       {props.providers.map((provider) => {
         const presentation = PROVIDER_PRESENTATION[provider];
         return (
@@ -218,6 +245,8 @@ export function DashboardSubscriptions({
   readonly compact?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const gt = useGT();
+  const m = useMessages();
   // Kept for the page's life: the usage query is keyed by this window.
   const [usageWindow, setUsageWindow] = useState(() => makeWindow(USAGE_DAYS));
   const usage = useUsage(usageWindow);
@@ -275,46 +304,70 @@ export function DashboardSubscriptions({
       ) : null}
       <p className="flex flex-wrap items-baseline gap-x-1.5 text-muted-foreground text-sm">
         {loading ? (
-          "Reading the last 7 days…"
+          gt("Reading the last 7 days…")
         ) : (
           <>
-            <span className="font-mono text-foreground tabular-nums">
-              {formatUsd(totals.costUsd)}
-            </span>
-            {compact ? "last 7 days" : "over the last 7 days"} ·{" "}
-            <span className="font-mono tabular-nums">{formatCount(totals.requests)}</span> requests
-            {compact ? null : (
-              <>
-                {" "}
-                · <span className="font-mono tabular-nums">{formatTokens(totals.tokens)}</span>{" "}
+            {compact ? (
+              <T>
+                <span className="font-mono text-foreground tabular-nums">
+                  <Var>{formatUsd(totals.costUsd)}</Var>
+                </span>{" "}
+                last 7 days ·{" "}
+                <span className="font-mono tabular-nums">
+                  <Var>{formatCount(totals.requests)}</Var>
+                </span>{" "}
+                requests
+              </T>
+            ) : (
+              <T>
+                <span className="font-mono text-foreground tabular-nums">
+                  <Var>{formatUsd(totals.costUsd)}</Var>
+                </span>{" "}
+                over the last 7 days ·{" "}
+                <span className="font-mono tabular-nums">
+                  <Var>{formatCount(totals.requests)}</Var>
+                </span>{" "}
+                requests ·{" "}
+                <span className="font-mono tabular-nums">
+                  <Var>{formatTokens(totals.tokens)}</Var>
+                </span>{" "}
                 tokens
-              </>
+              </T>
             )}
             {spend.machines.length > 0 && !compact ? (
-              <span className="text-xs">· from {spend.machines.join(", ")}</span>
+              <span className="text-xs">
+                {gt("· from {machines}", { machines: spend.machines.join(", ") })}
+              </span>
             ) : null}
             {hiddenCount > 0 ? (
               <span className="text-xs">
-                · {hiddenCount} {hiddenCount === 1 ? "provider" : "providers"} hidden
+                {gt(
+                  "· {count, plural, one {{count} provider hidden} other {{count} providers hidden}}",
+                  { count: hiddenCount },
+                )}
               </span>
             ) : null}
             {usage.isPartial ? (
-              <span className="text-xs">· some machines still counting</span>
+              <span className="text-xs">
+                <T>· some machines still counting</T>
+              </span>
             ) : null}
             {readAt !== null ? (
-              <span className="text-xs">· updated {formatRelativeTimeLabel(readAt, nowMs)}</span>
+              <span className="text-xs">
+                {gt("· updated {when}", { when: formatRelativeTimeLabel(readAt, nowMs, m) })}
+              </span>
             ) : null}
           </>
         )}
         <Link to="/usage" className="ms-auto text-xs text-primary hover:underline">
-          Open usage →
+          <T>Open usage →</T>
         </Link>
       </p>
       {providers.length === 0 && !loading ? (
         <p className="text-muted-foreground text-sm">
           {reported.length === 0
-            ? "No provider reports usage or limits yet."
-            : "Every provider is hidden. Edit the dashboard to show one."}
+            ? gt("No provider reports usage or limits yet.")
+            : gt("Every provider is hidden. Edit the dashboard to show one.")}
         </p>
       ) : (
         <div

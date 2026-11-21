@@ -3,6 +3,7 @@ import type { EnvironmentId, ProviderInstanceId, ServerProvider } from "@t3tools
 import { collectProviderUsageLimits, remainingPercent } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT, useMessages } from "gt-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
@@ -19,6 +20,8 @@ export function ForkComposerUsage(props: {
 }) {
   const { providerInstanceId, providers } = props;
   const navigate = useNavigate();
+  const gt = useGT();
+  const m = useMessages();
   const sources = useServerConfigs().get(props.environmentId)?.usageLimitSources ?? NO_SOURCES;
   const now = Date.parse(`${useNowMinute()}:00Z`);
   if (providerInstanceId === null) return null;
@@ -35,7 +38,7 @@ export function ForkComposerUsage(props: {
         render={
           <button
             type="button"
-            aria-label="Usage limits"
+            aria-label={gt("Usage limits")}
             data-testid="fork-composer-usage"
             onClick={() => void navigate({ to: "/usage" })}
             className="hidden h-7 shrink-0 cursor-pointer items-center gap-3 rounded-md px-2 text-muted-foreground text-xs hover:bg-accent hover:text-foreground sm:flex"
@@ -78,10 +81,15 @@ export function ForkComposerUsage(props: {
         <div className="flex flex-col gap-0.5">
           {limits.windows.map((window) => {
             const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+            const values = { label: window.label, remaining: remainingPercent(window) };
             return (
               <span key={window.id}>
-                {window.label}: {remainingPercent(window)}% left
-                {resetsAt > now ? ` · resets in ${formatDuration(resetsAt - now)}` : ""}
+                {resetsAt > now
+                  ? gt("{label}: {remaining}% left · resets in {duration}", {
+                      ...values,
+                      duration: formatDuration(resetsAt - now, m),
+                    })
+                  : gt("{label}: {remaining}% left", values)}
               </span>
             );
           })}

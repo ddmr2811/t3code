@@ -1,6 +1,7 @@
 // Fork-only: "Saved on": moves the Dashboard to another environment's settings, either copying the
 // layout on screen there or taking the one it already keeps.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { CloudOffIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -15,6 +16,7 @@ import {
 } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { m } from "../../i18n/messages";
 import {
   getClientSettings,
   subscribeClientSettings,
@@ -41,17 +43,19 @@ export function DashboardOwnerPicker(props: {
   readonly onSwitched: (next: ForkDashboardLayout, ownerId: EnvironmentId, label: string) => void;
 }) {
   const { owner, writer } = props;
+  const gt = useGT();
+  const resolve = useMessages();
   const operations = useRef(0);
   const { source, primaryId, candidates } = owner;
   const current = source.kind === "primary" ? primaryId : source.environmentId;
-  const options = ownerOptions({ candidates, primaryId, current });
+  const options = ownerOptions({ candidates, primaryId, current }, resolve);
   const [target, setTarget] = useState<EnvironmentId | null>(null);
   const [busy, setBusy] = useState(false);
   const chosen = target === null ? null : candidates.find((c) => c.environmentId === target);
   const nameOf = (environmentId: EnvironmentId | null) => {
     const option = options.find((entry) => entry.environmentId === environmentId);
-    if (option === undefined) return "No server";
-    return option.primary ? `${option.label} · primary` : option.label;
+    if (option === undefined) return gt("No server");
+    return option.primary ? gt("{label} · primary", { label: option.label }) : option.label;
   };
 
   const locked = props.disabled || busy;
@@ -94,7 +98,9 @@ export function DashboardOwnerPicker(props: {
 
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <span className="text-muted-foreground text-sm">Saved on</span>
+      <span className="text-muted-foreground text-sm">
+        <T>Saved on</T>
+      </span>
       <Select
         value={target ?? current ?? ""}
         disabled={locked}
@@ -103,7 +109,7 @@ export function DashboardOwnerPicker(props: {
           setTarget(value === current ? null : (value as EnvironmentId));
         }}
       >
-        <SelectTrigger size="sm" className="w-56" aria-label="Saved on">
+        <SelectTrigger size="sm" className="w-56" aria-label={gt("Saved on")}>
           <SelectValue>
             {(value: string | null) => nameOf(value as EnvironmentId | null)}
           </SelectValue>
@@ -116,9 +122,17 @@ export function DashboardOwnerPicker(props: {
               disabled={option.disabled && option.environmentId !== current}
             >
               {option.label}
-              {option.primary ? <span className="text-muted-foreground"> · primary</span> : null}
+              {option.primary ? (
+                <span className="text-muted-foreground">
+                  {" · "}
+                  <T>primary</T>
+                </span>
+              ) : null}
               {option.disabled ? (
-                <span className="text-muted-foreground"> · unavailable</span>
+                <span className="text-muted-foreground">
+                  {" · "}
+                  <T>unavailable</T>
+                </span>
               ) : null}
             </SelectItem>
           ))}
@@ -133,7 +147,7 @@ export function DashboardOwnerPicker(props: {
             disabled={locked}
             onClick={() => void finish("copy")}
           >
-            Copy this layout there
+            <T>Copy this layout there</T>
           </Button>
           <Button
             type="button"
@@ -142,7 +156,7 @@ export function DashboardOwnerPicker(props: {
             disabled={locked}
             onClick={() => void finish("use")}
           >
-            Use the one there
+            <T>Use the one there</T>
           </Button>
           <Button
             type="button"
@@ -151,7 +165,9 @@ export function DashboardOwnerPicker(props: {
             disabled={locked}
             onClick={() => setTarget(null)}
           >
-            Keep {nameOf(current)}
+            <T>
+              Keep <Var>{nameOf(current)}</Var>
+            </T>
           </Button>
         </>
       ) : null}
@@ -175,8 +191,8 @@ async function applyOwnerSwitch(
     if (outcome === "stale") {
       toastManager.add({
         type: "warning",
-        title: `Changed on ${targetLabel} meanwhile`,
-        description: "Nothing was copied. Choose the server again to see its layout.",
+        title: m(msg("Changed on {label} meanwhile", { label: targetLabel })),
+        description: m(msg("Nothing was copied. Choose the server again to see its layout.")),
       });
     }
     if (outcome !== "saved") return false;

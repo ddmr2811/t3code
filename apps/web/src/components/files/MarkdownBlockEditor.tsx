@@ -22,10 +22,12 @@ import {
   Table2Icon,
   TextQuoteIcon,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { createContext, type ReactNode, use, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import {
@@ -40,11 +42,12 @@ const RawBlockRenderContext = createContext<((source: string) => ReactNode) | nu
 
 function RawBlockView({ node, selected }: NodeViewProps) {
   const renderSource = use(RawBlockRenderContext);
+  const gt = useGT();
   return (
     <NodeViewWrapper
       className={cn("markdown-block-editor-raw", selected && "is-selected")}
       contentEditable={false}
-      title="Edit this block from the Markdown source view"
+      title={gt("Edit this block from the Markdown source view")}
     >
       {renderSource?.(String(node.attrs.source ?? ""))}
     </NodeViewWrapper>
@@ -58,7 +61,9 @@ const EDITOR_EXTENSIONS = [
   MarkdownHeadingFold,
   Placeholder.configure({
     placeholder: ({ node }) =>
-      node.type.name === "heading" ? `Heading ${node.attrs.level}` : "Type '/' for commands",
+      node.type.name === "heading"
+        ? m(msg("Heading {level}", { level: node.attrs.level }))
+        : m(msg("Type '/' for commands")),
   }),
 ];
 
@@ -71,79 +76,79 @@ interface SlashCommand {
 
 const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
-    label: "Text",
+    label: msg("Text", { $context: "markdown block type" }),
     keywords: ["paragraph", "plain"],
     icon: PilcrowIcon,
     apply: (c) => c.setParagraph(),
   },
   {
-    label: "Heading 1",
+    label: msg("Heading 1"),
     keywords: ["h1", "title"],
     icon: Heading1Icon,
     apply: (c) => c.setHeading({ level: 1 }),
   },
   {
-    label: "Heading 2",
+    label: msg("Heading 2"),
     keywords: ["h2", "subtitle"],
     icon: Heading2Icon,
     apply: (c) => c.setHeading({ level: 2 }),
   },
   {
-    label: "Heading 3",
+    label: msg("Heading 3"),
     keywords: ["h3"],
     icon: Heading3Icon,
     apply: (c) => c.setHeading({ level: 3 }),
   },
   {
-    label: "Bulleted list",
+    label: msg("Bulleted list"),
     keywords: ["ul", "unordered", "bullet"],
     icon: ListIcon,
     apply: (c) => c.toggleBulletList(),
   },
   {
-    label: "Numbered list",
+    label: msg("Numbered list"),
     keywords: ["ol", "ordered", "number"],
     icon: ListOrderedIcon,
     apply: (c) => c.toggleOrderedList(),
   },
   {
-    label: "To-do list",
+    label: msg("To-do list"),
     keywords: ["todo", "task", "checkbox"],
     icon: ListTodoIcon,
     apply: (c) => c.toggleTaskList(),
   },
   {
-    label: "Code block",
+    label: msg("Code block"),
     keywords: ["code", "snippet", "pre"],
     icon: SquareCodeIcon,
     apply: (c) => c.setCodeBlock(),
   },
   {
-    label: "Quote",
+    label: msg("Quote", { $context: "markdown block type" }),
     keywords: ["blockquote", "quote"],
     icon: TextQuoteIcon,
     apply: (c) => c.setBlockquote(),
   },
   {
-    label: "Table",
+    label: msg("Table", { $context: "markdown block type" }),
     keywords: ["table", "grid"],
     icon: Table2Icon,
     apply: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
   },
   {
-    label: "Divider",
+    label: msg("Divider", { $context: "markdown block type" }),
     keywords: ["hr", "rule", "separator", "divider"],
     icon: MinusIcon,
     apply: (c) => c.setHorizontalRule(),
   },
 ];
 
-function filterSlashCommands(query: string): readonly SlashCommand[] {
+function filterSlashCommands(query: string, resolve: MessageResolver): readonly SlashCommand[] {
   const needle = query.trim().toLowerCase();
   if (needle === "") return SLASH_COMMANDS;
   return SLASH_COMMANDS.filter(
     (command) =>
-      command.label.toLowerCase().includes(needle) ||
+      resolve(command.label).toLowerCase().includes(needle) ||
       command.keywords.some((keyword) => keyword.startsWith(needle)),
   );
 }
@@ -171,11 +176,11 @@ const TABLE_ACTIONS: readonly {
   readonly label: string;
   readonly apply: (chain: ChainedCommands) => ChainedCommands;
 }[] = [
-  { label: "Add row", apply: (c) => c.addRowAfter() },
-  { label: "Add column", apply: (c) => c.addColumnAfter() },
-  { label: "Delete row", apply: (c) => c.deleteRow() },
-  { label: "Delete column", apply: (c) => c.deleteColumn() },
-  { label: "Delete table", apply: (c) => c.deleteTable() },
+  { label: msg("Add row"), apply: (c) => c.addRowAfter() },
+  { label: msg("Add column"), apply: (c) => c.addColumnAfter() },
+  { label: msg("Delete row"), apply: (c) => c.deleteRow() },
+  { label: msg("Delete column"), apply: (c) => c.deleteColumn() },
+  { label: msg("Delete table"), apply: (c) => c.deleteTable() },
 ];
 
 /** Document position of the table holding the caret. */
@@ -207,7 +212,9 @@ export function MarkdownBlockEditor(props: {
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   const [tableBar, setTableBar] = useState<{ left: number; top: number } | null>(null);
-  const commands = slash ? filterSlashCommands(slash.query) : [];
+  const gt = useGT();
+  const resolve = useMessages();
+  const commands = slash ? filterSlashCommands(slash.query, resolve) : [];
   const highlightIndex = Math.min(highlight, Math.max(commands.length - 1, 0));
   const menuOpen = slash !== null && commands.length > 0;
 
@@ -289,7 +296,7 @@ export function MarkdownBlockEditor(props: {
     editorProps: {
       attributes: {
         class: "chat-markdown markdown-block-editor",
-        "aria-label": "Markdown document",
+        "aria-label": gt("Markdown document"),
         "data-workspace-focus-default": "",
       },
       handleKeyDown: (_view, event) => handleKeyDown(event),
@@ -313,7 +320,7 @@ export function MarkdownBlockEditor(props: {
         {tableBar ? (
           <div
             role="toolbar"
-            aria-label="Table"
+            aria-label={gt("Table", { $context: "markdown block type" })}
             className="absolute z-10 flex -translate-y-full gap-0.5 rounded-lg border bg-popover p-0.5 text-popover-foreground shadow-md"
             style={{ left: tableBar.left, top: tableBar.top - 4 }}
             onMouseDown={(event) => event.preventDefault()}
@@ -325,7 +332,7 @@ export function MarkdownBlockEditor(props: {
                 variant="ghost"
                 onClick={() => action.apply(editor.chain().focus()).run()}
               >
-                {action.label}
+                {resolve(action.label)}
               </Button>
             ))}
           </div>
@@ -333,7 +340,7 @@ export function MarkdownBlockEditor(props: {
         {menuOpen ? (
           <div
             role="listbox"
-            aria-label="Insert block"
+            aria-label={gt("Insert block")}
             className="absolute z-20 flex w-56 flex-col gap-0.5 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg"
             style={{ left: slash.left, top: slash.top }}
             // Keep focus, and so the caret, in the document while picking.
@@ -354,7 +361,7 @@ export function MarkdownBlockEditor(props: {
                   onClick={() => runCommand(editor, command, slash)}
                 >
                   <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                  {command.label}
+                  {resolve(command.label)}
                 </div>
               );
             })}

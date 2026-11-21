@@ -1571,7 +1571,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:toggle-thread-notifications",
       searchTerms: ["mute", "unmute", "notifications", "sound", "silence", "quiet", "alerts"],
-      title: muted ? "Unmute thread notifications" : "Mute thread notifications",
+      title: muted ? gt("Unmute thread notifications") : gt("Mute thread notifications"),
       icon: muted ? (
         <BellIcon className={ITEM_ICON_CLASS} />
       ) : (
@@ -1585,7 +1585,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:fork-toggle-home-thread",
       searchTerms: ["home", "start", "startup", "main", "default", "open on start"],
-      title: isHome ? "Unset home thread" : "Set as home thread",
+      title: isHome ? gt("Unset home thread") : gt("Set as home thread"),
       icon: <HouseIcon className={ITEM_ICON_CLASS} />,
       run: () => setHomeThread(threadRef, !isHome),
     });
@@ -1593,7 +1593,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:fork-toggle-dashboard-panel",
       searchTerms: ["dashboard", "panel", "machines", "tailnet", "subscriptions", "column"],
-      title: "Toggle dashboard panel",
+      title: gt("Toggle dashboard panel"),
       icon: <LayoutDashboardIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().toggle(threadRef, "dashboard");
@@ -1819,7 +1819,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:fork-dashboard",
     searchTerms: ["dashboard", "panel", "machines", "tailnet", "subscriptions", "latency", "cpu"],
-    title: "Open dashboard",
+    title: gt("Open dashboard"),
     icon: <LayoutDashboardIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/dashboard" });
@@ -1831,7 +1831,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:fork-activity",
     searchTerms: ["activity", "ai", "agents", "log", "history", "errors", "what the ai did"],
-    title: "Open AI activity",
+    title: gt("Open AI activity"),
     icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/activity" });

@@ -1,6 +1,7 @@
 // Fork-only: the whole machine's CPU for the Diagnostics panel, in place of the shell's
 // "CPU speed limit", which misreads idle cores as a held-back CPU on Windows.
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useEffect } from "react";
 
 import { formatBytes } from "../../lib/formatBytes";
@@ -21,6 +22,7 @@ export function useForkMachineCpu(environmentId: EnvironmentId | null): {
     environmentId === null ? null : serverEnvironment.hostResources({ environmentId, input: {} }),
   );
   const refresh = host.refresh;
+  const gt = useGT();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the machine's load while the Diagnostics panel is open
   useEffect(() => {
     if (environmentId === null) return;
@@ -30,13 +32,21 @@ export function useForkMachineCpu(environmentId: EnvironmentId | null): {
 
   const resources = host.data;
   if (resources === null) {
-    return { value: host.error === null ? "..." : "Unknown", detail: undefined, tone: "default" };
+    return {
+      value: host.error === null ? "..." : gt("Unknown"),
+      detail: undefined,
+      tone: "default",
+    };
   }
   const share = resources.cpuUtilization;
   const usedMemory = resources.totalMemoryBytes - resources.availableMemoryBytes;
   return {
-    value: share === null ? "Unknown" : `${Math.round(share * 100)}%`,
-    detail: `${resources.cpuCount} cores · ${formatBytes(usedMemory)} of ${formatBytes(resources.totalMemoryBytes)} memory`,
+    value: share === null ? gt("Unknown") : `${Math.round(share * 100)}%`,
+    detail: gt("{cores} cores · {used} of {total} memory", {
+      cores: resources.cpuCount,
+      used: formatBytes(usedMemory),
+      total: formatBytes(resources.totalMemoryBytes),
+    }),
     tone:
       share === null || share < BUSY_SHARE
         ? "default"

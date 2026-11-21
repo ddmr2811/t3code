@@ -1,6 +1,7 @@
 // Fork-only: one page with every machine, the tailnet, the subscriptions and the active threads,
 // arranged as saved in the settings of the server chosen to keep it, and editable in place.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { ArrowDownIcon, ArrowUpIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -38,8 +39,10 @@ function Section(props: {
   readonly controls?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const m = useMessages();
+  const title = m(props.panel.title);
   return (
-    <section aria-label={props.panel.title} className="flex flex-col gap-4">
+    <section aria-label={title} className="flex flex-col gap-4">
       <div className="flex min-h-9 items-center gap-3">
         <h2
           className={cn(
@@ -47,7 +50,7 @@ function Section(props: {
             props.panel.hidden && "text-muted-foreground",
           )}
         >
-          {props.panel.title}
+          {title}
         </h2>
         {props.controls}
       </div>
@@ -66,6 +69,9 @@ function PanelControls(props: {
   readonly locked: string | null;
 }) {
   const { panel } = props;
+  const gt = useGT();
+  const m = useMessages();
+  const title = m(panel.title);
   const locked = props.locked !== null;
   const controls = (
     <span className="ms-auto flex items-center gap-1">
@@ -78,14 +84,16 @@ function PanelControls(props: {
         onClick={() => props.onHidden(!panel.hidden)}
       >
         {panel.hidden ? <EyeOffIcon /> : <EyeIcon />}
-        {panel.hidden ? "Hidden" : "Shown"}
+        {panel.hidden
+          ? gt("Hidden", { $context: "dashboard section state" })
+          : gt("Shown", { $context: "dashboard section state" })}
       </Button>
       <Button
         type="button"
         size="icon-xs"
         variant="ghost-muted"
         disabled={locked || props.index === 0}
-        aria-label={`Move ${panel.title} up`}
+        aria-label={gt("Move {title} up", { title })}
         onClick={() => props.onMove(-1)}
       >
         <ArrowUpIcon />
@@ -95,7 +103,7 @@ function PanelControls(props: {
         size="icon-xs"
         variant="ghost-muted"
         disabled={locked || props.index === props.count - 1}
-        aria-label={`Move ${panel.title} down`}
+        aria-label={gt("Move {title} down", { title })}
         onClick={() => props.onMove(1)}
       >
         <ArrowDownIcon />
@@ -118,7 +126,9 @@ interface Saved {
 }
 
 export function DashboardPage() {
-  const contentArea = workspaceAreaProps("home", 1, "Dashboard");
+  const gt = useGT();
+  const m = useMessages();
+  const contentArea = workspaceAreaProps("home", 1, gt("Dashboard"));
   // The minute tick is UTC without a zone suffix; it refreshes reset and relative labels.
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   const owner = useDashboardOwner();
@@ -129,9 +139,9 @@ export function DashboardPage() {
   const [saving, setSaving] = useState(false);
   const [stale, setStale] = useState(false);
   const ownerId = dashboardOwnerId(owner.source, owner.primaryId);
-  const ownerLabel = writer.serverLabel ?? "this server";
+  const ownerLabel = writer.serverLabel ?? gt("this server");
   const plan =
-    opened === null ? null : planDraft(opened, { ownerId, label: ownerLabel, layout: saved });
+    opened === null ? null : planDraft(opened, { ownerId, label: ownerLabel, layout: saved }, m);
   // The owner moved under a draft with nothing changed: edit mode closes with it.
   const draft = plan?.kind === "close" ? null : opened;
   // Dropped too, so moving back to that owner does not reopen it.
@@ -165,8 +175,8 @@ export function DashboardPage() {
       setStale(true);
       toastManager.add({
         type: "warning",
-        title: "Changed on another device: reload",
-        description: "Your edits are still here. Reload to start from the saved dashboard.",
+        title: gt("Changed on another device: reload"),
+        description: gt("Your edits are still here. Reload to start from the saved dashboard."),
       });
       return;
     }
@@ -190,7 +200,14 @@ export function DashboardPage() {
   };
   const reset = async () => {
     const confirmed = await requestConfirmDialog(
-      `Reset the dashboard?\nAliases, icons, colours, sections, order and hidden items go back to the defaults on every client of ${writer.serverLabel ?? "this server"}.`,
+      writer.serverLabel === null
+        ? gt(
+            "Reset the dashboard?\nAliases, icons, colours, sections, order and hidden items go back to the defaults on every client of this server.",
+          )
+        : gt(
+            "Reset the dashboard?\nAliases, icons, colours, sections, order and hidden items go back to the defaults on every client of {label}.",
+            { label: writer.serverLabel },
+          ),
       { variant: "destructive" },
     );
     if (confirmed) await save(resetLayout());
@@ -238,7 +255,9 @@ export function DashboardPage() {
             <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur-sm">
               <div className="mx-auto flex w-full max-w-[100rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-8">
                 <div className="flex min-w-0 flex-col">
-                  <span className="font-medium text-sm">Editing the dashboard</span>
+                  <span className="font-medium text-sm">
+                    <T>Editing the dashboard</T>
+                  </span>
                   <span
                     className={cn(
                       "text-xs",
@@ -248,8 +267,10 @@ export function DashboardPage() {
                     {moved !== null
                       ? moved.notice
                       : stale
-                        ? "Changed on another device since you started. Reload to start from it; your edits stay until then."
-                        : "Changes show on every client that saves its Dashboard there."}
+                        ? gt(
+                            "Changed on another device since you started. Reload to start from it; your edits stay until then.",
+                          )
+                        : gt("Changes show on every client that saves its Dashboard there.")}
                   </span>
                 </div>
                 {moved === null ? (
@@ -271,7 +292,7 @@ export function DashboardPage() {
                       disabled={saving}
                       onClick={() => setOpened(null)}
                     >
-                      Discard
+                      <T>Discard</T>
                     </Button>
                     <Button
                       type="button"
@@ -279,7 +300,7 @@ export function DashboardPage() {
                       disabled={saving || writer.blocked !== null}
                       onClick={() => void copyMoved()}
                     >
-                      {saving ? "Copying…" : moved.copyLabel}
+                      {saving ? gt("Copying…") : moved.copyLabel}
                     </Button>
                   </span>
                 ) : (
@@ -292,7 +313,7 @@ export function DashboardPage() {
                         disabled={saving}
                         onClick={() => edit(saved)}
                       >
-                        Reload
+                        <T>Reload</T>
                       </Button>
                     ) : null}
                     <Button
@@ -302,7 +323,7 @@ export function DashboardPage() {
                       disabled={saving || (isDefaultLayout(saved) && isDefaultLayout(layout))}
                       onClick={() => void reset()}
                     >
-                      Reset
+                      <T>Reset</T>
                     </Button>
                     <Button
                       type="button"
@@ -311,7 +332,7 @@ export function DashboardPage() {
                       disabled={saving}
                       onClick={() => setOpened(null)}
                     >
-                      Cancel
+                      <T>Cancel</T>
                     </Button>
                     <Button
                       type="button"
@@ -319,7 +340,7 @@ export function DashboardPage() {
                       disabled={saving || stale}
                       onClick={() => void save(layout)}
                     >
-                      {saving ? "Saving…" : "Save"}
+                      {saving ? gt("Saving…") : gt("Save")}
                     </Button>
                   </span>
                 )}
@@ -364,7 +385,9 @@ export function DashboardPage() {
                 }
               >
                 {editing && panel.hidden ? (
-                  <p className="text-muted-foreground text-sm">Hidden from the dashboard.</p>
+                  <p className="text-muted-foreground text-sm">
+                    <T>Hidden from the dashboard.</T>
+                  </p>
                 ) : (
                   panelBody(panel.id)
                 )}
@@ -372,7 +395,9 @@ export function DashboardPage() {
             ))}
             {visiblePanels.length === 0 ? (
               <div className="flex items-center gap-3">
-                <p className="text-muted-foreground text-sm">Every section is hidden.</p>
+                <p className="text-muted-foreground text-sm">
+                  <T>Every section is hidden.</T>
+                </p>
                 <EditButton blocked={writer.blocked} onEdit={() => edit(shown)} />
               </div>
             ) : null}
@@ -393,7 +418,7 @@ function EditButton(props: { readonly blocked: string | null; readonly onEdit: (
       onClick={props.onEdit}
     >
       <PencilIcon />
-      Edit dashboard
+      <T>Edit dashboard</T>
     </Button>
   );
   if (props.blocked === null) return <span className="ms-auto flex">{button}</span>;

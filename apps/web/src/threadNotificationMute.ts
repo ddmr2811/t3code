@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import {
   isThreadNotificationsMuted,
@@ -6,6 +7,7 @@ import {
 } from "./components/ThreadNotificationCoordinator.logic";
 import { stackedThreadToast, toastManager } from "./components/ui/toast";
 import { persistClientSettingsUpdate, useClientSettings } from "./hooks/useSettings";
+import { m } from "./i18n/messages";
 
 export function useThreadNotificationsMuted(ref: ScopedThreadRef | null): boolean {
   return useClientSettings(
@@ -31,8 +33,10 @@ export async function setThreadNotificationsMuted(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: muted ? "Could not mute notifications" : "Could not unmute notifications",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: m(
+          muted ? msg("Could not mute notifications") : msg("Could not unmute notifications"),
+        ),
+        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
       }),
     );
   }

@@ -2,6 +2,9 @@ import { Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { type EditorState, Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import { msg } from "gt-react";
+
+import { m } from "../../i18n/messages";
 
 /**
  * Top-level positions a folded heading hides: every block after it up to the
@@ -58,7 +61,7 @@ function foldToggle(view: EditorView, getPos: () => number | undefined, folded: 
   button.type = "button";
   button.contentEditable = "false";
   button.className = "markdown-fold-toggle";
-  button.setAttribute("aria-label", folded ? "Expand section" : "Collapse section");
+  button.setAttribute("aria-label", m(folded ? msg("Expand section") : msg("Collapse section")));
   button.setAttribute("aria-expanded", String(!folded));
   // Keep the caret where it was; clicking only folds.
   button.addEventListener("mousedown", (event) => event.preventDefault());

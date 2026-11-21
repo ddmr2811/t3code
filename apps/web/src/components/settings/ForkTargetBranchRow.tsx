@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import { Input } from "../ui/input";
 import { environmentsWithoutForkTargetBranch } from "./forkTargetBranchRow.logic";
@@ -11,10 +12,8 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-const DESCRIPTION =
-  "Automatic pull keeps this branch current instead of the default one, and new pull requests target it unless the branch records another base. Leave empty to use the repository's default branch.";
-
 export function ForkTargetBranchRow() {
+  const gt = useGT();
   const settings = useScopedSettings();
   const { targets, connectedEnvironments } = useSettingsScope();
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
@@ -35,12 +34,18 @@ export function ForkTargetBranchRow() {
       serverScoped
       settingKeys={["forkTargetBranch"]}
       mixed={mixed}
-      title="Target branch"
-      description={disabled ? `Needs the fork's server on: ${missing.join(", ")}.` : DESCRIPTION}
+      title={gt("Target branch")}
+      description={
+        disabled
+          ? gt("Needs the fork's server on: {machines}.", { machines: missing.join(", ") })
+          : gt(
+              "Automatic pull keeps this branch current instead of the default one, and new pull requests target it unless the branch records another base. Leave empty to use the repository's default branch.",
+            )
+      }
       resetAction={
         !disabled && (mixed || current !== DEFAULT_SERVER_SETTINGS.forkTargetBranch) ? (
           <SettingResetButton
-            ariaLabel="Reset target branch to default"
+            ariaLabel={gt("Reset target branch to default")}
             onClick={() =>
               updateSettings({ forkTargetBranch: DEFAULT_SERVER_SETTINGS.forkTargetBranch })
             }
@@ -50,14 +55,16 @@ export function ForkTargetBranchRow() {
       control={
         <Input
           key={`${scopeKey}:${mixed}:${current}`}
-          aria-label="Target branch"
+          aria-label={gt("Target branch")}
           autoCapitalize="none"
           spellCheck={false}
           disabled={disabled}
           onChange={() => {
             edited.current = true;
           }}
-          placeholder={mixed ? "Mixed" : "Default branch"}
+          placeholder={
+            mixed ? gt("Mixed", { $context: "values differ across targets" }) : gt("Default branch")
+          }
           defaultValue={mixed ? "" : current}
           onBlur={(event) => {
             const value = event.target.value.trim();

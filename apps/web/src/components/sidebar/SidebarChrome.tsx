@@ -304,7 +304,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           <SidebarUtilityItem icon={<HouseIcon />} label="Home" onClick={handleHomeClick} />
           <SidebarUtilityItem
             icon={<LayoutDashboardIcon />}
-            label="Dashboard"
+            label={gt("Dashboard")}
             onClick={handleDashboardClick}
           />
           <SidebarUtilityItem
@@ -334,7 +334,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {forkWidgetEnabled ? (
             <SidebarUtilityItem
               icon={<ActivityIcon />}
-              label="Machines widget"
+              label={gt("Machines widget")}
               onClick={toggleForkResourceWidget}
             />
           ) : null}

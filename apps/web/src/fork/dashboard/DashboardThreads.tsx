@@ -1,6 +1,7 @@
 // Fork-only: the Dashboard's list of threads that work or wait on an answer, on every machine.
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
+import { T, useMessages, Var } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { useVisibleThreadShells } from "../../state/entities";
@@ -22,16 +23,23 @@ export function DashboardThreads({
   const labels = new Map(
     environments.map((environment) => [environment.environmentId, environment.label]),
   );
-  const list = activeThreads(threads, nowMs);
+  const m = useMessages();
+  const list = activeThreads(threads, nowMs, m);
   const waiting = list.filter((entry) => entry.state === "waiting").length;
 
   if (list.length === 0) {
-    return <p className="text-muted-foreground text-sm">Nothing is working or waiting on you.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">
+        <T>Nothing is working or waiting on you.</T>
+      </p>
+    );
   }
   return (
     <div className="flex flex-col gap-2">
       <p className="font-mono text-2xs text-muted-foreground">
-        {waiting} waiting · {list.length - waiting} working
+        <T>
+          <Var>{waiting}</Var> waiting · <Var>{list.length - waiting}</Var> working
+        </T>
       </p>
       <ul className="flex flex-col overflow-hidden rounded-lg border bg-card">
         {list.map(({ thread, state, label }) => (
@@ -66,7 +74,7 @@ export function DashboardThreads({
                 </span>
               )}
               <span className="w-16 shrink-0 text-end font-mono text-2xs text-muted-foreground tabular-nums">
-                {formatRelativeTimeLabel(thread.updatedAt, nowMs)}
+                {formatRelativeTimeLabel(thread.updatedAt, nowMs, m)}
               </span>
             </Link>
           </li>

@@ -7,7 +7,9 @@ import type {
   ForkInstallResult,
   ForkPastedSource,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { FORK_AGENT_LABELS, type MachineState } from "./ForkExtensions.logic";
 
 /** What the form installs; the remote MCP's transport is part of its type ("Change type"). */
@@ -31,13 +33,13 @@ export const FORK_INSTALL_TYPES: ReadonlyArray<ForkInstallType> = [
 ];
 
 export const FORK_INSTALL_TYPE_LABELS: Readonly<Record<ForkInstallType, string>> = {
-  mcpHttp: "Remote MCP (HTTP)",
-  mcpSse: "Remote MCP (SSE)",
-  mcpCommand: "Local MCP (command)",
-  plugin: "Plugin",
-  marketplace: "Plugin from a marketplace",
-  skill: "Skill",
-  claudeAiConnector: "claude.ai connector",
+  mcpHttp: msg("Remote MCP (HTTP)"),
+  mcpSse: msg("Remote MCP (SSE)"),
+  mcpCommand: msg("Local MCP (command)"),
+  plugin: msg("Plugin"),
+  marketplace: msg("Plugin from a marketplace"),
+  skill: msg("Skill"),
+  claudeAiConnector: msg("claude.ai connector"),
 };
 
 export type ForkMcpScope = "user" | "project" | "local";
@@ -260,7 +262,7 @@ const AGENTS: ReadonlyArray<ForkExtensionAgent> = ["claude", "codex"];
 
 /** A repo is not something `claude plugin install` can find; the server says the same. */
 const isPluginRepo = (ref: string) => !ref.includes("@") && ref.includes("/");
-const PLUGIN_REPO_NEXT_STEP = "Add its marketplace instead (paste the marketplace repo).";
+const PLUGIN_REPO_NEXT_STEP = msg("Add its marketplace instead (paste the marketplace repo).");
 
 /** The repo part of `owner/repo[/path]` or a GitHub URL. */
 function repoName(source: string): string {
@@ -296,39 +298,44 @@ function installedItemId(draft: ForkInstallDraft): string {
 function typeLimit(
   draft: ForkInstallDraft,
   agent: ForkExtensionAgent,
+  resolve: MessageResolver,
 ): { readonly reason: string; readonly notApplicable: boolean } | null {
   const isPlugin = draft.type === "plugin" || draft.type === "marketplace";
   if (isPlugin && agent === "codex")
-    return { reason: "Codex has no plugins.", notApplicable: true };
+    return { reason: resolve(msg("Codex has no plugins.")), notApplicable: true };
   if (draft.type === "plugin" && isPluginRepo(draft.pluginRef.trim())) {
-    return { reason: PLUGIN_REPO_NEXT_STEP, notApplicable: false };
+    return { reason: resolve(PLUGIN_REPO_NEXT_STEP), notApplicable: false };
   }
   if (isMcpInstallType(draft.type) && agent === "codex") {
     if (draft.scope !== "user") {
-      return { reason: "Codex has no per-project MCP servers.", notApplicable: false };
+      return {
+        reason: resolve(msg("Codex has no per-project MCP servers.")),
+        notApplicable: false,
+      };
     }
     if (draft.type === "mcpSse") {
-      return { reason: "Codex can't connect to SSE servers.", notApplicable: false };
+      return { reason: resolve(msg("Codex can't connect to SSE servers.")), notApplicable: false };
     }
   }
   return null;
 }
 
-function machineBlock(machine: MachineState): string | null {
+function machineBlock(machine: MachineState, resolve: MessageResolver): string | null {
+  const label = machine.label;
   switch (machine.support) {
     case "needsForkUpdate":
-      return `${machine.label} needs a fork update to install extensions.`;
+      return resolve(msg("{label} needs a fork update to install extensions.", { label }));
     case "offline":
-      return `${machine.label} is offline.`;
+      return resolve(msg("{label} is offline.", { label }));
     case "supported":
       if (machine.snapshot === null) {
         return machine.error === null
-          ? `Still loading ${machine.label}.`
+          ? resolve(msg("Still loading {label}.", { label }))
           : `${machine.label}: ${machine.error}`;
       }
       return machine.canOperate
         ? null
-        : `You can view extensions on ${machine.label} but not change them.`;
+        : resolve(msg("You can view extensions on {label} but not change them.", { label }));
   }
 }
 
@@ -336,11 +343,13 @@ function machineBlock(machine: MachineState): string | null {
 export function forkInstallTargets(
   machines: ReadonlyArray<MachineState>,
   draft: ForkInstallDraft,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ForkInstallTargetRow> {
   const installedId = installedItemId(draft);
   return machines.map((machine): ForkInstallTargetRow => {
     const snapshot = machine.support === "supported" ? machine.snapshot : null;
-    const machineReason = machineBlock(machine);
+    const machineReason = machineBlock(machine, resolve);
+    const label = machine.label;
     const targets = AGENTS.map((agent): ForkInstallTarget => {
       const base = {
         key: forkInstallTargetKey(machine.environmentId, agent),
@@ -355,21 +364,26 @@ export function forkInstallTargets(
         notApplicable,
       });
       if (machineReason !== null || snapshot === null) {
-        return stop(machineReason ?? `Still loading ${machine.label}.`);
+        return stop(machineReason ?? resolve(msg("Still loading {label}.", { label })));
       }
       const entry = snapshot.agents.find((candidate) => candidate.agent === agent);
       if (entry === undefined || (!entry.available && entry.problem === undefined)) {
-        return stop(`${FORK_AGENT_LABELS[agent]} isn't set up on ${machine.label}.`, true);
+        return stop(
+          resolve(
+            msg("{agent} isn't set up on {label}.", { agent: FORK_AGENT_LABELS[agent], label }),
+          ),
+          true,
+        );
       }
-      if (!entry.available) return stop(entry.problem?.summary ?? "Unavailable.");
-      const limit = typeLimit(draft, agent);
+      if (!entry.available) return stop(entry.problem?.summary ?? resolve(msg("Unavailable.")));
+      const limit = typeLimit(draft, agent, resolve);
       if (limit !== null) return stop(limit.reason, limit.notApplicable);
       if (
         isMcpInstallType(draft.type) &&
         draft.scope !== "user" &&
         snapshot.projects.length === 0
       ) {
-        return stop(`${machine.label} has no T3 projects.`);
+        return stop(resolve(msg("{label} has no T3 projects.", { label })));
       }
       const installed = snapshot.items.some(
         (candidate) =>
@@ -379,7 +393,7 @@ export function forkInstallTargets(
               own.agent === agent && own.state !== "notInstalled" && own.state !== "notApplicable",
           ),
       );
-      if (installed) return stop(`Already installed on ${machine.label}.`);
+      if (installed) return stop(resolve(msg("Already installed on {label}.", { label })));
       return open;
     });
     return {
@@ -420,27 +434,33 @@ export interface ForkInstallCall {
   readonly request: ForkInstallRequest;
 }
 
-function draftProblem(draft: ForkInstallDraft): string | null {
+function draftProblem(draft: ForkInstallDraft, resolve: MessageResolver): string | null {
   switch (draft.type) {
     case "mcpHttp":
     case "mcpSse":
-      if (draft.name.trim() === "") return "Enter a name.";
-      return /^https?:\/\/\S+$/i.test(draft.url.trim()) ? null : "Enter the server's http(s) URL.";
+      if (draft.name.trim() === "") return resolve(msg("Enter a name."));
+      return /^https?:\/\/\S+$/i.test(draft.url.trim())
+        ? null
+        : resolve(msg("Enter the server's http(s) URL."));
     case "mcpCommand":
-      if (draft.name.trim() === "") return "Enter a name.";
+      if (draft.name.trim() === "") return resolve(msg("Enter a name."));
       return splitCommandLine(draft.commandLine) === null
-        ? "Enter the command that starts the server."
+        ? resolve(msg("Enter the command that starts the server."))
         : null;
     case "plugin":
-      return draft.pluginRef.trim() === "" ? "Enter the plugin, as name@marketplace." : null;
+      return draft.pluginRef.trim() === ""
+        ? resolve(msg("Enter the plugin, as name@marketplace."))
+        : null;
     case "marketplace":
-      if (draft.marketplaceSource.trim() === "") return "Enter the marketplace repo.";
-      return draft.pluginRef.trim() === "" ? "Pick a plugin." : null;
+      if (draft.marketplaceSource.trim() === "") return resolve(msg("Enter the marketplace repo."));
+      return draft.pluginRef.trim() === "" ? resolve(msg("Pick a plugin.")) : null;
     case "skill":
-      if (draft.name.trim() === "") return "Enter a name.";
-      return draft.skillSource.trim() === "" ? "Enter where the skill comes from." : null;
+      if (draft.name.trim() === "") return resolve(msg("Enter a name."));
+      return draft.skillSource.trim() === ""
+        ? resolve(msg("Enter where the skill comes from."))
+        : null;
     case "claudeAiConnector":
-      return "claude.ai connectors are connected on claude.ai.";
+      return resolve(msg("claude.ai connectors are connected on claude.ai."));
   }
 }
 
@@ -482,6 +502,7 @@ export function forkInstallPlan(
   rows: ReadonlyArray<ForkInstallTargetRow>,
   selection: ForkInstallSelection,
   projectByMachine: ReadonlyMap<EnvironmentId, string>,
+  resolve: MessageResolver = m,
 ): {
   readonly calls: ReadonlyArray<ForkInstallCall>;
   readonly count: number;
@@ -500,7 +521,9 @@ export function forkInstallPlan(
     count += agents.length;
     const projectPath = projectByMachine.get(row.environmentId) ?? null;
     const known = row.projects.some((project) => project.path === projectPath);
-    if (needsProject && !known) missingProject ??= `Pick a project on ${row.machineLabel}.`;
+    if (needsProject && !known) {
+      missingProject ??= resolve(msg("Pick a project on {label}.", { label: row.machineLabel }));
+    }
     calls.push({
       environmentId: row.environmentId,
       agents: [first, ...rest],
@@ -508,11 +531,11 @@ export function forkInstallPlan(
     });
   }
   const blocker =
-    draftProblem(draft) ??
+    draftProblem(draft, resolve) ??
     (count === 0
       ? draft.type === "plugin" && isPluginRepo(draft.pluginRef.trim())
-        ? PLUGIN_REPO_NEXT_STEP
-        : "Pick at least one place."
+        ? resolve(PLUGIN_REPO_NEXT_STEP)
+        : resolve(msg("Pick at least one place."))
       : missingProject);
   return { calls, count, blocker };
 }
@@ -527,6 +550,7 @@ export type ForkInstallStatus =
 export function forkInstallStatus(
   results: ReadonlyArray<ForkInstallResult>,
   agent: ForkExtensionAgent,
+  resolve: MessageResolver = m,
 ): ForkInstallStatus {
   const own = results.find((result) => result.agent === agent);
   if (own === undefined) {
@@ -534,8 +558,10 @@ export function forkInstallStatus(
       phase: "failed",
       problem: {
         reason: "commandFailed",
-        summary: `The machine did not report on ${FORK_AGENT_LABELS[agent]}.`,
-        nextStep: "Check status, then try again.",
+        summary: resolve(
+          msg("The machine did not report on {agent}.", { agent: FORK_AGENT_LABELS[agent] }),
+        ),
+        nextStep: resolve(msg("Check status, then try again.")),
         rawOutput: null,
       },
     };
@@ -545,8 +571,8 @@ export function forkInstallStatus(
     phase: "failed",
     problem: own.problem ?? {
       reason: "commandFailed",
-      summary: "The install failed.",
-      nextStep: "Try again.",
+      summary: resolve(msg("The install failed.")),
+      nextStep: resolve(msg("Try again.")),
       rawOutput: null,
     },
   };

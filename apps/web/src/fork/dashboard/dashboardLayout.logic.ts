@@ -9,6 +9,7 @@ import {
   type ForkDashboardMachine,
   type ForkDashboardPanelId,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 export type DashboardPanelId = "machines" | "subscriptions" | "charts" | "threads" | "activity";
 
@@ -16,11 +17,11 @@ const DASHBOARD_PANELS: ReadonlyArray<{
   readonly id: DashboardPanelId;
   readonly title: string;
 }> = [
-  { id: "machines", title: "Machines" },
-  { id: "subscriptions", title: "Subscriptions" },
-  { id: "charts", title: "Charts" },
-  { id: "threads", title: "Active threads" },
-  { id: "activity", title: "What the AI did" },
+  { id: "machines", title: msg("Machines") },
+  { id: "subscriptions", title: msg("Subscriptions") },
+  { id: "charts", title: msg("Charts") },
+  { id: "threads", title: msg("Active threads") },
+  { id: "activity", title: msg("What the AI did") },
 ];
 
 export interface ResolvedPanel {

@@ -1177,7 +1177,7 @@ function ResourceTelemetryDiagnosticsBody({
             />
             <IconStat
               icon={<GaugeIcon className="size-3.5" />}
-              label="Machine CPU"
+              label={gt("Machine CPU")}
               value={machineCpu.value}
               detail={machineCpu.detail}
               tone={machineCpu.tone}

@@ -1,6 +1,7 @@
 // Fork-only: every machine's "What the AI did" for the last three days, by day, with filters this
 // client remembers.
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 import { LayoutDashboardIcon } from "lucide-react";
 
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
@@ -39,21 +40,23 @@ const FILTERS_KEY = "t3code:fork-activity-filters";
 const ALL = "__all";
 
 export function ActivityPage() {
-  const contentArea = workspaceAreaProps("home", 1, "What the AI did");
+  const gt = useGT();
+  const m = useMessages();
+  const contentArea = workspaceAreaProps("home", 1, gt("What the AI did"));
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   const [filters, setFilters] = useLocalStorage(FILTERS_KEY, NO_FILTERS, ActivityFilters);
   const { feeds, pending, failed, machines } = useActivityFeeds(PAGE_INPUT);
   const all = mergeFeeds(feeds, PAGE_ROWS);
-  const options = filterOptions(all, machines, filters);
+  const options = filterOptions(all, machines, filters, m);
   const rows = filterRows(all, filters);
-  const groups = groupByDay(rows, nowMs);
+  const groups = groupByDay(rows, nowMs, undefined, m);
   const counts = countStatuses(rows);
   const filtered = filters.project !== null || filters.machine !== null || filters.errorsOnly;
   const projectLabel = (value: string | null) =>
-    value === null || value === ALL ? "All projects" : value;
+    value === null || value === ALL ? gt("All projects") : value;
   const machineLabel = (value: string | null) =>
     value === null || value === ALL
-      ? "All machines"
+      ? gt("All machines")
       : (options.machines.find((machine) => machine.environmentId === value)?.label ?? value);
 
   return (
@@ -68,17 +71,20 @@ export function ActivityPage() {
           <div className="mx-auto flex w-full max-w-[100rem] min-w-0 flex-col gap-8 px-4 py-10 sm:px-8">
             <header className="flex flex-wrap items-end gap-x-6 gap-y-3">
               <div className="flex min-w-0 flex-col gap-1">
-                <h1 className="font-serif text-3xl tracking-tight">What the AI did</h1>
+                <h1 className="font-serif text-3xl tracking-tight">
+                  <T>What the AI did</T>
+                </h1>
                 <p className="text-muted-foreground text-sm">
-                  The last {PAGE_HOURS} hours on {machines.length}{" "}
-                  {machines.length === 1 ? "machine" : "machines"}. Titles and one-line summaries
-                  only; it refreshes every 30 seconds while open.
+                  {gt(
+                    "The last {hours} hours on {count, plural, one {{count} machine} other {{count} machines}}. Titles and one-line summaries only; it refreshes every 30 seconds while open.",
+                    { hours: PAGE_HOURS, count: machines.length },
+                  )}
                 </p>
               </div>
               <span className="ms-auto flex">
                 <Button variant="outline" size="sm" render={<Link to="/dashboard" />}>
                   <LayoutDashboardIcon />
-                  Dashboard
+                  <T>Dashboard</T>
                 </Button>
               </span>
             </header>
@@ -93,11 +99,13 @@ export function ActivityPage() {
                   }))
                 }
               >
-                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Project">
+                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={gt("Project")}>
                   <SelectValue>{(value: string | null) => projectLabel(value)}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="start" alignItemWithTrigger={false}>
-                  <SelectItem value={ALL}>All projects</SelectItem>
+                  <SelectItem value={ALL}>
+                    <T>All projects</T>
+                  </SelectItem>
                   {options.projects.map((project) => (
                     <SelectItem key={project} value={project}>
                       {project}
@@ -114,11 +122,13 @@ export function ActivityPage() {
                   }))
                 }
               >
-                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Machine">
+                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={gt("Machine")}>
                   <SelectValue>{(value: string | null) => machineLabel(value)}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="start" alignItemWithTrigger={false}>
-                  <SelectItem value={ALL}>All machines</SelectItem>
+                  <SelectItem value={ALL}>
+                    <T>All machines</T>
+                  </SelectItem>
                   {options.machines.map((machine) => (
                     <SelectItem key={machine.environmentId} value={machine.environmentId}>
                       {machine.label}
@@ -133,36 +143,43 @@ export function ActivityPage() {
                     setFilters((current) => ({ ...current, errorsOnly }))
                   }
                 />
-                Only errors
+                <T>Only errors</T>
               </Label>
               {filtered ? (
                 <Button variant="ghost" size="sm" onClick={() => setFilters(NO_FILTERS)}>
-                  Clear filters
+                  <T>Clear filters</T>
                 </Button>
               ) : null}
             </div>
 
             <p className="font-mono text-2xs text-muted-foreground" aria-live="polite">
-              {rows.length} {rows.length === 1 ? "entry" : "entries"}
-              {counts.errors > 0 ? ` · ${counts.errors} failed` : ""}
-              {counts.waiting > 0 ? ` · ${counts.waiting} waiting on you` : ""}
-              {counts.running > 0 ? ` · ${counts.running} running` : ""}
-              {pending > 0 ? ` · reading ${pending} more` : ""}
-              {failed > 0 ? ` · ${failed} could not be read` : ""}
+              {[
+                gt("{count, plural, one {{count} entry} other {{count} entries}}", {
+                  count: rows.length,
+                }),
+                counts.errors > 0 ? gt("{count} failed", { count: counts.errors }) : null,
+                counts.waiting > 0 ? gt("{count} waiting on you", { count: counts.waiting }) : null,
+                counts.running > 0 ? gt("{count} running", { count: counts.running }) : null,
+                pending > 0 ? gt("reading {count} more", { count: pending }) : null,
+                failed > 0 ? gt("{count} could not be read", { count: failed }) : null,
+              ]
+                .filter((part) => part !== null)
+                .join(" · ")}
             </p>
 
             {machines.length === 0 ? (
               <p className="text-muted-foreground text-sm">
-                No connected server keeps an activity feed yet. Update the T3 Code server to see it
-                here.
+                {gt(
+                  "No connected server keeps an activity feed yet. Update the T3 Code server to see it here.",
+                )}
               </p>
             ) : groups.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 {pending > 0
-                  ? "Reading the activity…"
+                  ? gt("Reading the activity…")
                   : filtered
-                    ? "Nothing matches these filters."
-                    : `Nothing in the last ${PAGE_HOURS} hours.`}
+                    ? gt("Nothing matches these filters.")
+                    : gt("Nothing in the last {hours} hours.", { hours: PAGE_HOURS })}
               </p>
             ) : (
               groups.map((group) => (

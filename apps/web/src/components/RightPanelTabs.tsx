@@ -425,8 +425,8 @@ function RightPanelEmptyState(props: {
     ...(props.onAddDashboard
       ? [
           {
-            label: "Dashboard",
-            description: "Machines, the tailnet, subscriptions and active threads.",
+            label: msg("Dashboard"),
+            description: msg("Machines, the tailnet, subscriptions and active threads."),
             icon: LayoutDashboard,
             shortcut: "H",
             available: true,
@@ -639,7 +639,7 @@ function surfaceTitle(
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "dashboard":
-      return "Dashboard";
+      return resolve(msg("Dashboard"));
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
     case "thread":
@@ -1284,7 +1284,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ...(props.onAddDashboard
       ? [
           {
-            label: "Dashboard",
+            label: msg("Dashboard"),
             icon: LayoutDashboard,
             shortcut: "H",
             available: true,

@@ -11,11 +11,13 @@ import {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
+import { msg, useGT, useMessages } from "gt-react";
 import { useEffect } from "react";
 
 import { toastManager } from "../../components/ui/toast";
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
 import { useClientSettings } from "../../hooks/useSettings";
+import { m } from "../../i18n/messages";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations, useEnvironmentPresentation } from "../../state/presentation";
 import { primaryServerSettingsAtom, serverEnvironment } from "../../state/server";
@@ -71,10 +73,14 @@ export function useDashboardOwner(): DashboardOwnerState {
   const primaryId = usePrimaryEnvironmentId();
   const candidates = useAtomValue(ownerCandidatesAtom);
   const primaryLayout = useAtomValue(primaryServerSettingsAtom).forkDashboard;
+  const resolve = useMessages();
   // Read whenever the owner's own layout cannot be used, so it shows what was last read there.
   const lastRead =
     owner !== null && needsLastRead({ owner, primaryId, candidates }) ? readLastRead(owner) : null;
-  const source = resolveDashboardSource({ owner, primaryId, candidates, lastRead, primaryLayout });
+  const source = resolveDashboardSource(
+    { owner, primaryId, candidates, lastRead, primaryLayout },
+    resolve,
+  );
   const liveLayout = source.kind === "chosen" ? source.layout : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the owner's layout into localStorage so it still shows while that server is offline
   useEffect(() => {
@@ -119,8 +125,9 @@ function useWriteDashboardLayout() {
     }
     toastManager.add({
       type: "error",
-      title: "Dashboard not saved",
-      description: error instanceof Error ? error.message : "The server did not take the change.",
+      title: m(msg("Dashboard not saved")),
+      description:
+        error instanceof Error ? error.message : m(msg("The server did not take the change.")),
     });
     return "failed";
   };
@@ -156,6 +163,7 @@ export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardL
     serverEnvironment.updateSettings.permissionAtom(environmentId, PERMISSION_INPUT),
   );
   const write = useWriteDashboardLayout();
+  const gt = useGT();
   const serverLabel =
     source.kind === "primary" ? (presentation?.entry.target.label ?? null) : source.label;
   const protocol = presentation?.serverConfig?.environment.capabilities.forkDashboard ?? 0;
@@ -163,11 +171,17 @@ export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardL
     source.kind === "unavailable"
       ? source.notice
       : environmentId === null
-        ? "Connect to a server to arrange the Dashboard."
+        ? gt("Connect to a server to arrange the Dashboard.")
         : protocol < 2
-          ? `Update the T3 Code server on ${serverLabel ?? "this machine"} to arrange the Dashboard.`
+          ? serverLabel === null
+            ? gt("Update the T3 Code server on this machine to arrange the Dashboard.")
+            : gt("Update the T3 Code server on {label} to arrange the Dashboard.", {
+                label: serverLabel,
+              })
           : !allowed
-            ? `This connection may not change ${serverLabel ?? "the server"}'s settings.`
+            ? serverLabel === null
+              ? gt("This connection may not change the server's settings.")
+              : gt("This connection may not change {label}''s settings.", { label: serverLabel })
             : null;
   return {
     serverLabel,
@@ -175,11 +189,19 @@ export function useDashboardLayoutWriter(state: DashboardOwnerState): DashboardL
     chartsBlocked:
       protocol >= 3 || source.kind === "unavailable"
         ? null
-        : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide Charts.`,
+        : serverLabel === null
+          ? gt("Update the T3 Code server on this machine to move or hide Charts.")
+          : gt("Update the T3 Code server on {label} to move or hide Charts.", {
+              label: serverLabel,
+            }),
     activityBlocked:
       protocol >= 4 || source.kind === "unavailable"
         ? null
-        : `Update the T3 Code server on ${serverLabel ?? "this machine"} to move or hide this panel.`,
+        : serverLabel === null
+          ? gt("Update the T3 Code server on this machine to move or hide this panel.")
+          : gt("Update the T3 Code server on {label} to move or hide this panel.", {
+              label: serverLabel,
+            }),
     save: async (layout, base) => {
       if (environmentId === null || blocked !== null) return "failed";
       return write(environmentId, layout, base);

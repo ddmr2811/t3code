@@ -11,10 +11,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { forkExtensionsSetEnabled, forkExtensionsUninstall } from "../../state/forkExtensions";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
   AlertDialog,
@@ -59,6 +61,7 @@ export interface ForkNotice {
 /** An RPC that failed outright (not an `ok: false` result) as a problem; null when interrupted. */
 export function commandFailureProblem(
   result: AtomCommandResult<unknown, unknown>,
+  resolve: MessageResolver = m,
 ): ForkExtensionProblem | null {
   if (result._tag === "Success" || isAtomCommandInterrupted(result)) return null;
   const error = squashAtomCommandFailure(result);
@@ -67,8 +70,8 @@ export function commandFailureProblem(
   }
   return {
     reason: "commandFailed",
-    summary: error instanceof Error ? error.message : "The machine did not answer.",
-    nextStep: "Check that the machine is connected, then try again.",
+    summary: error instanceof Error ? error.message : resolve(msg("The machine did not answer.")),
+    nextStep: resolve(msg("Check that the machine is connected, then try again.")),
     rawOutput: null,
   };
 }
@@ -89,6 +92,7 @@ export function resultNotice(
 /** Summary, next step and, on request, the CLI's raw output (spec §7.4). */
 export function ForkProblemText({ problem }: { readonly problem: ForkExtensionProblem }) {
   const [showRaw, setShowRaw] = useState(false);
+  const gt = useGT();
   return (
     <span className="flex min-w-0 flex-col gap-0.5">
       <span className="wrap-anywhere">{problem.summary}</span>
@@ -103,7 +107,7 @@ export function ForkProblemText({ problem }: { readonly problem: ForkExtensionPr
             aria-expanded={showRaw}
             onClick={() => setShowRaw((shown) => !shown)}
           >
-            {showRaw ? "Hide details" : "Show details"}
+            {showRaw ? gt("Hide details") : gt("Show details")}
           </button>
           {showRaw ? (
             <pre className="max-h-48 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-2xs whitespace-pre-wrap text-foreground">
@@ -135,7 +139,7 @@ export interface ForkExtensionsDetailProps {
   readonly children?: ReactNode;
 }
 
-const SOURCE_LABELS = { stdio: "Command", http: "URL", sse: "URL" } as const;
+const SOURCE_LABELS = { stdio: msg("Command"), http: "URL", sse: "URL" } as const;
 
 export function ForkExtensionsDetail({
   row,
@@ -147,6 +151,8 @@ export function ForkExtensionsDetail({
   children,
 }: ForkExtensionsDetailProps) {
   const { item } = row;
+  const gt = useGT();
+  const resolve = useMessages();
   const tag = forkSourceTag(item);
   const sources = [...row.itemsByMachine].map(([environmentId, copy]) => ({
     environmentId,
@@ -156,14 +162,14 @@ export function ForkExtensionsDetail({
     source: copy.source,
     label:
       copy.transport === "stdio" || copy.transport === "http" || copy.transport === "sse"
-        ? SOURCE_LABELS[copy.transport]
-        : "Source",
+        ? resolve(SOURCE_LABELS[copy.transport])
+        : gt("Source", { $context: "where an extension comes from" }),
   }));
   const sameSource = sources.every((entry) => entry.source === sources[0]?.source);
 
   return (
     <section
-      aria-label={`${item.name} details`}
+      aria-label={gt("{name} details", { name: item.name })}
       className="space-y-3 border-t border-border/60 px-3 py-3 text-xs sm:px-4"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -179,12 +185,15 @@ export function ForkExtensionsDetail({
       <dl className="grid grid-cols-[minmax(7rem,auto)_1fr] gap-x-3 gap-y-1.5">
         {sources.length === 0 ? null : sameSource ? (
           <DetailEntry term={sources[0]!.label}>
-            <span className="font-mono wrap-anywhere">{sources[0]!.source || "(none)"}</span>
+            <span className="font-mono wrap-anywhere">{sources[0]!.source || gt("(none)")}</span>
           </DetailEntry>
         ) : (
           sources.map((entry) => (
-            <DetailEntry key={entry.environmentId} term={`${entry.label} on ${entry.machineLabel}`}>
-              <span className="font-mono wrap-anywhere">{entry.source || "(none)"}</span>
+            <DetailEntry
+              key={entry.environmentId}
+              term={gt("{label} on {machine}", { label: entry.label, machine: entry.machineLabel })}
+            >
+              <span className="font-mono wrap-anywhere">{entry.source || gt("(none)")}</span>
             </DetailEntry>
           ))
         )}
@@ -223,11 +232,20 @@ function DetailEntry({ term, children }: { readonly term: string; readonly child
   );
 }
 
-function usageLabel(usageCount: number, lastUsedAt: string | null, nowMs: number): string {
-  const uses = `${usageCount} ${usageCount === 1 ? "use" : "uses"}`;
+function usageLabel(
+  usageCount: number,
+  lastUsedAt: string | null,
+  nowMs: number,
+  resolve: MessageResolver,
+): string {
   return lastUsedAt === null
-    ? uses
-    : `${uses} · last used ${formatRelativeTimeLabel(lastUsedAt, nowMs)}`;
+    ? resolve(msg("{count, plural, one {{count} use} other {{count} uses}}", { count: usageCount }))
+    : resolve(
+        msg(
+          "{count, plural, one {{count} use · last used {when}} other {{count} uses · last used {when}}}",
+          { count: usageCount, when: formatRelativeTimeLabel(lastUsedAt, nowMs, resolve) },
+        ),
+      );
 }
 
 function CellDetail({
@@ -241,6 +259,7 @@ function CellDetail({
   readonly nowMs: number;
   readonly onInstallHere: OnForkInstallHere;
 }) {
+  const resolve = useMessages();
   if (cell.state === "agentUnavailable" && column.problem !== null) {
     return <ForkProblemText problem={column.problem} />;
   }
@@ -248,7 +267,7 @@ function CellDetail({
     const agent = column.agent;
     return (
       <span className="text-muted-foreground">
-        Not installed
+        <T>Not installed</T>
         {agent !== null && column.canOperate ? (
           <>
             {". "}
@@ -257,7 +276,7 @@ function CellDetail({
               className="text-foreground underline underline-offset-2"
               onClick={() => onInstallHere(itemId, column.environmentId, agent)}
             >
-              Install here
+              <T>Install here</T>
             </button>
           </>
         ) : null}
@@ -273,13 +292,13 @@ function CellDetail({
         {forkCellStateLabel(cell)}
         <span className="text-muted-foreground">
           {" · "}
-          {usageLabel(cell.usageCount, cell.lastUsedAt, nowMs)}
+          {usageLabel(cell.usageCount, cell.lastUsedAt, nowMs, resolve)}
         </span>
       </span>
       {cell.problem !== null ? <ForkProblemText problem={cell.problem} /> : null}
       {cell.stashDiscarded ? (
         <span className="text-muted-foreground">
-          A disabled copy was discarded because you added it again from the terminal.
+          <T>A disabled copy was discarded because you added it again from the terminal.</T>
         </span>
       ) : null}
     </>
@@ -298,6 +317,7 @@ function UninstallButton({
   readonly onNotices: (notices: ReadonlyArray<ForkNotice>) => void;
 }) {
   const uninstall = useAtomCommand(forkExtensionsUninstall);
+  const gt = useGT();
   const targets = forkUninstallTargets(row, columns);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -333,7 +353,7 @@ function UninstallButton({
       for (const target of machineTargets) {
         const place = `${target.machineLabel} · ${FORK_AGENT_LABELS[target.agent]}`;
         const key = `uninstall:${item.id}:${targetKey(target)}`;
-        const failed = `Couldn't uninstall ${item.name} from ${place}`;
+        const failed = gt("Couldn't uninstall {item} from {place}", { item: item.name, place });
         if (result._tag === "Failure") {
           const problem = commandFailureProblem(result);
           if (problem !== null) notices.push({ key, tone: "error", title: failed, problem });
@@ -342,7 +362,7 @@ function UninstallButton({
         const own = result.value.find((entry) => entry.agent === target.agent);
         if (own === undefined) continue;
         const notice = resultNotice(key, own, {
-          done: `Uninstalled ${item.name} from ${place}`,
+          done: gt("Uninstalled {item} from {place}", { item: item.name, place }),
           failed,
         });
         if (notice === null) done.push(place);
@@ -353,7 +373,7 @@ function UninstallButton({
       notices.unshift({
         key: `uninstall:${item.id}`,
         tone: "success",
-        title: `Uninstalled ${item.name} from ${done.join(", ")}`,
+        title: gt("Uninstalled {item} from {place}", { item: item.name, place: done.join(", ") }),
         problem: null,
       });
     }
@@ -371,14 +391,18 @@ function UninstallButton({
           setOpen(true);
         }}
       >
-        {running ? "Uninstalling…" : "Uninstall…"}
+        {running ? gt("Uninstalling…") : gt("Uninstall…")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Uninstall {item.name}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>
+                Uninstall <Var>{item.name}</Var>?
+              </T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              It is removed from the places you pick. Other copies stay as they are.
+              <T>It is removed from the places you pick. Other copies stay as they are.</T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1.5 px-6 pb-2">
@@ -403,13 +427,15 @@ function UninstallButton({
             })}
           </div>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               disabled={selected.size === 0}
               onClick={() => void confirm()}
             >
-              Uninstall
+              <T>Uninstall</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -418,8 +444,9 @@ function UninstallButton({
   );
 }
 
-const UNOPENED_PROJECT_REASON =
-  "Claude Code has no settings for this project yet. Open it in Claude Code once.";
+const UNOPENED_PROJECT_REASON = msg(
+  "Claude Code has no settings for this project yet. Open it in Claude Code once.",
+);
 
 /** A switch's requested value, shown until the snapshot that answers it replaces `cell`. */
 interface ProjectToggleRequest {
@@ -443,6 +470,8 @@ export function ForkPerProjectSection({
   readonly onNoticeCleared: (key: string) => void;
 }) {
   const setEnabled = useAtomCommand(forkExtensionsSetEnabled);
+  const gt = useGT();
+  const resolve = useMessages();
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
   const [requested, setRequested] = useState<ReadonlyMap<string, ProjectToggleRequest>>(new Map());
   const groups = forkProjectToggleGroups(row, columns);
@@ -469,9 +498,14 @@ export function ForkPerProjectSection({
       return next;
     });
     const noticeKey = `project:${item.id}\n${key}`;
-    const verb = enabled ? "on" : "off";
-    const where = `${item.name} in ${project.title || project.path} on ${forkColumnLabel(column)}`;
-    const failed = `Couldn't turn ${verb} ${where}`;
+    const where = {
+      item: item.name,
+      project: project.title || project.path,
+      place: forkColumnLabel(column),
+    };
+    const failed = enabled
+      ? gt("Couldn't turn on {item} in {project} on {place}", where)
+      : gt("Couldn't turn off {item} in {project} on {place}", where);
     if (result._tag === "Failure" || !result.value.ok) {
       setRequested((current) => {
         const next = new Map(current);
@@ -485,7 +519,9 @@ export function ForkPerProjectSection({
       return;
     }
     const notice = resultNotice(noticeKey, result.value, {
-      done: `Turned ${verb} ${where}`,
+      done: enabled
+        ? gt("Turned on {item} in {project} on {place}", where)
+        : gt("Turned off {item} in {project} on {place}", where),
       failed,
     });
     if (notice === null) onNoticeCleared(noticeKey);
@@ -494,7 +530,9 @@ export function ForkPerProjectSection({
 
   return (
     <div className="space-y-2 border-t border-border/60 pt-3">
-      <h4 className="font-medium text-foreground">Per project</h4>
+      <h4 className="font-medium text-foreground">
+        <T>Per project</T>
+      </h4>
       {groups.map(({ column, cell, blockedReason }) => {
         const place = forkColumnLabel(column);
         return (
@@ -520,7 +558,7 @@ export function ForkPerProjectSection({
                     <div className="flex min-w-0 items-center gap-2">
                       <Switch
                         size="sm"
-                        aria-label={`${name} on ${place}`}
+                        aria-label={gt("{name} on {place}", { name, place })}
                         checked={checked}
                         disabled={blockedReason !== null || unopened || pending.has(key)}
                         onCheckedChange={(next) => void toggle(column, cell, project, next)}
@@ -533,7 +571,9 @@ export function ForkPerProjectSection({
                       ) : null}
                     </div>
                     {unopened ? (
-                      <p className="pl-9 text-muted-foreground">{UNOPENED_PROJECT_REASON}</p>
+                      <p className="pl-9 text-muted-foreground">
+                        {resolve(UNOPENED_PROJECT_REASON)}
+                      </p>
                     ) : null}
                   </li>
                 );

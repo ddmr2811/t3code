@@ -753,22 +753,24 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fork-dashboard-on-start",
-    title: "Open Dashboard on start",
+    title: msg("Open Dashboard on start"),
     to: "/settings/general",
-    searchTerms: ["dashboard panel start screen home thread startup launch machines"],
+    searchTerms: [msg("dashboard panel start screen home thread startup launch machines")],
   },
   {
     id: "fork-new-thread-widgets",
-    title: "Charts under new threads",
+    title: msg("Charts under new threads"),
     to: "/settings/general",
-    searchTerms: ["widgets charts graphs spend limits usage activity heatmap new thread composer"],
+    searchTerms: [
+      msg("widgets charts graphs spend limits usage activity heatmap new thread composer"),
+    ],
   },
   {
     id: "fork-node-exporters",
-    title: "Dashboard exporters",
+    title: msg("Dashboard exporters"),
     to: "/settings/general",
     scope: "environment",
-    searchTerms: ["dashboard node exporter prometheus machines prod tailscale ip metrics"],
+    searchTerms: [msg("dashboard node exporter prometheus machines prod tailscale ip metrics")],
   },
   {
     id: "response-streaming",
@@ -1071,10 +1073,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fork-extensions",
-    title: "Extensions",
+    title: msg("Extensions"),
     to: "/settings/extensions",
     searchTerms: [
-      "mcp servers plugins skills connectors install enable disable authorize marketplace",
+      msg("mcp servers plugins skills connectors install enable disable authorize marketplace"),
     ],
   },
   {

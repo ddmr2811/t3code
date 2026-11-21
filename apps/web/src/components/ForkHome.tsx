@@ -8,6 +8,7 @@ import type {
 import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   BugIcon,
   GitCompareIcon,
@@ -48,23 +49,23 @@ const QUICK_ACTIONS: ReadonlyArray<{
   readonly icon: ReactNode;
 }> = [
   {
-    label: "Audit this codebase",
+    label: msg("Audit this codebase"),
     prompt: "Audit this codebase for bugs, security vulnerabilities, and improvements.",
     icon: <ShieldCheckIcon className="size-4" />,
   },
   {
-    label: "Add a new feature",
+    label: msg("Add a new feature"),
     prompt: "Add a new feature: ",
     icon: <PlusIcon className="size-4" />,
   },
-  { label: "Fix a bug", prompt: "Fix this bug: ", icon: <BugIcon className="size-4" /> },
+  { label: msg("Fix a bug"), prompt: "Fix this bug: ", icon: <BugIcon className="size-4" /> },
   {
-    label: "Review recent changes",
+    label: msg("Review recent changes"),
     prompt: "Review the recent changes in this repository and report anything that looks wrong.",
     icon: <GitCompareIcon className="size-4" />,
   },
   {
-    label: "Run tests",
+    label: msg("Run tests"),
     prompt: "Run the test suite and fix any failures.",
     icon: <PlayIcon className="size-4" />,
   },
@@ -97,6 +98,7 @@ function ThreadRow(props: {
   readonly onOpen: (thread: EnvironmentThreadShell) => void;
 }) {
   const { thread } = props;
+  const m = useMessages();
   return (
     <li className="list-none">
       <button
@@ -116,7 +118,7 @@ function ThreadRow(props: {
           </span>
         ) : null}
         <span className="w-16 shrink-0 text-right text-muted-foreground text-xs tabular-nums">
-          {formatRelativeTimeLabel(thread.updatedAt, props.nowMs)}
+          {formatRelativeTimeLabel(thread.updatedAt, props.nowMs, m)}
         </span>
       </button>
     </li>
@@ -149,24 +151,31 @@ function ForkOptions() {
   const widgetEnabled = useForkWidgetEnabled();
   const autostart = useForkAutostart();
   const hasShell = forkWidgetHasDesktopShell();
+  const gt = useGT();
   return (
     <section>
-      <SectionTitle>Fork options</SectionTitle>
+      <SectionTitle>
+        <T>Fork options</T>
+      </SectionTitle>
       <div className="flex flex-col">
         <OptionRow
-          title="Machines widget"
+          title={gt("Machines widget")}
           description={
             hasShell
-              ? "A small always-on-top window with every connected machine. While it is open, closing this window keeps T3 Code running in the tray."
-              : "A small window with every connected machine."
+              ? gt(
+                  "A small always-on-top window with every connected machine. While it is open, closing this window keeps T3 Code running in the tray.",
+                )
+              : gt("A small window with every connected machine.")
           }
           checked={widgetEnabled}
           onChange={setForkWidgetEnabled}
         />
         {hasShell && widgetEnabled ? (
           <OptionRow
-            title="Start with the system"
-            description="Starts T3 Code in the tray when you sign in, showing only the widget."
+            title={gt("Start with the system")}
+            description={gt(
+              "Starts T3 Code in the tray when you sign in, showing only the widget.",
+            )}
             checked={autostart}
             onChange={setForkAutostart}
           />
@@ -179,6 +188,8 @@ function ForkOptions() {
 export function ForkHome() {
   const contentArea = workspaceAreaProps("home", 1, "Home");
   const navigate = useNavigate();
+  const gt = useGT();
+  const m = useMessages();
   const handleNewThread = useNewThreadHandler();
   const allProjects = useProjects();
   const threads = useVisibleThreadShells();
@@ -251,23 +262,32 @@ export function ForkHome() {
         <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-12">
             <header className="text-center">
-              <h1 className="font-semibold text-2xl">What should we work on?</h1>
+              <h1 className="font-semibold text-2xl">
+                <T>What should we work on?</T>
+              </h1>
               <p className="mt-1 text-muted-foreground text-sm">
                 {needsInput.length === 0
-                  ? "Nothing is waiting on you."
-                  : `${needsInput.length} ${needsInput.length === 1 ? "thread is" : "threads are"} waiting on you.`}
+                  ? gt("Nothing is waiting on you.")
+                  : gt(
+                      "{count, plural, one {{count} thread is waiting on you.} other {{count} threads are waiting on you.}}",
+                      { count: needsInput.length },
+                    )}
               </p>
             </header>
 
             {needsInput.length > 0 ? (
               <section>
-                <SectionTitle>Needs your input</SectionTitle>
+                <SectionTitle>
+                  <T>Needs your input</T>
+                </SectionTitle>
                 <ul className="flex flex-col">{renderThreadRows(needsInput)}</ul>
               </section>
             ) : null}
 
             <section>
-              <SectionTitle>Your projects</SectionTitle>
+              <SectionTitle>
+                <T>Your projects</T>
+              </SectionTitle>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {projects.map((project) => {
                   const key = projectKey(project);
@@ -300,14 +320,18 @@ export function ForkHome() {
                   className="flex cursor-pointer items-center gap-2 rounded-lg border border-border border-dashed px-3 py-2 text-left text-muted-foreground text-sm hover:bg-accent hover:text-foreground"
                 >
                   <PlusIcon className="size-4" />
-                  Add project
+                  <T>Add project</T>
                 </button>
               </div>
             </section>
 
             {selectedProject !== null ? (
               <section>
-                <SectionTitle>Start in {selectedProject.title}</SectionTitle>
+                <SectionTitle>
+                  <T>
+                    Start in <Var>{selectedProject.title}</Var>
+                  </T>
+                </SectionTitle>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <button
                     type="button"
@@ -315,7 +339,7 @@ export function ForkHome() {
                     className="flex cursor-pointer items-center gap-2 rounded-lg border border-primary/60 px-3 py-2 text-left font-medium text-sm hover:bg-accent"
                   >
                     <SquarePenIcon className="size-4" />
-                    New thread
+                    <T>New thread</T>
                   </button>
                   {QUICK_ACTIONS.map((action) => (
                     <button
@@ -325,7 +349,7 @@ export function ForkHome() {
                       className="flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-accent"
                     >
                       {action.icon}
-                      <span className="truncate">{action.label}</span>
+                      <span className="truncate">{m(action.label)}</span>
                     </button>
                   ))}
                 </div>
@@ -334,7 +358,9 @@ export function ForkHome() {
 
             {recentThreads.length > 0 ? (
               <section>
-                <SectionTitle>Recent threads</SectionTitle>
+                <SectionTitle>
+                  <T>Recent threads</T>
+                </SectionTitle>
                 <ul className="flex flex-col">{renderThreadRows(recentThreads)}</ul>
               </section>
             ) : null}

@@ -11,6 +11,9 @@ import type {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 /** Spec §7.2: opening the page re-checks health only when the cached check is older than this. */
 export const HEALTH_STALE_MS = 600_000;
@@ -321,8 +324,8 @@ export const FORK_AGENT_LABELS: Readonly<Record<ForkExtensionAgent, string>> = {
 
 export const FORK_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
   mcp: "MCP",
-  plugin: "Plugins",
-  skill: "Skills",
+  plugin: msg("Plugins"),
+  skill: msg("Skills"),
 };
 
 /** The short kind shown next to a name, as in the mockup: `claude.ai`, `npx`, `http`, a marketplace. */
@@ -475,6 +478,7 @@ export function forkTurnOffWarning(
   cell: MatrixCell,
   item: ForkExtensionItem,
   options: { readonly fromDetail?: boolean } = {},
+  resolve: MessageResolver = m,
 ): string | null {
   const action = options.fromDetail
     ? (forkDetailTurnOff(column, cell, item) ?? forkCellAction(column, cell, item))
@@ -482,7 +486,7 @@ export function forkTurnOffWarning(
   if (action.kind !== "toggle" || action.enabled || action.agent !== "claude") return null;
   if (item.transport !== "http" && item.transport !== "sse") return null;
   if (!isSnapshotCell(cell) || !cell.scopes.includes("user")) return null;
-  return "You'll have to authorize it again when you turn it back on.";
+  return resolve(msg("You'll have to authorize it again when you turn it back on."));
 }
 
 /** "checked 12m ago" reads the oldest check, so it never claims a freshness one machine lacks. */

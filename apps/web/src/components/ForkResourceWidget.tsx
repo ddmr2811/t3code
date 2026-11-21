@@ -19,6 +19,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { AppWindowIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -339,16 +340,16 @@ const actionButton =
 
 /** What a provider offers when it names no choices of its own. */
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "decline", label: "Decline" },
-  { decision: "accept", label: "Approve" },
+  { decision: "decline", label: msg("Decline") },
+  { decision: "accept", label: msg("Approve") },
 ];
 
 const APPROVAL_KIND_LABELS: Record<ThreadPendingApproval["requestKind"], string> = {
-  command: "Run a command",
-  "file-read": "Read a file",
-  "file-change": "Change a file",
-  "mcp-elicitation": "Answer a tool",
-  permission: "Grant a permission",
+  command: msg("Run a command"),
+  "file-read": msg("Read a file"),
+  "file-change": msg("Change a file"),
+  "mcp-elicitation": msg("Answer a tool"),
+  permission: msg("Grant a permission"),
 };
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0], fallback: string) {
@@ -369,6 +370,8 @@ function ApprovalCard(props: {
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const options = approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const gt = useGT();
+  const m = useMessages();
 
   const decide = async (decision: ProviderApprovalDecision) => {
     if (!canRespond || responding) return;
@@ -379,7 +382,7 @@ function ApprovalCard(props: {
       input: { threadId: thread.threadId, requestId: approval.requestId, decision },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setError(failureMessage(result, "Could not send the decision."));
+      setError(failureMessage(result, gt("Could not send the decision.")));
     }
     setResponding(false);
   };
@@ -387,8 +390,12 @@ function ApprovalCard(props: {
   return (
     <div className="flex flex-col gap-1">
       <p className="text-2xs text-muted-foreground">
-        {APPROVAL_KIND_LABELS[approval.requestKind]}
-        {props.from ? ` · from ${props.from}` : null}
+        {props.from
+          ? gt("{kind} · from {from}", {
+              kind: m(APPROVAL_KIND_LABELS[approval.requestKind]),
+              from: props.from,
+            })
+          : m(APPROVAL_KIND_LABELS[approval.requestKind])}
       </p>
       <pre className="max-h-20 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-background/60 px-1.5 py-1 font-mono text-2xs">
         {approval.detail || approval.requestKind}
@@ -397,7 +404,7 @@ function ApprovalCard(props: {
       {options.map((option) =>
         option.warning ? (
           <p key={option.decision} className="text-2xs text-warning-foreground">
-            {option.label}: {option.warning}
+            {m(option.label)}: {option.warning}
           </p>
         ) : null,
       )}
@@ -415,13 +422,13 @@ function ApprovalCard(props: {
               )}
               onClick={() => void decide(option.decision)}
             >
-              {option.label}
+              {m(option.label)}
             </button>
           ))}
         </div>
       ) : (
         <p className="text-2xs text-warning-foreground">
-          The agent's process is gone. Open the thread to restart it.
+          <T>The agent's process is gone. Open the thread to restart it.</T>
         </p>
       )}
       {error !== null ? (
@@ -437,7 +444,13 @@ function ApprovalCard(props: {
 function WaitingRequest({ thread }: { readonly thread: ScopedThreadRef }) {
   // The thread list only says that something is pending; the request itself is in the thread.
   const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(thread));
-  if (requests === null) return <p className="text-2xs text-muted-foreground">Loading…</p>;
+  if (requests === null) {
+    return (
+      <p className="text-2xs text-muted-foreground">
+        <T>Loading…</T>
+      </p>
+    );
+  }
   const question = requests.userInputs[0]?.questions[0]?.question;
   return (
     <>
@@ -469,7 +482,9 @@ function WaitingThread(props: {
 }) {
   const { thread } = props;
   const threadRef = { environmentId: thread.environmentId, threadId: thread.id };
-  const reason = forkWaitingReason(thread);
+  const gt = useGT();
+  const m = useMessages();
+  const reason = forkWaitingReason(thread, m);
   const [settling, setSettling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -479,7 +494,7 @@ function WaitingThread(props: {
     setError(null);
     const result = await props.onSettle();
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setError(failureMessage(result, "Could not mark the thread as done."));
+      setError(failureMessage(result, gt("Could not mark the thread as done.")));
     }
     setSettling(false);
   };
@@ -490,7 +505,7 @@ function WaitingThread(props: {
         <span className="min-w-0 flex-1 truncate font-medium">{thread.title}</span>
         <span className="shrink-0 text-warning-foreground">{reason.label}</span>
         <button type="button" className={actionButton} onClick={props.onOpen}>
-          Open
+          <T context="verb, opens the thread">Open</T>
         </button>
         {reason.dismissible ? (
           <button
@@ -499,7 +514,7 @@ function WaitingThread(props: {
             disabled={settling}
             onClick={() => void settle()}
           >
-            Mark done
+            <T>Mark done</T>
           </button>
         ) : null}
       </div>
@@ -524,6 +539,7 @@ function WaitingThread(props: {
 function WaitingPanel({ threads }: { readonly threads: ReadonlyArray<EnvironmentThreadShell> }) {
   const router = useRouter();
   const { settleThread } = useThreadActions();
+  const gt = useGT();
   // What can be answered right here comes first.
   const answerable = (thread: EnvironmentThreadShell) =>
     Number(forkWaitingReason(thread).answerable);
@@ -531,7 +547,7 @@ function WaitingPanel({ threads }: { readonly threads: ReadonlyArray<Environment
   return (
     <div
       role="list"
-      aria-label="Threads waiting"
+      aria-label={gt("Threads waiting")}
       className="col-span-full flex flex-col gap-1.5 border-border/60 border-t pt-1.5"
     >
       {ordered.map((thread) => (
@@ -579,11 +595,18 @@ function MachineDetails(props: {
   readonly share: (cpuPercent: number) => string;
 }) {
   const { snapshot, share } = props;
+  const gt = useGT();
   const all = snapshot.groups.allT3;
   const groups = [
-    { label: "Agents + server", aggregate: snapshot.groups.backend },
-    { label: "App", aggregate: snapshot.groups.electron },
-    { label: "Monitor", aggregate: snapshot.groups.monitor },
+    { label: gt("Agents + server"), aggregate: snapshot.groups.backend },
+    {
+      label: gt("App", { $context: "the desktop app's processes" }),
+      aggregate: snapshot.groups.electron,
+    },
+    {
+      label: gt("Monitor", { $context: "the resource monitor's processes" }),
+      aggregate: snapshot.groups.monitor,
+    },
   ].filter((group) => group.aggregate.processCount > 0);
   const processes = forkWidgetTopProcesses(snapshot.processes, FORK_WIDGET_PROCESS_COUNT);
   const heading =
@@ -593,12 +616,18 @@ function MachineDetails(props: {
   return (
     <div className="col-span-full flex flex-col gap-1.5 border-border/60 border-t pt-1.5">
       <div className="grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-1.5">
-        <Figure label="T3 CPU" value={share(all.currentCpuPercent)} />
-        <Figure label="T3 memory" value={formatBytes(all.currentRssBytes)} />
-        <Figure label="Processes" value={String(all.processCount)} />
-        <Figure label="Read" value={rate(all.ioReadBytesPerSecond)} />
-        <Figure label="Write" value={rate(all.ioWriteBytesPerSecond)} />
-        <Figure label="Machine" value={props.machineCpu} />
+        <Figure label={gt("T3 CPU")} value={share(all.currentCpuPercent)} />
+        <Figure label={gt("T3 memory")} value={formatBytes(all.currentRssBytes)} />
+        <Figure label={gt("Processes")} value={String(all.processCount)} />
+        <Figure
+          label={gt("Read", { $context: "disk reads per second" })}
+          value={rate(all.ioReadBytesPerSecond)}
+        />
+        <Figure
+          label={gt("Write", { $context: "disk writes per second" })}
+          value={rate(all.ioWriteBytesPerSecond)}
+        />
+        <Figure label={gt("Machine")} value={props.machineCpu} />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-0.5 px-0.5 text-2xs text-muted-foreground tabular-nums">
         {groups.map((group) => (
@@ -610,18 +639,28 @@ function MachineDetails(props: {
             {formatBytes(group.aggregate.currentRssBytes)}
           </span>
         ))}
-        {props.cores !== null ? <span className="ms-auto">{props.cores} cores</span> : null}
+        {props.cores !== null ? (
+          <span className="ms-auto">{gt("{cores} cores", { cores: props.cores })}</span>
+        ) : null}
       </div>
       <div
         role="list"
-        aria-label="Heaviest processes"
+        aria-label={gt("Heaviest processes")}
         className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] gap-x-3 px-0.5 text-2xs tabular-nums"
       >
-        <span className={heading}>Process</span>
+        <span className={heading}>
+          <T>Process</T>
+        </span>
         <span className={cn(heading, "text-end")}>CPU</span>
-        <span className={cn(heading, "text-end")}>Memory</span>
-        <span className={cn(heading, "text-end")}>Read</span>
-        <span className={cn(heading, "text-end")}>Write</span>
+        <span className={cn(heading, "text-end")}>
+          <T>Memory</T>
+        </span>
+        <span className={cn(heading, "text-end")}>
+          <T context="disk reads per second">Read</T>
+        </span>
+        <span className={cn(heading, "text-end")}>
+          <T context="disk writes per second">Write</T>
+        </span>
         {processes.map((process) => (
           <div key={process.pid} role="listitem" className="contents">
             <span className="truncate">{process.name}</span>
@@ -649,6 +688,7 @@ function MachineRow(props: {
   readonly onToggleDetails: () => void;
 }) {
   const { environmentId } = props;
+  const gt = useGT();
   const [waitingOpen, setWaitingOpen] = useState(false);
   // T3 Code's own footprint: the agents and server on that machine.
   const telemetry = useResourceTelemetry(environmentId);
@@ -704,7 +744,7 @@ function MachineRow(props: {
       <button
         type="button"
         aria-expanded={props.detailsOpen}
-        aria-label={`${props.label} details`}
+        aria-label={gt("{label} details", { label: props.label })}
         onClick={props.onToggleDetails}
         className="flex min-w-0 cursor-pointer items-center gap-1 text-start font-medium"
       >
@@ -718,7 +758,7 @@ function MachineRow(props: {
       </button>
       {unreachable ? (
         <span className="col-span-4 truncate text-end text-muted-foreground text-xs">
-          {host.error ?? "No data"}
+          {host.error ?? gt("No data")}
         </span>
       ) : (
         <>
@@ -756,7 +796,7 @@ function MachineRow(props: {
         <button
           type="button"
           aria-expanded={waitingOpen}
-          aria-label={`${waitingCount} waiting on ${props.label}`}
+          aria-label={gt("{count} waiting on {label}", { count: waitingCount, label: props.label })}
           onClick={() => setWaitingOpen((open) => !open)}
           className={cn(
             cell,
@@ -799,6 +839,7 @@ function useWidgetViewport(popup: Window): { width: number; height: number } {
 
 function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClose: () => void }) {
   const environments = useEnvironmentIdentities();
+  const gt = useGT();
   const viewport = useWidgetViewport(popup);
   // The content is magnified to fill the window, so a bigger window reads from further away.
   const collapsed = new Set(
@@ -833,12 +874,12 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
       {/* The window has no frame: this strip is its drag handle. */}
       <div className="flex items-center gap-2 [-webkit-app-region:drag]">
         <span className="flex-1 truncate px-1 text-xs font-medium text-muted-foreground">
-          T3 Code machines
+          <T>T3 Code machines</T>
         </span>
         {window.forkBridge ? (
           <button
             type="button"
-            aria-label="Open T3 Code"
+            aria-label={gt("Open T3 Code")}
             // Called without the click event: the bridge cannot clone it and would throw.
             onClick={() => window.forkBridge?.showMain()}
             className="flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
@@ -848,7 +889,7 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
         ) : null}
         <button
           type="button"
-          aria-label="Close widget"
+          aria-label={gt("Close widget")}
           onClick={onClose}
           className="flex size-5 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
         >
@@ -857,7 +898,7 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
       </div>
       <div
         role="table"
-        aria-label="Connected machines"
+        aria-label={gt("Connected machines")}
         className="grid min-h-0 flex-1 grid-cols-[minmax(4rem,1fr)_auto_auto_auto_auto_auto_auto] gap-x-3 gap-y-1.5 overflow-y-auto"
         // A taller window gives every machine a taller row instead of leaving the bottom empty.
         style={{
@@ -865,13 +906,25 @@ function WidgetBody({ popup, onClose }: { readonly popup: Window; readonly onClo
         }}
       >
         <div role="row" className="col-span-7 grid grid-cols-subgrid px-2.5">
-          <span className={heading}>Machine</span>
+          <span className={heading}>
+            <T>Machine</T>
+          </span>
           <span className={cn(heading, "text-end")}>CPU</span>
-          <span className={cn(heading, "text-end")}>5 min</span>
-          <span className={cn(heading, "text-end")}>Memory</span>
-          <span className={cn(heading, "text-end")}>Agents</span>
-          <span className={cn(heading, "text-end")}>Working</span>
-          <span className={cn(heading, "text-end")}>Waiting</span>
+          <span className={cn(heading, "text-end")}>
+            <T>5 min</T>
+          </span>
+          <span className={cn(heading, "text-end")}>
+            <T>Memory</T>
+          </span>
+          <span className={cn(heading, "text-end")}>
+            <T>Agents</T>
+          </span>
+          <span className={cn(heading, "text-end")}>
+            <T context="threads that are running">Working</T>
+          </span>
+          <span className={cn(heading, "text-end")}>
+            <T context="threads waiting on the user">Waiting</T>
+          </span>
         </div>
         {environments.map((environment) => (
           <MachineRow

@@ -1,4 +1,5 @@
 import type { ForkExtensionKind } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { RefreshCwIcon, XIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
@@ -60,13 +61,15 @@ interface PageNotice extends ForkNotice {
 }
 
 const EMPTY_KIND_LABELS: Readonly<Record<ForkExtensionKind, string>> = {
-  mcp: "No MCP servers on these machines yet.",
-  plugin: "No plugins on these machines yet.",
-  skill: "No skills on these machines yet.",
+  mcp: msg("No MCP servers on these machines yet."),
+  plugin: msg("No plugins on these machines yet."),
+  skill: msg("No skills on these machines yet."),
 };
 
 export function ForkExtensionsSettings() {
   const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const m = useMessages();
   const { machines, checkHealth } = useForkExtensions();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
@@ -113,7 +116,7 @@ export function ForkExtensionsSettings() {
         lines.push({
           key: `${machine.environmentId}:loading`,
           tone: "muted",
-          text: `Loading extensions on ${machine.label}…`,
+          text: gt("Loading extensions on {machine}…", { machine: machine.label }),
         });
       }
     }
@@ -121,7 +124,10 @@ export function ForkExtensionsSettings() {
       lines.push({
         key: `${machine.environmentId}:health`,
         tone: "warning",
-        text: `Couldn't check status on ${machine.label}: ${machine.healthError}`,
+        text: gt("Couldn't check status on {machine}: {error}", {
+          machine: machine.label,
+          error: machine.healthError,
+        }),
       });
     }
     return lines;
@@ -164,7 +170,7 @@ export function ForkExtensionsSettings() {
     }
     const key = `${row.item.id}\n${column.key}`;
     if (pending.has(key)) return;
-    const warning = confirmed ? null : forkTurnOffWarning(column, cell, item, { fromDetail });
+    const warning = confirmed ? null : forkTurnOffWarning(column, cell, item, { fromDetail }, m);
     if (warning !== null) {
       setTurnOff({ row, column, cell, warning, fromDetail });
       return;
@@ -184,19 +190,22 @@ export function ForkExtensionsSettings() {
       next.delete(key);
       return next;
     });
-    const verb = action.enabled ? "turn on" : "turn off";
-    const place = forkColumnLabel(column);
+    const names = { item: row.item.name, place: forkColumnLabel(column) };
     const noticeKey = `toggle:${key}`;
-    const failed = `Couldn't ${verb} ${row.item.name} on ${place}`;
+    const failed = action.enabled
+      ? gt("Couldn't turn on {item} on {place}", names)
+      : gt("Couldn't turn off {item} on {place}", names);
     if (result._tag === "Failure") {
-      const problem = commandFailureProblem(result);
+      const problem = commandFailureProblem(result, m);
       if (problem !== null) {
         addNotices(row.item.kind, [{ key: noticeKey, tone: "error", title: failed, problem }]);
       }
       return;
     }
     const notice = resultNotice(noticeKey, result.value, {
-      done: `${action.enabled ? "Turned on" : "Turned off"} ${row.item.name} on ${place}`,
+      done: action.enabled
+        ? gt("Turned on {item} on {place}", names)
+        : gt("Turned off {item} on {place}", names),
       failed,
     });
     if (notice === null) dropNotice(noticeKey);
@@ -239,7 +248,7 @@ ${context.column.key}`;
                   void clickCell(detailRow, context.column, context.cell, { fromDetail: true })
                 }
               >
-                Turn off
+                <T>Turn off</T>
               </Button>
             ) : null}
           </div>
@@ -265,7 +274,7 @@ ${context.column.key}`;
         />
         <div className="flex flex-wrap items-center gap-2 px-3 pt-3 sm:px-4">
           <ToggleGroup
-            aria-label="Extension kind"
+            aria-label={gt("Extension kind")}
             value={[kind]}
             onValueChange={(next) => {
               const chosen = KINDS.find((entry) => entry === next[0]);
@@ -274,7 +283,7 @@ ${context.column.key}`;
           >
             {KINDS.map((entry) => (
               <Toggle key={entry} value={entry}>
-                {FORK_KIND_LABELS[entry]} · {matrices.get(entry)!.rows.length}
+                {m(FORK_KIND_LABELS[entry])} · {matrices.get(entry)!.rows.length}
               </Toggle>
             ))}
           </ToggleGroup>
@@ -282,10 +291,10 @@ ${context.column.key}`;
           {answered.length > 0 ? (
             <span className="text-xs text-muted-foreground">
               {anyChecking
-                ? "checking…"
+                ? gt("checking…")
                 : oldestCheck === null
-                  ? "not checked yet"
-                  : `checked ${formatRelativeTimeLabel(oldestCheck, nowMs)}`}
+                  ? gt("not checked yet")
+                  : gt("checked {when}", { when: formatRelativeTimeLabel(oldestCheck, nowMs, m) })}
             </span>
           ) : null}
           {/* A machine already checking ignores the request, so only an all-busy page disables it. */}
@@ -296,7 +305,7 @@ ${context.column.key}`;
             onClick={() => checkHealth()}
           >
             {anyChecking ? <Spinner className="size-3" /> : <RefreshCwIcon aria-hidden />}
-            Check status
+            <T>Check status</T>
           </Button>
         </div>
         {statusLines.length > 0 ? (
@@ -325,7 +334,7 @@ ${context.column.key}`;
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label="Dismiss"
+                    aria-label={gt("Dismiss")}
                     onClick={() => dropNotice(notice.key)}
                   >
                     <XIcon />
@@ -338,16 +347,18 @@ ${context.column.key}`;
         <div className="px-1 pt-2 pb-1 sm:px-2">
           {machines.length === 0 ? (
             <p className="px-2 py-3 text-sm text-muted-foreground">
-              Connect an environment to manage its extensions.
+              <T>Connect an environment to manage its extensions.</T>
             </p>
           ) : columns.length === 0 ? null : rows.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-muted-foreground">{EMPTY_KIND_LABELS[kind]}</p>
+            <p className="px-2 py-3 text-sm text-muted-foreground">{m(EMPTY_KIND_LABELS[kind])}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead scope="col">
-                    <span className="sr-only">Name</span>
+                    <span className="sr-only">
+                      <T>Name</T>
+                    </span>
                   </TableHead>
                   {columns.map((column) => (
                     <TableHead key={column.key} scope="col" className="text-center align-bottom">
@@ -355,7 +366,7 @@ ${context.column.key}`;
                     </TableHead>
                   ))}
                   <TableHead scope="col" className="text-center">
-                    Uses
+                    <T context="how many times an extension was used">Uses</T>
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -431,12 +442,17 @@ ${context.column.key}`;
             <AlertDialogPopup>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  Turn off {turnOff.row.item.name} on {forkColumnLabel(turnOff.column)}?
+                  <T>
+                    Turn off <Var>{turnOff.row.item.name}</Var> on{" "}
+                    <Var>{forkColumnLabel(turnOff.column)}</Var>?
+                  </T>
                 </AlertDialogTitle>
                 <AlertDialogDescription>{turnOff.warning}</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                <AlertDialogClose render={<Button variant="outline" />}>
+                  <T>Cancel</T>
+                </AlertDialogClose>
                 <Button
                   onClick={() => {
                     setTurnOff(null);
@@ -446,7 +462,7 @@ ${context.column.key}`;
                     });
                   }}
                 >
-                  Turn off
+                  <T>Turn off</T>
                 </Button>
               </AlertDialogFooter>
             </AlertDialogPopup>
@@ -458,11 +474,12 @@ ${context.column.key}`;
 }
 
 function ColumnHeader({ column }: { readonly column: MatrixColumn }) {
+  const gt = useGT();
   const second =
     column.agent === null
       ? column.support === "needsForkUpdate"
-        ? "Needs a fork update"
-        : "Offline"
+        ? gt("Needs a fork update")
+        : gt("Offline")
       : column.problem !== null
         ? `${FORK_AGENT_LABELS[column.agent]}: ${column.problem.summary}`
         : FORK_AGENT_LABELS[column.agent];
@@ -478,7 +495,9 @@ function ColumnHeader({ column }: { readonly column: MatrixColumn }) {
         {second}
       </span>
       {column.agent !== null && !column.canOperate ? (
-        <span className="text-2xs font-normal text-muted-foreground">read-only</span>
+        <span className="text-2xs font-normal text-muted-foreground">
+          <T>read-only</T>
+        </span>
       ) : null}
     </span>
   );
@@ -509,7 +528,7 @@ function StateDot({ state }: { readonly state: MatrixCell["state"] }) {
   }
 }
 
-const ACTION_HINTS = { on: "Click to turn on", off: "Click to turn off" } as const;
+const ACTION_HINTS = { on: msg("Click to turn on"), off: msg("Click to turn off") } as const;
 
 function MatrixCellButton({
   row,
@@ -529,20 +548,26 @@ function MatrixCellButton({
     cell,
     row.itemsByMachine.get(column.environmentId) ?? row.item,
   );
+  const gt = useGT();
+  const m = useMessages();
   const stateLabel = forkCellStateLabel(cell);
   const hint =
     action.kind === "none" || action.kind === "details"
       ? action.reason
       : action.kind === "install"
-        ? "Click to install here"
-        : ACTION_HINTS[action.enabled ? "on" : "off"];
+        ? gt("Click to install here")
+        : m(ACTION_HINTS[action.enabled ? "on" : "off"]);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <button
             type="button"
-            aria-label={`${row.item.name} on ${forkColumnLabel(column)}: ${stateLabel}`}
+            aria-label={gt("{item} on {place}: {state}", {
+              item: row.item.name,
+              place: forkColumnLabel(column),
+              state: stateLabel,
+            })}
             aria-disabled={action.kind === "none" || pending}
             aria-busy={pending}
             className={cn(
@@ -568,12 +593,13 @@ function MatrixCellButton({
 }
 
 function Legend() {
+  const gt = useGT();
   const entries: ReadonlyArray<readonly [MatrixCell["state"], string]> = [
-    ["working", "working"],
-    ["needsAttention", "needs attention"],
-    ["disabled", "disabled"],
-    ["notInstalled", "not installed"],
-    ["notApplicable", "n/a"],
+    ["working", gt("working", { $context: "extension state" })],
+    ["needsAttention", gt("needs attention")],
+    ["disabled", gt("disabled", { $context: "extension state" })],
+    ["notInstalled", gt("not installed")],
+    ["notApplicable", gt("n/a")],
   ];
   return (
     <p className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-3 text-2xs text-muted-foreground sm:px-4">

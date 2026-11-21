@@ -634,7 +634,8 @@ function ProviderSettingsTextInput({
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }) {
   const [rejected, setRejected] = useState<string | null>(null);
-  const warning = fieldPathWarning(field, value);
+  const resolve = useMessages();
+  const warning = fieldPathWarning(field, value, resolve);
   return (
     <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
       <DraftInput
@@ -669,9 +670,13 @@ function ProviderSettingsTextInput({
   );
 }
 
-function fieldPathWarning(field: ProviderSettingsFieldModel, value: unknown) {
+function fieldPathWarning(
+  field: ProviderSettingsFieldModel,
+  value: unknown,
+  resolve: MessageResolver,
+) {
   return field.absolutePath
-    ? relativePathWarning(readProviderConfigString(value, field.key))
+    ? relativePathWarning(readProviderConfigString(value, field.key), resolve)
     : undefined;
 }
 
@@ -705,6 +710,7 @@ function ProviderSettingsFieldRow({
   environmentId,
 }: ProviderSettingsFieldRowProps) {
   const gt = useGT();
+  const resolve = useMessages();
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
@@ -867,7 +873,7 @@ function ProviderSettingsFieldRow({
   }
 
   const type = field.control === "password" ? "password" : undefined;
-  const pathWarning = fieldPathWarning(field, value);
+  const pathWarning = fieldPathWarning(field, value, resolve);
   const BufferedInput = field.secret ? SecretInput : DraftInput;
   const ControlledInput = field.secret ? SecretInput : Input;
   return (

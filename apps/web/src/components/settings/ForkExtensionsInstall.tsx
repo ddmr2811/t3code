@@ -1,8 +1,10 @@
 import type { EnvironmentId, ForkExtensionAgent, ForkExtensionProblem } from "@t3tools/contracts";
 import { useDebouncer } from "@tanstack/react-pacer";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { CheckIcon, ExternalLinkIcon, XIcon } from "lucide-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -46,9 +48,9 @@ import {
 const INSPECT_DEBOUNCE_MS = 300;
 
 const SCOPE_LABELS: Readonly<Record<ForkMcpScope, string>> = {
-  user: "User (all projects)",
-  project: "Project",
-  local: "Local",
+  user: msg("User (all projects)"),
+  project: msg("Project", { $context: "MCP server scope" }),
+  local: msg("Local", { $context: "MCP server scope" }),
 };
 const SCOPES: ReadonlyArray<ForkMcpScope> = ["user", "project", "local"];
 
@@ -76,12 +78,12 @@ type FormState =
 
 const EMPTY_FORM: FormState = { phase: "empty" };
 
-const NO_MACHINE: ForkExtensionProblem = {
+const noMachine = (resolve: MessageResolver): ForkExtensionProblem => ({
   reason: "machineOffline",
-  summary: "No machine can read this yet.",
-  nextStep: "Connect a machine that runs this fork, then try again.",
+  summary: resolve(msg("No machine can read this yet.")),
+  nextStep: resolve(msg("Connect a machine that runs this fork, then try again.")),
   rawOutput: null,
-};
+});
 
 function initialForm(
   machines: ReadonlyArray<MachineState>,
@@ -116,6 +118,8 @@ export function ForkExtensionsInstall({
   readonly installHere: ForkInstallHereTarget | null;
 }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const gt = useGT();
+  const m = useMessages();
   // Shown in the form, so no toast as well.
   const inspectSource = useAtomCommand(forkExtensionsInspectSource, { reportFailure: false });
   const install = useAtomCommand(forkExtensionsInstall, { reportFailure: false });
@@ -163,7 +167,7 @@ export function ForkExtensionsInstall({
     const environmentId = forkInstallInspectMachine(machines, primaryEnvironmentId);
     if (environmentId === null) {
       inspectedText.current = null;
-      setForm({ phase: "error", problem: NO_MACHINE });
+      setForm({ phase: "error", problem: noMachine(m) });
       return;
     }
     inspectedText.current = trimmed;
@@ -215,8 +219,8 @@ export function ForkExtensionsInstall({
   };
 
   const draft = form.phase === "ready" ? form.draft : null;
-  const rows = draft === null ? [] : forkInstallTargets(machines, draft);
-  const plan = draft === null ? null : forkInstallPlan(draft, rows, selection, projectByMachine);
+  const rows = draft === null ? [] : forkInstallTargets(machines, draft, m);
+  const plan = draft === null ? null : forkInstallPlan(draft, rows, selection, projectByMachine, m);
   const running = [...statuses.values()].some((status) => status.phase === "running");
   // Results describe what was sent; an edit makes the next install a new one.
   const updateDraft = (patch: Partial<ForkInstallDraft>) => {
@@ -264,7 +268,7 @@ export function ForkExtensionsInstall({
           const next = new Map(current);
           for (const agent of call.agents) {
             const key = forkInstallTargetKey(call.environmentId, agent);
-            if (result._tag === "Success") next.set(key, forkInstallStatus(result.value, agent));
+            if (result._tag === "Success") next.set(key, forkInstallStatus(result.value, agent, m));
             else if (failure !== null) next.set(key, { phase: "failed", problem: failure });
             else next.delete(key);
           }
@@ -301,8 +305,8 @@ export function ForkExtensionsInstall({
         }}
       >
         <Input
-          aria-label="Paste something to install"
-          placeholder="Paste a URL, a command, a GitHub repo or a plugin name…"
+          aria-label={gt("Paste something to install")}
+          placeholder={gt("Paste a URL, a command, a GitHub repo or a plugin name…")}
           font={text === "" ? "default" : "mono"}
           value={text}
           disabled={running}
@@ -323,14 +327,14 @@ export function ForkExtensionsInstall({
               (plan === null || plan.blocker !== null || draft?.type === "claudeAiConnector"))
           }
         >
-          Install
+          <T context="verb, installs what was pasted">Install</T>
         </Button>
       </form>
 
       {form.phase === "inspecting" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Spinner size="xs" />
-          Detecting…
+          <T>Detecting…</T>
         </p>
       ) : null}
       {form.phase === "error" ? (
@@ -344,28 +348,46 @@ export function ForkExtensionsInstall({
           <div className="flex flex-wrap items-center gap-2 rounded-md bg-secondary px-2.5 py-1.5">
             {form.origin === "item" ? (
               <span>
-                Install <b className="font-semibold">{form.title}</b>
-                {draft === null ? null : ` · ${FORK_INSTALL_TYPE_LABELS[draft.type]}`}
+                <T>
+                  Install{" "}
+                  <b className="font-semibold">
+                    <Var>{form.title}</Var>
+                  </b>
+                </T>
+                {draft === null ? null : ` · ${m(FORK_INSTALL_TYPE_LABELS[draft.type])}`}
               </span>
             ) : draft === null ? (
-              <span>Couldn't tell what this is.</span>
+              <span>
+                <T>Couldn't tell what this is.</T>
+              </span>
             ) : (
               <span>
-                Detected: <b className="font-semibold">{FORK_INSTALL_TYPE_LABELS[draft.type]}</b>
+                <T>
+                  Detected:{" "}
+                  <b className="font-semibold">
+                    <Var>{m(FORK_INSTALL_TYPE_LABELS[draft.type])}</Var>
+                  </b>
+                </T>
               </span>
             )}
             <span className="flex-1" />
             {form.origin === "pasted" ? (
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                {draft === null ? "Pick its type:" : "Not this?"}
+                {draft === null ? gt("Pick its type:") : gt("Not this?")}
                 <Select value={draft?.type ?? null} disabled={running} onValueChange={changeType}>
-                  <SelectTrigger size="xs" aria-label="Type" className="min-w-0">
-                    <SelectValue>{draft === null ? "Pick a type" : "Change type"}</SelectValue>
+                  <SelectTrigger
+                    size="xs"
+                    aria-label={gt("Type", { $context: "kind of extension" })}
+                    className="min-w-0"
+                  >
+                    <SelectValue>
+                      {draft === null ? gt("Pick a type") : gt("Change type")}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectPopup>
                     {FORK_INSTALL_TYPES.map((type) => (
                       <SelectItem key={type} value={type}>
-                        {FORK_INSTALL_TYPE_LABELS[type]}
+                        {m(FORK_INSTALL_TYPE_LABELS[type])}
                       </SelectItem>
                     ))}
                   </SelectPopup>
@@ -377,8 +399,10 @@ export function ForkExtensionsInstall({
           {draft === null ? null : draft.type === "claudeAiConnector" ? (
             <div className="space-y-2">
               <p className="text-muted-foreground">
-                claude.ai connectors belong to your Claude account, not to a machine. Connect it on
-                claude.ai and it shows up on all your machines.
+                <T>
+                  claude.ai connectors belong to your Claude account, not to a machine. Connect it
+                  on claude.ai and it shows up on all your machines.
+                </T>
               </p>
               <Button
                 size="xs"
@@ -386,7 +410,7 @@ export function ForkExtensionsInstall({
                 autoFocus={autoFocus}
                 onClick={() => void ensureLocalApi().shell.openExternal(CLAUDE_AI_CONNECTORS_URL)}
               >
-                Open claude.ai connectors
+                <T>Open claude.ai connectors</T>
                 <ExternalLinkIcon aria-hidden />
               </Button>
             </div>
@@ -400,12 +424,16 @@ export function ForkExtensionsInstall({
                 onChange={updateDraft}
               />
               <div className="space-y-1.5">
-                <p className="text-muted-foreground">Where should it go?</p>
+                <p className="text-muted-foreground">
+                  <T>Where should it go?</T>
+                </p>
                 <table className="w-auto border-collapse">
                   <thead>
                     <tr>
                       <th scope="col" className="pe-6 text-start font-normal">
-                        <span className="sr-only">Machine</span>
+                        <span className="sr-only">
+                          <T>Machine</T>
+                        </span>
                       </th>
                       {(["claude", "codex"] as const).map((agent) => (
                         <th
@@ -462,7 +490,7 @@ export function ForkExtensionsInstall({
             ) : null}
             {/* Closing mid-install leaves the machines to finish; the matrix refreshes. */}
             <Button size="xs" variant="outline" onClick={close}>
-              {statuses.size > 0 ? "Close" : "Cancel"}
+              {statuses.size > 0 ? gt("Close") : gt("Cancel")}
             </Button>
             {plan !== null && draft?.type !== "claudeAiConnector" ? (
               <Button
@@ -471,7 +499,12 @@ export function ForkExtensionsInstall({
                 onClick={() => void runInstall()}
               >
                 {running ? <Spinner size="xs" /> : null}
-                Install in {plan.count} {plan.count === 1 ? "place" : "places"}
+                {gt(
+                  "{count, plural, one {Install in {count} place} other {Install in {count} places}}",
+                  {
+                    count: plan.count,
+                  },
+                )}
               </Button>
             ) : null}
           </div>
@@ -517,6 +550,8 @@ function DraftFields({
   readonly disabled: boolean;
   readonly onChange: (patch: Partial<ForkInstallDraft>) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const id = (name: string) => `${fieldId}-${name}`;
   const text = (
     name: string,
@@ -536,7 +571,7 @@ function DraftFields({
     />
   );
   const name = (
-    <Field id={id("name")} label="Name">
+    <Field id={id("name")} label={gt("Name")}>
       {text("name", draft.name, (value) => ({ name: value }), { focus: true })}
     </Field>
   );
@@ -553,7 +588,7 @@ function DraftFields({
       {draft.type === "mcpCommand" ? (
         <>
           {name}
-          <Field id={id("command")} label="Command">
+          <Field id={id("command")} label={gt("Command")}>
             {text("command", draft.commandLine, (value) => ({ commandLine: value }), {
               mono: true,
             })}
@@ -561,7 +596,7 @@ function DraftFields({
         </>
       ) : null}
       {isMcpInstallType(draft.type) ? (
-        <Field label="Scope">
+        <Field label={gt("Scope", { $context: "MCP server scope" })}>
           <Select
             value={draft.scope}
             disabled={disabled}
@@ -570,13 +605,13 @@ function DraftFields({
               if (scope !== undefined) onChange({ scope });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Scope">
-              <SelectValue>{SCOPE_LABELS[draft.scope]}</SelectValue>
+            <SelectTrigger size="sm" aria-label={gt("Scope", { $context: "MCP server scope" })}>
+              <SelectValue>{m(SCOPE_LABELS[draft.scope])}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
               {SCOPES.map((scope) => (
                 <SelectItem key={scope} value={scope}>
-                  {SCOPE_LABELS[scope]}
+                  {m(SCOPE_LABELS[scope])}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -584,7 +619,7 @@ function DraftFields({
         </Field>
       ) : null}
       {draft.type === "plugin" ? (
-        <Field id={id("plugin")} label="Plugin">
+        <Field id={id("plugin")} label={gt("Plugin")}>
           {text("plugin", draft.pluginRef, (value) => ({ pluginRef: value }), {
             mono: true,
             focus: true,
@@ -594,7 +629,7 @@ function DraftFields({
       ) : null}
       {draft.type === "marketplace" ? (
         <>
-          <Field id={id("marketplace")} label="Marketplace">
+          <Field id={id("marketplace")} label={gt("Marketplace")}>
             {text(
               "marketplace",
               draft.marketplaceSource,
@@ -603,7 +638,7 @@ function DraftFields({
             )}
           </Field>
           {draft.marketplacePlugins.length > 0 ? (
-            <Field label="Plugin">
+            <Field label={gt("Plugin")}>
               <Select
                 value={draft.pluginRef}
                 disabled={disabled}
@@ -611,7 +646,7 @@ function DraftFields({
                   if (typeof value === "string") onChange({ pluginRef: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Plugin">
+                <SelectTrigger size="sm" aria-label={gt("Plugin")}>
                   <SelectValue>{draft.pluginRef}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -624,7 +659,7 @@ function DraftFields({
               </Select>
             </Field>
           ) : (
-            <Field id={id("plugin")} label="Plugin">
+            <Field id={id("plugin")} label={gt("Plugin")}>
               {text("plugin", draft.pluginRef, (value) => ({ pluginRef: value }), {
                 mono: true,
               })}
@@ -635,10 +670,10 @@ function DraftFields({
       {draft.type === "skill" ? (
         <>
           {name}
-          <Field id={id("source")} label="Source">
+          <Field id={id("source")} label={gt("Source", { $context: "where a skill comes from" })}>
             {text("source", draft.skillSource, (value) => ({ skillSource: value }), {
               mono: true,
-              placeholder: "owner/repo/path or a folder",
+              placeholder: gt("owner/repo/path or a folder"),
             })}
           </Field>
         </>
@@ -655,10 +690,15 @@ function StatusIcon({
   readonly status: ForkInstallStatus;
 }) {
   const place = placeLabel(target);
+  const gt = useGT();
   switch (status.phase) {
     case "running":
       return (
-        <span role="img" aria-label={`Installing on ${place}`} className="inline-flex">
+        <span
+          role="img"
+          aria-label={gt("Installing on {place}", { place })}
+          className="inline-flex"
+        >
           <Spinner size="xs" tone="muted" />
         </span>
       );
@@ -666,7 +706,7 @@ function StatusIcon({
       return (
         <span
           role="img"
-          aria-label={`Installed on ${place}`}
+          aria-label={gt("Installed on {place}", { place })}
           className={cn("inline-flex", status.problem === null ? "text-success" : "text-warning")}
         >
           <CheckIcon className="size-3.5" aria-hidden />
@@ -674,7 +714,11 @@ function StatusIcon({
       );
     case "failed":
       return (
-        <span role="img" aria-label={`Failed on ${place}`} className="inline-flex text-destructive">
+        <span
+          role="img"
+          aria-label={gt("Failed on {place}", { place })}
+          className="inline-flex text-destructive"
+        >
           <XIcon className="size-3.5" aria-hidden />
         </span>
       );
@@ -694,6 +738,7 @@ function TargetCell({
   readonly disabled: boolean;
   readonly onCheckedChange: (checked: boolean) => void;
 }) {
+  const gt = useGT();
   const icon = status === null ? null : <StatusIcon target={target} status={status} />;
   if (target.blocked === null) {
     return (
@@ -716,7 +761,7 @@ function TargetCell({
             // The mockup's "—" for n/a, drawn rather than written.
             <span
               role="img"
-              aria-label={`${placeLabel(target)}: not available`}
+              aria-label={gt("{place}: not available", { place: placeLabel(target) })}
               className="inline-flex h-4 w-4 items-center justify-center"
             >
               <span aria-hidden className="inline-block h-px w-2.5 bg-muted-foreground" />
@@ -743,6 +788,7 @@ function ProjectPickers({
   readonly disabled: boolean;
   readonly onPick: (environmentId: EnvironmentId, path: string) => void;
 }) {
+  const gt = useGT();
   if (rows.length === 0) return null;
   return (
     <div className="grid grid-cols-[7rem_minmax(0,24rem)] items-center gap-x-3 gap-y-2">
@@ -751,7 +797,10 @@ function ProjectPickers({
           (project) => project.path === projectByMachine.get(row.environmentId),
         );
         return (
-          <Field key={row.environmentId} label={`Project on ${row.machineLabel}`}>
+          <Field
+            key={row.environmentId}
+            label={gt("Project on {machine}", { machine: row.machineLabel })}
+          >
             <Select
               value={picked?.path ?? null}
               disabled={disabled}
@@ -759,8 +808,11 @@ function ProjectPickers({
                 if (typeof value === "string") onPick(row.environmentId, value);
               }}
             >
-              <SelectTrigger size="sm" aria-label={`Project on ${row.machineLabel}`}>
-                <SelectValue>{picked?.title ?? "Pick a project"}</SelectValue>
+              <SelectTrigger
+                size="sm"
+                aria-label={gt("Project on {machine}", { machine: row.machineLabel })}
+              >
+                <SelectValue>{picked?.title ?? gt("Pick a project")}</SelectValue>
               </SelectTrigger>
               <SelectPopup>
                 {row.projects.map((project) => (
@@ -785,6 +837,7 @@ function StatusProblems({
   readonly rows: ReturnType<typeof forkInstallTargets>;
   readonly statuses: ReadonlyMap<string, ForkInstallStatus>;
 }) {
+  const gt = useGT();
   const entries = rows.flatMap((row) =>
     row.targets.flatMap((target) => {
       const status = statuses.get(target.key);
@@ -798,7 +851,9 @@ function StatusProblems({
       {entries.map(({ target, problem, failed }) => (
         <li key={target.key} className="flex min-w-0 flex-col gap-0.5">
           <span className={cn("font-medium", failed ? "text-destructive" : "text-warning")}>
-            {failed ? "Couldn't install on" : "Installed with a warning on"} {placeLabel(target)}
+            {failed
+              ? gt("Couldn't install on {place}", { place: placeLabel(target) })
+              : gt("Installed with a warning on {place}", { place: placeLabel(target) })}
           </span>
           <ForkProblemText problem={problem} />
         </li>

@@ -6,6 +6,7 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
 import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
+import { T, useGT, useMessages } from "gt-react";
 import { ActivityIcon, ChartColumnBigIcon, ChartSplineIcon, GaugeIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -132,6 +133,8 @@ const LINE_STEP_MS = 5 * 60_000;
 
 function SpendCard(props: { readonly data: WidgetUsage; readonly nowMs: number }) {
   const [ref, width] = useMeasuredWidth();
+  const gt = useGT();
+  const m = useMessages();
   const { usage, untilDay } = props.data;
   const merged = usage.shown?.merged ?? usage.merged;
   const days = spendByDay(merged.daily, lastDays(untilDay, 7));
@@ -143,23 +146,29 @@ function SpendCard(props: { readonly data: WidgetUsage; readonly nowMs: number }
   return (
     <WidgetCard
       icon={<ChartColumnBigIcon />}
-      title="Spend"
-      meta="Est. USD"
+      title={gt("Spend")}
+      meta={gt("Est. USD")}
       footer={
         <>
-          <span>7-day spend</span>
-          <span>{readAt ? `Updated ${formatRelativeTimeLabel(readAt, props.nowMs)}` : null}</span>
+          <span>
+            <T>7-day spend</T>
+          </span>
+          <span>
+            {readAt
+              ? gt("Updated {when}", { when: formatRelativeTimeLabel(readAt, props.nowMs, m) })
+              : null}
+          </span>
         </>
       }
     >
       <Figure
         value={loading ? "…" : formatUsd(total)}
-        caption="List price, all machines"
+        caption={gt("List price, all machines")}
         side={
           loading ? null : (
             <>
-              <span>{formatTokens(tokens)} tokens</span>
-              <span>Today {formatUsd(today?.costUsd ?? 0)}</span>
+              <span>{gt("{tokens} tokens", { tokens: formatTokens(tokens) })}</span>
+              <span>{gt("Today {cost}", { cost: formatUsd(today?.costUsd ?? 0) })}</span>
             </>
           )
         }
@@ -193,6 +202,8 @@ const accountName = (account: LimitAccount) =>
 
 function LimitCard(props: { readonly nowMs: number }) {
   const [ref, width] = useMeasuredWidth();
+  const gt = useGT();
+  const m = useMessages();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const accounts = collectLimitAccounts(presentations).filter(
@@ -211,13 +222,15 @@ function LimitCard(props: { readonly nowMs: number }) {
 
   if (account === null || limitWindow === null) {
     return (
-      <WidgetCard icon={<GaugeIcon />} title="Limits">
-        <Quiet>No subscription limits reported.</Quiet>
+      <WidgetCard icon={<GaugeIcon />} title={gt("Limits")}>
+        <Quiet>
+          <T>No subscription limits reported.</T>
+        </Quiet>
       </WidgetCard>
     );
   }
   const { percent, low } = windowRemaining(limitWindow);
-  const resets = formatResetsIn(limitWindow, props.nowMs);
+  const resets = formatResetsIn(limitWindow, props.nowMs, m);
   // The range moves on the sample grid, not each minute, so the line redraws only when a sample can land.
   const untilMs = Math.ceil(props.nowMs / LINE_STEP_MS) * LINE_STEP_MS;
   const sinceMs = untilMs - LIMIT_HISTORY_HOURS * 60 * 60_000;
@@ -237,7 +250,7 @@ function LimitCard(props: { readonly nowMs: number }) {
           if (typeof value === "string") setChosen(value);
         }}
       >
-        <SelectTrigger size="xs" variant="ghost" aria-label="Account shown">
+        <SelectTrigger size="xs" variant="ghost" aria-label={gt("Account shown")}>
           <SelectValue>
             {(value: string | null) =>
               accountName(accounts.find((entry) => entry.key === value) ?? account)
@@ -264,19 +277,33 @@ function LimitCard(props: { readonly nowMs: number }) {
         <>
           <span>
             {unsupported
-              ? "History needs a fork server"
+              ? gt("History needs a fork server")
               : collecting
-                ? `Collecting since ${formatShortTimestamp(new Date(started).toISOString(), timestampFormat)}`
-                : "Last 24 hours"}
+                ? gt("Collecting since {time}", {
+                    time: formatShortTimestamp(new Date(started).toISOString(), timestampFormat),
+                  })
+                : gt("Last 24 hours")}
           </span>
-          <span>Remaining</span>
+          <span>
+            <T>Remaining</T>
+          </span>
         </>
       }
     >
       <Figure
-        value={<span className={cn(low && "text-warning-foreground")}>{percent}% remaining</span>}
+        value={
+          <span className={cn(low && "text-warning-foreground")}>
+            {gt("{percent}% remaining", { percent })}
+          </span>
+        }
         caption={limitWindow.label}
-        side={<span>Updated {formatRelativeTimeLabel(account.limits.checkedAt, props.nowMs)}</span>}
+        side={
+          <span>
+            {gt("Updated {when}", {
+              when: formatRelativeTimeLabel(account.limits.checkedAt, props.nowMs, m),
+            })}
+          </span>
+        }
       />
       <div ref={ref} className="relative mt-auto">
         <DotLine
@@ -287,7 +314,7 @@ function LimitCard(props: { readonly nowMs: number }) {
         />
         {line.length < 2 && !unsupported ? (
           <span className={cn("absolute inset-0 flex items-center justify-center", caption)}>
-            {started === null ? "Collecting from the next sample" : "Collecting…"}
+            {started === null ? gt("Collecting from the next sample") : gt("Collecting…")}
           </span>
         ) : null}
       </div>
@@ -299,6 +326,7 @@ const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[pro
 
 function UsageCard(props: { readonly data: WidgetUsage }) {
   const [ref, width] = useMeasuredWidth();
+  const gt = useGT();
   const { usage, untilDay } = props.data;
   const merged = usage.shown?.merged ?? usage.merged;
   const days = monthDays(untilDay);
@@ -313,11 +341,11 @@ function UsageCard(props: { readonly data: WidgetUsage }) {
   return (
     <WidgetCard
       icon={<ChartSplineIcon />}
-      title="Usage"
-      meta={loading ? null : `${formatTokens(total)} this month`}
+      title={gt("Usage")}
+      meta={loading ? null : gt("{tokens} this month", { tokens: formatTokens(total) })}
     >
       {layers.length === 0 ? (
-        <Quiet>{loading ? "Reading usage…" : "No tokens this month yet."}</Quiet>
+        <Quiet>{loading ? gt("Reading usage…") : gt("No tokens this month yet.")}</Quiet>
       ) : (
         <>
           <div ref={ref} className="flex flex-col gap-1">
@@ -356,24 +384,31 @@ function UsageCard(props: { readonly data: WidgetUsage }) {
 
 function ActivityCard(props: { readonly today: string; readonly timeZone: string }) {
   const [ref, width] = useMeasuredWidth();
+  const gt = useGT();
   const { readings, pending, unsupported } = useActivity();
   const weeks = heatWeeksFor(width);
   const grid = heatGrid(sumActivity(readings, props.timeZone), props.today, weeks);
   return (
     <WidgetCard
       icon={<ActivityIcon />}
-      title="Activity"
-      meta={readings.length > 0 ? `${grid.total.toLocaleString("en-US")} turns` : null}
+      title={gt("Activity")}
+      meta={
+        readings.length > 0
+          ? gt("{turns} turns", { turns: grid.total.toLocaleString("en-US") })
+          : null
+      }
       footer={
         <>
-          <span>{`Last ${weeks} weeks`}</span>
-          <span>{pending > 0 ? "Counting…" : "All machines"}</span>
+          <span>{gt("Last {weeks} weeks", { weeks })}</span>
+          <span>{pending > 0 ? gt("Counting…") : gt("All machines")}</span>
         </>
       }
     >
       <div ref={ref} className="flex min-h-0 flex-1 items-center">
         {unsupported ? (
-          <Quiet>Activity needs a fork server.</Quiet>
+          <Quiet>
+            <T>Activity needs a fork server.</T>
+          </Quiet>
         ) : width > 0 ? (
           <DotHeatmap grid={grid} width={width} />
         ) : null}

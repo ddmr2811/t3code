@@ -3760,7 +3760,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="pinned-rest-shelf-header"
                                 marker="pinned-rest-header"
-                                label="Pinned"
+                                label={gt("Pinned", { $context: "sidebar section" })}
                                 count={pinnedRestThreads.length}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "pinned"}
@@ -3776,7 +3776,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="completed-shelf-header"
                                 marker="completed-header"
-                                label="Work completed"
+                                label={gt("Work completed", { $context: "sidebar section" })}
                                 count={completedThreads.length}
                                 toggle={{
                                   expanded: completedShelfExpanded,

@@ -1,6 +1,7 @@
 // Fork-only: the Dashboard as a right panel surface beside a chat, the same sections in one column.
 import { Link } from "@tanstack/react-router";
 import { Maximize2Icon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -29,6 +30,7 @@ function Section(props: {
 }
 
 function OpenFullDashboard() {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -36,14 +38,16 @@ function OpenFullDashboard() {
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Open the full dashboard"
+            aria-label={gt("Open the full dashboard")}
             render={<Link to="/dashboard" />}
           />
         }
       >
         <Maximize2Icon aria-hidden className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Open the full dashboard</TooltipPopup>
+      <TooltipPopup side="bottom">
+        <T>Open the full dashboard</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -57,6 +61,7 @@ function DashboardRailContent() {
   // The minute tick is UTC without a zone suffix; it refreshes reset and relative labels.
   const nowMs = Date.parse(`${useNowMinute()}:00Z`);
   const layout = useSavedDashboardLayout();
+  const m = useMessages();
   const panels = resolvePanels(layout).filter((panel) => !panel.hidden);
   const machineData = useDashboardMachineData(panels.some((panel) => panel.id === "machines"));
   const body = (id: DashboardPanelId) => {
@@ -74,7 +79,9 @@ function DashboardRailContent() {
       <div className="flex flex-col gap-6 px-3 pt-3 pb-6">
         {panels.length === 0 ? (
           <div className="flex items-center gap-2">
-            <p className="text-muted-foreground text-sm">Every section is hidden.</p>
+            <p className="text-muted-foreground text-sm">
+              <T>Every section is hidden.</T>
+            </p>
             <span className="ms-auto flex">
               <OpenFullDashboard />
             </span>
@@ -83,7 +90,7 @@ function DashboardRailContent() {
         {panels.map((panel, index) => (
           <Section
             key={panel.id}
-            title={panel.title}
+            title={m(panel.title)}
             action={index === 0 ? <OpenFullDashboard /> : undefined}
           >
             {body(panel.id)}

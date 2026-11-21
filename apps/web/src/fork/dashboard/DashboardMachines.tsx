@@ -10,6 +10,7 @@ import {
   type ForkTailnetStatus,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { MonitorIcon } from "lucide-react";
 import { type ReactNode, useContext } from "react";
 
@@ -20,6 +21,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentsWithScope } from "../../state/session";
+import type { MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import {
   type DashboardEnvironment,
@@ -121,8 +123,9 @@ interface MachineCardViewProps {
 
 function MachineCardView(props: MachineCardViewProps) {
   const { load } = props;
+  const gt = useGT();
   const specs = [
-    load.cores === null ? null : `${load.cores} cores`,
+    load.cores === null ? null : gt("{cores} cores", { cores: load.cores }),
     load.totalMemoryBytes === null ? null : formatBytes(load.totalMemoryBytes),
   ].filter((value) => value !== null);
   return (
@@ -141,7 +144,7 @@ function MachineCardView(props: MachineCardViewProps) {
           <span className="shrink-0 font-mono text-2xs text-muted-foreground">{props.source}</span>
         ) : null}
         <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
-          {props.latency ?? "offline"}
+          {props.latency ?? gt("offline")}
         </span>
       </div>
       {props.problem !== null ? (
@@ -153,7 +156,7 @@ function MachineCardView(props: MachineCardViewProps) {
         </div>
       )}
       <span className="truncate font-mono text-2xs text-muted-foreground">
-        {specs.length > 0 ? specs.join(" · ") : props.connected ? "…" : "Not connected"}
+        {specs.length > 0 ? specs.join(" · ") : props.connected ? "…" : gt("Not connected")}
       </span>
     </article>
   );
@@ -253,14 +256,20 @@ function Wing(props: {
 }
 
 function Hub({ environments }: { readonly environments: ReadonlyArray<DashboardEnvironment> }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <div className="flex flex-col items-center justify-center gap-1 rounded-md border border-primary/40 bg-card px-5 py-4 text-center lg:min-w-48">
       <MonitorIcon aria-hidden className="size-5 text-muted-foreground" />
-      <span className="font-serif text-lg">This {isElectron ? "computer" : "browser"}</span>
-      <span className="font-mono text-2xs text-muted-foreground">
-        {onlineSummary(environments)}
+      <span className="font-serif text-lg">
+        {isElectron ? gt("This computer") : gt("This browser")}
       </span>
-      <span className="text-2xs text-muted-foreground">Latency is measured from here</span>
+      <span className="font-mono text-2xs text-muted-foreground">
+        {onlineSummary(environments, m)}
+      </span>
+      <span className="text-2xs text-muted-foreground">
+        <T>Latency is measured from here</T>
+      </span>
     </div>
   );
 }
@@ -517,20 +526,26 @@ const isOnline = (data: MachineData) =>
       ? data.reading.resources !== null
       : data.peer.online;
 
-function machineStatus(nowMs: number) {
+function machineStatus(nowMs: number, resolve: MessageResolver) {
   return (machine: PlacedMachine<MachineData>): MachineStatus => {
     const data = machine.live?.data;
     if (data === undefined) {
       return {
         online: false,
-        detail: machine.ambiguous ? "Matches more than one machine" : "No longer reported",
+        detail: machine.ambiguous
+          ? resolve(msg("Matches more than one machine"))
+          : resolve(msg("No longer reported")),
       };
     }
     if (data.type === "peer") {
       return {
         online: data.peer.online,
         detail: data.peer.lastSeen
-          ? `seen ${formatRelativeTimeLabel(data.peer.lastSeen, nowMs)}`
+          ? resolve(
+              msg("seen {when}", {
+                when: formatRelativeTimeLabel(data.peer.lastSeen, nowMs, resolve),
+              }),
+            )
           : data.peer.os || null,
       };
     }
@@ -572,14 +587,23 @@ function MachineTile(props: {
 const shownOf = (section: PlacedSection<MachineData>) =>
   section.machines.filter((machine) => machine.live !== null && !machine.hidden);
 
-const onlineCount = (machines: ReadonlyArray<PlacedMachine<MachineData>>) =>
-  `${machines.filter((machine) => isOnline(machine.live!.data)).length} of ${machines.length} online`;
+const onlineCount = (
+  machines: ReadonlyArray<PlacedMachine<MachineData>>,
+  resolve: MessageResolver,
+) =>
+  resolve(
+    msg("{online} of {total} online", {
+      online: machines.filter((machine) => isOnline(machine.live!.data)).length,
+      total: machines.length,
+    }),
+  );
 
 function CustomSection(props: {
   readonly section: PlacedSection<MachineData>;
   readonly nowMs: number;
   readonly compact: boolean;
 }) {
+  const m = useMessages();
   const machines = shownOf(props.section);
   if (machines.length === 0) return null;
   return (
@@ -590,7 +614,7 @@ function CustomSection(props: {
       <div className="flex items-baseline gap-3">
         <span className={caption}>{props.section.name}</span>
         <span className="ms-auto font-mono text-2xs text-muted-foreground">
-          {onlineCount(machines)}
+          {onlineCount(machines, m)}
         </span>
       </div>
       <div
@@ -616,37 +640,45 @@ function TailnetBox(props: {
   readonly compact: boolean;
 }) {
   const { tailnet } = props;
+  const gt = useGT();
+  const m = useMessages();
   if (!tailnet.readable) return null;
   const machines = shownOf(props.section);
   const listed = tailnet.peers !== null;
   return (
     <section
-      aria-label="Tailnet machines without T3 Code"
+      aria-label={gt("Tailnet machines without T3 Code")}
       className={cn(
         "flex flex-col gap-2 rounded-md border border-dashed",
         props.compact ? "px-2.5 py-2" : "p-3",
       )}
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className={caption}>Tailnet · without T3 Code</span>
+        <span className={caption}>
+          <T>Tailnet · without T3 Code</T>
+        </span>
         {tailnet.sourceLabel !== null ? (
           <span className="font-mono text-2xs text-muted-foreground">
-            via {tailnet.sourceLabel}
+            <T>
+              via <Var>{tailnet.sourceLabel}</Var>
+            </T>
           </span>
         ) : null}
         {listed ? (
           <span className="ms-auto font-mono text-2xs text-muted-foreground">
-            {onlineCount(machines)}
+            {onlineCount(machines, m)}
           </span>
         ) : null}
       </div>
       {!listed ? (
-        <p className="text-muted-foreground text-xs">{tailnet.problem ?? "Reading the tailnet…"}</p>
+        <p className="text-muted-foreground text-xs">
+          {tailnet.problem ?? gt("Reading the tailnet…")}
+        </p>
       ) : machines.length === 0 ? (
         <p className="text-muted-foreground text-xs">
           {tailnet.peers!.length === 0
-            ? "Every machine on the tailnet runs T3 Code."
-            : "Every machine here is hidden or moved to another section."}
+            ? gt("Every machine on the tailnet runs T3 Code.")
+            : gt("Every machine here is hidden or moved to another section.")}
         </p>
       ) : props.compact ? (
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -719,6 +751,7 @@ export function DashboardMachines({
   readonly compact?: boolean;
 }) {
   const { environments, tailnet } = data;
+  const m = useMessages();
   const sections = placeMachines(layout, data.live);
 
   if (onLayoutChange) {
@@ -727,7 +760,7 @@ export function DashboardMachines({
         sections={sections}
         layout={layout}
         onChange={onLayoutChange}
-        status={machineStatus(nowMs)}
+        status={machineStatus(nowMs, m)}
       />
     );
   }

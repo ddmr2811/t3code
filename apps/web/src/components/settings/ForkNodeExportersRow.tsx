@@ -1,6 +1,7 @@
 // Fork-only: the node_exporters a server reads for the Dashboard's machines without T3 Code.
 import { useRef, useState } from "react";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import { Textarea } from "../ui/textarea";
 import { formatNodeExporters, parseNodeExporters } from "./forkNodeExportersRow.logic";
@@ -13,10 +14,10 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-const DESCRIPTION =
-  "One per line: a name and the exporter's URL, such as prod-cx43 http://100.96.210.49:9100/metrics. This machine reads them for the Dashboard. Use the machine's Tailscale IP: only plain http to Tailscale IPs is read, never names.";
+const EXAMPLE = "prod-cx43 http://100.96.210.49:9100/metrics";
 
 export function ForkNodeExportersRow() {
+  const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const { targets, connectedEnvironments } = useSettingsScope();
@@ -39,15 +40,18 @@ export function ForkNodeExportersRow() {
       mixed={mixed}
       description={
         disabled
-          ? `Needs the fork's server on: ${missing.join(", ")}.`
+          ? gt("Needs the fork's server on: {machines}.", { machines: missing.join(", ") })
           : invalid.length > 0
-            ? `Not saved, needs a name and a URL: ${invalid.join("; ")}`
-            : DESCRIPTION
+            ? gt("Not saved, needs a name and a URL: {lines}", { lines: invalid.join("; ") })
+            : gt(
+                "One per line: a name and the exporter's URL, such as {example}. This machine reads them for the Dashboard. Use the machine's Tailscale IP: only plain http to Tailscale IPs is read, never names.",
+                { example: EXAMPLE },
+              )
       }
       resetAction={
         !disabled && (mixed || settings.forkNodeExporters.length > 0) ? (
           <SettingResetButton
-            ariaLabel="Reset Dashboard exporters to default"
+            ariaLabel={gt("Reset Dashboard exporters to default")}
             onClick={() =>
               updateSettings({ forkNodeExporters: DEFAULT_SERVER_SETTINGS.forkNodeExporters })
             }
@@ -58,7 +62,7 @@ export function ForkNodeExportersRow() {
       <div className="mt-3 max-w-2xl pb-3.5">
         <Textarea
           key={`${scopeKey}:${mixed}:${current}`}
-          aria-label="Dashboard exporters"
+          aria-label={gt("Dashboard exporters")}
           autoCapitalize="none"
           spellCheck={false}
           disabled={disabled}
@@ -67,7 +71,7 @@ export function ForkNodeExportersRow() {
             edited.current = true;
           }}
           defaultValue={mixed ? "" : current}
-          placeholder={mixed ? "Mixed" : "prod-cx43 http://100.96.210.49:9100/metrics"}
+          placeholder={mixed ? gt("Mixed", { $context: "values differ across targets" }) : EXAMPLE}
           onBlur={(event) => {
             if (disabled || !edited.current) return;
             edited.current = false;

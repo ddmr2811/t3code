@@ -8,6 +8,9 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface MachineFeed {
   readonly environmentId: EnvironmentId;
@@ -74,13 +77,19 @@ export function filterOptions(
   rows: ReadonlyArray<ActivityRow>,
   machines: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
   filters: ActivityFilters,
+  resolve: MessageResolver = m,
 ): FilterOptions {
   const projects = new Set(rows.flatMap((row) => (row.project === undefined ? [] : [row.project])));
   if (filters.project !== null) projects.add(filters.project);
   const known = machines.toSorted((a, b) => a.label.localeCompare(b.label));
   const missing =
     filters.machine !== null && !known.some((entry) => entry.environmentId === filters.machine)
-      ? [{ environmentId: filters.machine as EnvironmentId, label: "Disconnected machine" }]
+      ? [
+          {
+            environmentId: filters.machine as EnvironmentId,
+            label: resolve(msg("Disconnected machine")),
+          },
+        ]
       : [];
   return {
     projects: [...projects].toSorted((a, b) => a.localeCompare(b)),
@@ -103,6 +112,7 @@ export function groupByDay(
   rows: ReadonlyArray<ActivityRow>,
   nowMs: number,
   timeZone?: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<DayGroup> {
   const format = dayFormat(timeZone);
   const today = format.format(nowMs);
@@ -122,25 +132,30 @@ export function groupByDay(
       last.rows.push(row);
       continue;
     }
-    const label = day === today ? "Today" : day === yesterday ? "Yesterday" : long.format(atMs);
+    const label =
+      day === today
+        ? resolve(msg("Today"))
+        : day === yesterday
+          ? resolve(msg("Yesterday"))
+          : long.format(atMs);
     groups.push({ day, label, rows: [row] });
   }
   return groups;
 }
 
 export const STATUS_LABEL: Readonly<Record<ForkActivityStatus, string>> = {
-  ok: "OK",
-  error: "Error",
-  waiting: "Waiting on you",
-  running: "Running",
+  ok: msg("OK", { $context: "activity status, the step went fine" }),
+  error: msg("Error"),
+  waiting: msg("Waiting on you"),
+  running: msg("Running"),
 };
 
 export const ACTOR_LABEL: Readonly<Record<ForkActivityActor, string>> = {
-  orchestrator: "Orchestrator",
-  worker: "Worker",
-  timer: "Timer",
-  user: "You",
-  unknown: "Unknown",
+  orchestrator: msg("Orchestrator"),
+  worker: msg("Worker"),
+  timer: msg("Timer"),
+  user: msg("You"),
+  unknown: msg("Unknown"),
 };
 
 export interface ActivityCounts {

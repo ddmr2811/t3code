@@ -1,9 +1,11 @@
 // Fork-only: the home thread, a client setting the app opens on start with the Dashboard beside it.
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { persistClientSettingsUpdate, useClientSettings } from "../hooks/useSettings";
+import { m } from "../i18n/messages";
 import { isHomeThread } from "./homeThread.logic";
 
 export function useIsHomeThread(ref: ScopedThreadRef | null): boolean {
@@ -24,8 +26,10 @@ export async function setHomeThread(ref: ScopedThreadRef, home: boolean): Promis
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: home ? "Could not set the home thread" : "Could not unset the home thread",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: m(
+          home ? msg("Could not set the home thread") : msg("Could not unset the home thread"),
+        ),
+        description: error instanceof Error ? error.message : m(msg("An error occurred.")),
       }),
     );
   }

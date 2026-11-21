@@ -8,6 +8,7 @@ import {
   type LucideIcon,
   MessageCircleQuestionIcon,
 } from "lucide-react";
+import { useMessages } from "gt-react";
 
 import { Badge } from "../../components/ui/badge";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -29,10 +30,11 @@ const STATUS_LOOK: Readonly<
 /** Colour, icon and words together, so the state never rests on colour alone. */
 function ActivityStatusBadge({ status }: { readonly status: ForkActivityStatus }) {
   const { variant, icon: Icon } = STATUS_LOOK[status];
+  const m = useMessages();
   return (
     <Badge variant={variant}>
       <Icon aria-hidden />
-      {STATUS_LABEL[status]}
+      {m(STATUS_LABEL[status])}
     </Badge>
   );
 }
@@ -46,6 +48,7 @@ export function ActivityList({
   readonly nowMs?: number;
 }) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const m = useMessages();
   return (
     <ul className="flex flex-col overflow-hidden rounded-lg border bg-card">
       {rows.map((row) => (
@@ -60,7 +63,7 @@ export function ActivityList({
             >
               {nowMs === undefined
                 ? formatShortTimestamp(row.at, timestampFormat)
-                : formatRelativeTimeLabel(row.at, nowMs)}
+                : formatRelativeTimeLabel(row.at, nowMs, m)}
             </time>
             <span className="flex shrink-0 sm:order-2 sm:w-32">
               <ActivityStatusBadge status={row.status} />
@@ -74,7 +77,7 @@ export function ActivityList({
             {row.project ?? ""}
           </span>
           <span className="hidden w-24 shrink-0 truncate text-muted-foreground text-xs sm:order-5 lg:block">
-            {ACTOR_LABEL[row.actor]}
+            {m(ACTOR_LABEL[row.actor])}
           </span>
         </li>
       ))}

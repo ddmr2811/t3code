@@ -12,9 +12,11 @@ import {
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
 import type { MergedUsage } from "@t3tools/shared/usageMerge";
+import { msg } from "gt-react";
 
 import { forkWaitingReason } from "../../components/ForkResourceWidget.logic";
 import { isWorkCompletedThread } from "../../components/sidebar/forkInbox";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface MachineLoad {
   /** Shares of the whole machine, 0 to 1. */
@@ -86,9 +88,12 @@ export function orderMachines<T extends DashboardEnvironment>(
   );
 }
 
-export function onlineSummary(environments: ReadonlyArray<DashboardEnvironment>): string {
+export function onlineSummary(
+  environments: ReadonlyArray<DashboardEnvironment>,
+  resolve: MessageResolver = m,
+): string {
   const online = environments.filter((environment) => environment.connected).length;
-  return `${online} of ${environments.length} up`;
+  return resolve(msg("{online} of {total} up", { online, total: environments.length }));
 }
 
 /** Host names compare without case or a trailing dot; nothing else is folded together. */
@@ -377,6 +382,7 @@ export interface ActiveThread<T> {
 export function activeThreads<T extends ActiveThreadInput>(
   threads: ReadonlyArray<T>,
   nowMs: number,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ActiveThread<T>> {
   const active: ActiveThread<T>[] = [];
   for (const thread of threads) {
@@ -386,11 +392,11 @@ export function activeThreads<T extends ActiveThreadInput>(
       thread.snoozedUntil === null ? Number.NaN : Date.parse(thread.snoozedUntil);
     if (snoozedUntil > nowMs) continue;
     if (isThreadWorking(thread)) {
-      active.push({ thread, state: "working", label: "Working" });
+      active.push({ thread, state: "working", label: resolve(msg("Working")) });
       continue;
     }
     if (isWorkCompletedThread(thread)) continue;
-    const reason = forkWaitingReason(thread);
+    const reason = forkWaitingReason(thread, resolve);
     if (reason.dismissible) continue;
     active.push({ thread, state: "waiting", label: reason.label });
   }

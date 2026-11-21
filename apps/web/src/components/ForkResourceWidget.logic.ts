@@ -1,6 +1,9 @@
 // Fork-only: sizing and derived data of the machines widget (ForkResourceWidget.tsx).
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ResourceTelemetryProcess } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 /** The widget's layout at scale 1, in CSS pixels: its width, its fixed parts, and one machine row. */
 const NATURAL_WIDTH = 620;
@@ -195,10 +198,10 @@ export interface ForkWaitingReason {
 }
 
 const STOPPED_RUN_LABELS: Record<string, string> = {
-  interrupted: "Interrupted",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  rolled_back: "Rolled back",
+  interrupted: msg("Interrupted"),
+  failed: msg("Failed"),
+  cancelled: msg("Cancelled"),
+  rolled_back: msg("Rolled back"),
 };
 
 /**
@@ -217,6 +220,7 @@ export function forkWaitingReason(
     | "latestRun"
     | "runtime"
   >,
+  resolve: MessageResolver = m,
 ): ForkWaitingReason {
   const pending = (label: string): ForkWaitingReason => ({
     label,
@@ -224,20 +228,25 @@ export function forkWaitingReason(
     dismissible: false,
     detail: null,
   });
-  if (thread.hasPendingApprovals) return { ...pending("Needs approval"), answerable: true };
-  if (thread.hasPendingUserInput) return pending("Asks a question");
+  if (thread.hasPendingApprovals)
+    return { ...pending(resolve(msg("Needs approval"))), answerable: true };
+  if (thread.hasPendingUserInput) return pending(resolve(msg("Asks a question")));
   if (thread.pendingSubagentRequest === "approval")
-    return { ...pending("Subagent needs approval"), answerable: true };
-  if (thread.pendingSubagentRequest === "user_input") return pending("Subagent asks a question");
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) return pending("Guest message waiting");
+    return { ...pending(resolve(msg("Subagent needs approval"))), answerable: true };
+  if (thread.pendingSubagentRequest === "user_input")
+    return pending(resolve(msg("Subagent asks a question")));
+  if ((thread.pendingGuestMessageCount ?? 0) > 0)
+    return pending(resolve(msg("Guest message waiting")));
   if (thread.interactionMode === "plan" && thread.hasActionableProposedPlan)
-    return pending("Plan ready to review");
+    return pending(resolve(msg("Plan ready to review")));
   const error = thread.runtime?.lastError ?? null;
   if (error !== null)
-    return { label: "Error", answerable: false, dismissible: true, detail: error };
+    return { label: resolve(msg("Error")), answerable: false, dismissible: true, detail: error };
   const status = thread.latestRun?.status;
   return {
-    label: status === undefined ? "Not started" : (STOPPED_RUN_LABELS[status] ?? "Stopped"),
+    label: resolve(
+      status === undefined ? msg("Not started") : (STOPPED_RUN_LABELS[status] ?? msg("Stopped")),
+    ),
     answerable: false,
     dismissible: true,
     detail: null,

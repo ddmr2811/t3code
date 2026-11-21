@@ -5,8 +5,10 @@ import type {
   ForkExtensionProblem,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { ensureLocalApi } from "../../localApi";
 import {
   forkExtensionsAuthorize,
@@ -65,12 +67,12 @@ interface AuthorizeDialogState {
   readonly step: AuthorizeStep;
 }
 
-const LOGIN_ENDED: ForkExtensionProblem = {
+const loginEnded = (resolve: MessageResolver): ForkExtensionProblem => ({
   reason: "commandFailed",
-  summary: "The login ended before it finished.",
-  nextStep: "Click Authorize to start again.",
+  summary: resolve(msg("The login ended before it finished.")),
+  nextStep: resolve(msg("Click Authorize to start again.")),
   rawOutput: null,
-};
+});
 
 /** The app's way of opening an external page (desktop shell, or a new tab in a browser). */
 function openInBrowser(url: string): void {
@@ -96,6 +98,8 @@ export function useForkAuthorize(options: {
   /** After a login finished on that machine. */
   readonly onAuthorized: (environmentId: EnvironmentId) => void;
 }): { readonly start: (target: ForkAuthorizeTarget) => void; readonly dialog: ReactNode } {
+  const gt = useGT();
+  const m = useMessages();
   // Failures show in the dialog, so no toast as well.
   const authorize = useAtomCommand(forkExtensionsAuthorize, { reportFailure: false });
   const complete = useAtomCommand(forkExtensionsAuthorizeComplete, { reportFailure: false });
@@ -155,7 +159,10 @@ export function useForkAuthorize(options: {
             {
               key: `authorize:${target.itemId}\n${target.environmentId}:${target.agent}`,
               tone: "success",
-              title: `Authorized ${target.itemName} on ${placeLabel(target)}`,
+              title: gt("Authorized {item} on {place}", {
+                item: target.itemName,
+                place: placeLabel(target),
+              }),
               problem: null,
             },
           ]);
@@ -185,7 +192,7 @@ export function useForkAuthorize(options: {
     }
     // `done` and `failed` were handled as they came; any other end left the login unfinished.
     const last = Option.getOrNull(result.value);
-    if (last?._tag !== "failed") setStep(id, { tag: "failed", problem: LOGIN_ENDED });
+    if (last?._tag !== "failed") setStep(id, { tag: "failed", problem: loginEnded(m) });
   };
 
   const finish = async () => {
@@ -229,8 +236,16 @@ export function useForkAuthorize(options: {
       {state === null ? null : (
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Authorize {state.target.itemName}</DialogTitle>
-            <DialogDescription>On {placeLabel(state.target)}.</DialogDescription>
+            <DialogTitle>
+              <T>
+                Authorize <Var>{state.target.itemName}</Var>
+              </T>
+            </DialogTitle>
+            <DialogDescription>
+              <T>
+                On <Var>{placeLabel(state.target)}</Var>.
+              </T>
+            </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <AuthorizeStepBody
@@ -244,14 +259,16 @@ export function useForkAuthorize(options: {
             {state.step.tag === "failed" ? (
               <>
                 <Button variant="outline" onClick={close}>
-                  Close
+                  <T>Close</T>
                 </Button>
-                <Button onClick={() => void start(state.target)}>Try again</Button>
+                <Button onClick={() => void start(state.target)}>
+                  <T>Try again</T>
+                </Button>
               </>
             ) : (
               <>
                 <Button variant="outline" onClick={close}>
-                  Cancel
+                  <T>Cancel</T>
                 </Button>
                 {state.step.tag === "paste" ? (
                   <Button
@@ -259,7 +276,7 @@ export function useForkAuthorize(options: {
                     form="fork-authorize-finish"
                     disabled={state.step.finishing || address.trim() === ""}
                   >
-                    {state.step.finishing ? "Finishing…" : "Finish"}
+                    {state.step.finishing ? gt("Finishing…") : gt("Finish")}
                   </Button>
                 ) : null}
               </>
@@ -284,11 +301,14 @@ function AuthorizeStepBody({
   readonly onAddressChange: (address: string) => void;
   readonly onFinish: () => void;
 }) {
+  const gt = useGT();
   if (step.tag === "starting") {
     return (
       <p className="flex items-center gap-2 text-muted-foreground">
         <Spinner className="size-3.5" />
-        Starting the login on {target.machineLabel}…
+        <T>
+          Starting the login on <Var>{target.machineLabel}</Var>…
+        </T>
       </p>
     );
   }
@@ -303,22 +323,26 @@ function AuthorizeStepBody({
       }}
     >
       <p className="text-muted-foreground">
-        The sign-in page opened in your browser. If it didn't,{" "}
-        <button
-          type="button"
-          className="text-foreground underline underline-offset-2"
-          onClick={() => openInBrowser(step.url)}
-        >
-          open the sign-in page
-        </button>
-        .
+        <T>
+          The sign-in page opened in your browser. If it didn't,{" "}
+          <button
+            type="button"
+            className="text-foreground underline underline-offset-2"
+            onClick={() => openInBrowser(step.url)}
+          >
+            open the sign-in page
+          </button>
+          .
+        </T>
       </p>
       <p>
-        After you approve, your browser lands on a page that may not load. Copy its full address and
-        paste it here.
+        <T>
+          After you approve, your browser lands on a page that may not load. Copy its full address
+          and paste it here.
+        </T>
       </p>
       <Input
-        aria-label="Address of the page your browser landed on"
+        aria-label={gt("Address of the page your browser landed on")}
         placeholder="http://localhost:…"
         autoComplete="off"
         spellCheck={false}
@@ -331,7 +355,9 @@ function AuthorizeStepBody({
       {step.finishing ? (
         <p className="flex items-center gap-2 text-muted-foreground">
           <Spinner className="size-3.5" />
-          Finishing the login on {target.machineLabel}…
+          <T>
+            Finishing the login on <Var>{target.machineLabel}</Var>…
+          </T>
         </p>
       ) : null}
       {step.problem !== null ? <ForkProblemText problem={step.problem} /> : null}
@@ -359,7 +385,7 @@ export function ForkAuthorizeButton({
           className="self-start"
           onClick={() => openInBrowser(CLAUDE_AI_CONNECTORS_URL)}
         >
-          Authorize on claude.ai
+          <T>Authorize on claude.ai</T>
         </Button>
       );
     case "login":
@@ -370,7 +396,7 @@ export function ForkAuthorizeButton({
           className="self-start"
           onClick={() => onLogin(action.agent)}
         >
-          Authorize
+          <T>Authorize</T>
         </Button>
       );
     case "disabled":
@@ -385,7 +411,7 @@ export function ForkAuthorizeButton({
                 aria-disabled
                 aria-description={action.reason}
               >
-                Authorize
+                <T>Authorize</T>
               </Button>
             }
           />

@@ -213,11 +213,11 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     state.isNotificationsMuted
-      ? { id: "unmute-notifications", label: "Unmute notifications", icon: "bell" }
-      : { id: "mute-notifications", label: "Mute notifications", icon: "bell-off" },
+      ? { id: "unmute-notifications", label: resolve(msg("Unmute notifications")), icon: "bell" }
+      : { id: "mute-notifications", label: resolve(msg("Mute notifications")), icon: "bell-off" },
     state.isHomeThread
-      ? { id: "unset-home-thread", label: "Unset home thread", icon: "house" }
-      : { id: "set-home-thread", label: "Set as home thread", icon: "house" },
+      ? { id: "unset-home-thread", label: resolve(msg("Unset home thread")), icon: "house" }
+      : { id: "set-home-thread", label: resolve(msg("Set as home thread")), icon: "house" },
     {
       id: "rename",
       label: resolve(msg("Rename thread")),

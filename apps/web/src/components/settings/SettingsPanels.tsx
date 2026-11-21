@@ -1221,12 +1221,14 @@ export function GeneralSettingsPanel() {
         {/* Fork: the Dashboard as the start screen; Home stays one click away. */}
         <SettingsRow
           {...setting("fork-dashboard-on-start")}
-          description="Show the Dashboard instead of Home when T3 Code opens on this device. A home thread, set from a thread's menu, opens first."
+          description={gt(
+            "Show the Dashboard instead of Home when T3 Code opens on this device. A home thread, set from a thread's menu, opens first.",
+          )}
           resetAction={
             settings.forkOpenDashboardOnStart !==
             DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart ? (
               <SettingResetButton
-                ariaLabel="Reset open Dashboard on start to default"
+                ariaLabel={gt("Reset open Dashboard on start to default")}
                 onClick={() =>
                   updateSettings({
                     forkOpenDashboardOnStart: DEFAULT_UNIFIED_SETTINGS.forkOpenDashboardOnStart,
@@ -1241,18 +1243,20 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ forkOpenDashboardOnStart: Boolean(checked) })
               }
-              aria-label="Open Dashboard on start"
+              aria-label={gt("Open Dashboard on start")}
             />
           }
         />
         {/* Fork: the chart cards under a new thread's composer. */}
         <SettingsRow
           {...setting("fork-new-thread-widgets")}
-          description="Show spend, limits, usage and activity charts under the composer of a new thread on this device."
+          description={gt(
+            "Show spend, limits, usage and activity charts under the composer of a new thread on this device.",
+          )}
           resetAction={
             settings.forkNewThreadWidgets !== DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets ? (
               <SettingResetButton
-                ariaLabel="Reset charts under new threads to default"
+                ariaLabel={gt("Reset charts under new threads to default")}
                 onClick={() =>
                   updateSettings({
                     forkNewThreadWidgets: DEFAULT_UNIFIED_SETTINGS.forkNewThreadWidgets,
@@ -1267,7 +1271,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ forkNewThreadWidgets: Boolean(checked) })
               }
-              aria-label="Charts under new threads"
+              aria-label={gt("Charts under new threads")}
             />
           }
         />

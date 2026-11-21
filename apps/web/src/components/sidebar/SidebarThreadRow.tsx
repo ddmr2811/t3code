@@ -1232,14 +1232,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <span
               role="img"
-              aria-label="Notifications muted"
+              aria-label={gt("Notifications muted")}
               className="inline-flex shrink-0 items-center text-muted-foreground/65"
             />
           }
         >
           <BellOffIcon aria-hidden className="size-3" />
         </TooltipTrigger>
-        <TooltipPopup side="top">Notifications muted</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Notifications muted</T>
+        </TooltipPopup>
       </Tooltip>
     ) : null;
   const homeIndicator =
@@ -1249,14 +1251,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <span
               role="img"
-              aria-label="Home thread"
+              aria-label={gt("Home thread")}
               className="inline-flex shrink-0 items-center text-muted-foreground/65"
             />
           }
         >
           <HouseIcon aria-hidden className="size-3" />
         </TooltipTrigger>
-        <TooltipPopup side="top">Home thread: the app opens here</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Home thread: the app opens here</T>
+        </TooltipPopup>
       </Tooltip>
     ) : null;
   const showPin =

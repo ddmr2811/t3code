@@ -12,6 +12,7 @@ import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifi
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ForkDashboardLayout } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -86,7 +87,7 @@ export function DashboardMachinesEditor<T>(props: EditorProps<T>) {
           }
         >
           <PlusIcon />
-          Add section
+          <T>Add section</T>
         </Button>
       </div>
     </div>
@@ -102,6 +103,7 @@ function SectionEditor<T>(
   },
 ) {
   const { section, layout, onChange } = props;
+  const gt = useGT();
   const keys = section.machines.map((machine) => machine.key);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const handleDragEnd = (event: DragEndEvent) => {
@@ -124,7 +126,7 @@ function SectionEditor<T>(
           <Input
             key={`${section.id}:${section.name}`}
             size="sm"
-            aria-label="Section name"
+            aria-label={gt("Section name")}
             defaultValue={section.name}
             autoFocus={section.name === "New section" && section.machines.length === 0}
             onFocus={(event) => event.currentTarget.select()}
@@ -151,7 +153,7 @@ function SectionEditor<T>(
               size="icon-xs"
               variant="ghost-muted"
               disabled={props.position === 0}
-              aria-label={`Move section ${section.name} up`}
+              aria-label={gt("Move section {name} up", { name: section.name })}
               onClick={() => onChange(moveSection(layout, section.id, -1))}
             >
               <ArrowUpIcon />
@@ -161,7 +163,7 @@ function SectionEditor<T>(
               size="icon-xs"
               variant="ghost-muted"
               disabled={props.position === props.customCount - 1}
-              aria-label={`Move section ${section.name} down`}
+              aria-label={gt("Move section {name} down", { name: section.name })}
               onClick={() => onChange(moveSection(layout, section.id, 1))}
             >
               <ArrowDownIcon />
@@ -170,7 +172,7 @@ function SectionEditor<T>(
               type="button"
               size="icon-xs"
               variant="ghost-destructive"
-              aria-label={`Delete section ${section.name}`}
+              aria-label={gt("Delete section {name}", { name: section.name })}
               onClick={() => onChange(removeSection(layout, section.id))}
             >
               <Trash2Icon />
@@ -181,8 +183,8 @@ function SectionEditor<T>(
       {section.machines.length === 0 ? (
         <p className="px-3 py-3 text-muted-foreground text-xs">
           {section.custom
-            ? "Empty. Pick this section in a machine's Section menu to move it here."
-            : "No machines here."}
+            ? gt("Empty. Pick this section in a machine's Section menu to move it here.")
+            : gt("No machines here.")}
         </p>
       ) : (
         <DndContext
@@ -193,7 +195,7 @@ function SectionEditor<T>(
         >
           <SortableContext items={keys} strategy={verticalListSortingStrategy}>
             <ol
-              aria-label={`${section.name}, in order`}
+              aria-label={gt("{name}, in order", { name: section.name })}
               className="flex flex-col divide-y divide-border/60"
             >
               {section.machines.map((machine, index) => (
@@ -222,6 +224,7 @@ function MachineRow<T>(
   },
 ) {
   const { machine, layout, onChange, section } = props;
+  const gt = useGT();
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: machine.key, disabled: machine.live === null });
   const status = props.status(machine);
@@ -266,7 +269,7 @@ function MachineRow<T>(
         <Input
           key={`${machine.key}:${machine.alias ?? ""}`}
           size="sm"
-          aria-label={`Name shown for ${machine.name}`}
+          aria-label={gt("Name shown for {name}", { name: machine.name })}
           placeholder={machine.name}
           defaultValue={machine.alias ?? ""}
           onKeyDown={(event) => {
@@ -283,7 +286,7 @@ function MachineRow<T>(
         {machine.hidden ? (
           <Badge variant="outline" size="sm">
             <EyeOffIcon aria-hidden className="-ms-px size-2.5" />
-            Hidden
+            <T context="dashboard machine state">Hidden</T>
           </Badge>
         ) : null}
         <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
@@ -303,12 +306,13 @@ function MachineRow<T>(
         >
           <SelectTrigger
             size="xs"
-            aria-label={`Section of ${machine.label}`}
+            aria-label={gt("Section of {label}", { label: machine.label })}
             className="w-full min-w-0"
           >
             <SelectValue>
               {(value: string | null) =>
-                sectionChoices.find((choice) => choice.id === value)?.name ?? "Section"
+                sectionChoices.find((choice) => choice.id === value)?.name ??
+                gt("Section", { $context: "dashboard section a machine belongs to" })
               }
             </SelectValue>
           </SelectTrigger>
@@ -327,7 +331,11 @@ function MachineRow<T>(
           size="icon-xs"
           variant="ghost-muted"
           aria-pressed={machine.hidden}
-          aria-label={machine.hidden ? `Show ${machine.label}` : `Hide ${machine.label}`}
+          aria-label={
+            machine.hidden
+              ? gt("Show {label}", { label: machine.label })
+              : gt("Hide {label}", { label: machine.label })
+          }
           onClick={() => onChange(updateMachine(layout, machine, { hidden: !machine.hidden }))}
         >
           {machine.hidden ? <EyeOffIcon /> : <EyeIcon />}
@@ -337,7 +345,7 @@ function MachineRow<T>(
           size="icon-xs"
           variant="ghost-muted"
           disabled={props.index === 0 || machine.live === null}
-          aria-label={`Move ${machine.label} up`}
+          aria-label={gt("Move {label} up", { label: machine.label })}
           onClick={() => onChange(moveMachine(layout, section, machine.key, -1))}
         >
           <ArrowUpIcon />
@@ -347,7 +355,7 @@ function MachineRow<T>(
           size="icon-xs"
           variant="ghost-muted"
           disabled={props.index === props.count - 1 || machine.live === null}
-          aria-label={`Move ${machine.label} down`}
+          aria-label={gt("Move {label} down", { label: machine.label })}
           onClick={() => onChange(moveMachine(layout, section, machine.key, 1))}
         >
           <ArrowDownIcon />
@@ -357,7 +365,7 @@ function MachineRow<T>(
             type="button"
             size="icon-xs"
             variant="ghost-destructive"
-            aria-label={`Forget ${machine.label}`}
+            aria-label={gt("Forget {label}", { label: machine.label })}
             onClick={() => onChange(forgetMachine(layout, machine))}
           >
             <XIcon />
@@ -374,22 +382,23 @@ function StatusBadge<T>(props: {
   readonly machine: PlacedMachine<T>;
   readonly status: MachineStatus;
 }) {
+  const gt = useGT();
   if (props.machine.live === null) {
     return (
       <Badge variant="warning" size="sm">
-        {props.machine.ambiguous ? "Ambiguous" : "Not seen"}
+        {props.machine.ambiguous ? gt("Ambiguous") : gt("Not seen")}
       </Badge>
     );
   }
   return props.status.online ? (
     <Badge variant="success" size="sm">
       <span aria-hidden className="-ms-px size-1.5 rounded-full bg-success" />
-      Online
+      <T>Online</T>
     </Badge>
   ) : (
     <Badge variant="secondary" size="sm">
       <span aria-hidden className="-ms-px size-1.5 rounded-full bg-muted-foreground/60" />
-      Offline
+      <T>Offline</T>
     </Badge>
   );
 }

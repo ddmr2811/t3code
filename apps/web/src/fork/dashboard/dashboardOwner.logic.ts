@@ -1,6 +1,9 @@
 // Fork-only: which environment keeps the Dashboard. A client setting names it (null: the primary);
 // the layout is read from and written to that environment alone, never to another one by itself.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import { isDefaultLayout } from "./dashboardLayout.logic";
 
@@ -35,22 +38,25 @@ export type DashboardSource =
       readonly notice: string;
     };
 
-const UNKNOWN_LABEL = "The chosen server";
+const UNKNOWN_LABEL = msg("The chosen server");
 
-export function resolveDashboardSource(input: {
-  readonly owner: EnvironmentId | null;
-  readonly primaryId: EnvironmentId | null;
-  readonly candidates: ReadonlyArray<OwnerCandidate>;
-  /** The chosen environment's layout as last read on this device. */
-  readonly lastRead: ForkDashboardLayout | null;
-  readonly primaryLayout: ForkDashboardLayout;
-}): DashboardSource {
+export function resolveDashboardSource(
+  input: {
+    readonly owner: EnvironmentId | null;
+    readonly primaryId: EnvironmentId | null;
+    readonly candidates: ReadonlyArray<OwnerCandidate>;
+    /** The chosen environment's layout as last read on this device. */
+    readonly lastRead: ForkDashboardLayout | null;
+    readonly primaryLayout: ForkDashboardLayout;
+  },
+  resolve: MessageResolver = m,
+): DashboardSource {
   const { owner } = input;
   if (owner === null || owner === input.primaryId) {
     return { kind: "primary", layout: input.primaryLayout };
   }
   const candidate = input.candidates.find((entry) => entry.environmentId === owner);
-  const label = candidate?.label ?? UNKNOWN_LABEL;
+  const label = candidate?.label ?? resolve(UNKNOWN_LABEL);
   const fallback = input.lastRead ?? input.primaryLayout;
   if (candidate === undefined || !candidate.connected) {
     return {
@@ -58,7 +64,7 @@ export function resolveDashboardSource(input: {
       environmentId: owner,
       label,
       layout: fallback,
-      notice: `${label} is offline: showing the last saved layout`,
+      notice: resolve(msg("{label} is offline: showing the last saved layout", { label })),
     };
   }
   if (candidate.protocol < DASHBOARD_OWNER_PROTOCOL || candidate.layout === null) {
@@ -67,7 +73,12 @@ export function resolveDashboardSource(input: {
       environmentId: owner,
       label,
       layout: fallback,
-      notice: `Update the T3 Code server on ${label} to keep the Dashboard there: showing the last saved layout`,
+      notice: resolve(
+        msg(
+          "Update the T3 Code server on {label} to keep the Dashboard there: showing the last saved layout",
+          { label },
+        ),
+      ),
     };
   }
   return { kind: "chosen", environmentId: owner, label, layout: candidate.layout };
@@ -127,11 +138,14 @@ export interface OwnerOption {
 }
 
 /** The environments the Dashboard can move to, the primary first, plus the current owner. */
-export function ownerOptions(input: {
-  readonly candidates: ReadonlyArray<OwnerCandidate>;
-  readonly primaryId: EnvironmentId | null;
-  readonly current: EnvironmentId | null;
-}): ReadonlyArray<OwnerOption> {
+export function ownerOptions(
+  input: {
+    readonly candidates: ReadonlyArray<OwnerCandidate>;
+    readonly primaryId: EnvironmentId | null;
+    readonly current: EnvironmentId | null;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<OwnerOption> {
   const options = input.candidates
     .filter((candidate) => canKeepDashboard(candidate) || candidate.environmentId === input.current)
     .map((candidate) => ({
@@ -143,7 +157,7 @@ export function ownerOptions(input: {
   if (input.current !== null && !options.some((o) => o.environmentId === input.current)) {
     options.push({
       environmentId: input.current,
-      label: UNKNOWN_LABEL,
+      label: resolve(UNKNOWN_LABEL),
       primary: input.current === input.primaryId,
       disabled: true,
     });
@@ -152,10 +166,15 @@ export function ownerOptions(input: {
 }
 
 /** Asked before a write replaces a layout someone arranged; null when it holds the defaults. */
-const replaceConfirm = (label: string, layout: ForkDashboardLayout) =>
+const replaceConfirm = (label: string, layout: ForkDashboardLayout, resolve: MessageResolver) =>
   isDefaultLayout(layout)
     ? null
-    : `Replace the dashboard saved on ${label}?\nIts aliases, icons, colours, sections, order and hidden items are replaced by this layout on every client that uses it.`;
+    : resolve(
+        msg(
+          "Replace the dashboard saved on {label}?\nIts aliases, icons, colours, sections, order and hidden items are replaced by this layout on every client that uses it.",
+          { label },
+        ),
+      );
 
 export type OwnerSwitchChoice = "copy" | "use";
 
@@ -174,13 +193,16 @@ export interface OwnerSwitch {
   readonly next: ForkDashboardLayout;
 }
 
-export function planOwnerSwitch(input: {
-  readonly choice: OwnerSwitchChoice;
-  readonly target: OwnerCandidate;
-  readonly primaryId: EnvironmentId | null;
-  /** The layout on screen, which "copy" takes there. */
-  readonly layout: ForkDashboardLayout;
-}): OwnerSwitch | null {
+export function planOwnerSwitch(
+  input: {
+    readonly choice: OwnerSwitchChoice;
+    readonly target: OwnerCandidate;
+    readonly primaryId: EnvironmentId | null;
+    /** The layout on screen, which "copy" takes there. */
+    readonly layout: ForkDashboardLayout;
+  },
+  resolve: MessageResolver = m,
+): OwnerSwitch | null {
   const { target } = input;
   if (!canKeepDashboard(target) || target.layout === null) return null;
   const owner = target.environmentId === input.primaryId ? null : target.environmentId;
@@ -190,7 +212,7 @@ export function planOwnerSwitch(input: {
   return {
     owner,
     write: { environmentId: target.environmentId, layout: input.layout, base: target.layout },
-    confirm: replaceConfirm(target.label, target.layout),
+    confirm: replaceConfirm(target.label, target.layout, resolve),
     next: { ...input.layout, revision: target.layout.revision + 1 },
   };
 }
@@ -228,14 +250,20 @@ export function planDraft(
     readonly label: string;
     readonly layout: ForkDashboardLayout;
   },
+  resolve: MessageResolver = m,
 ): DraftPlan {
   if (draft.ownerId === current.ownerId) return { kind: "save", base: draft.base };
   if (!draftHasChanges(draft)) return { kind: "close" };
   return {
     kind: "moved",
-    notice: `The dashboard is now saved on ${current.label}; your edits were made for ${draft.ownerLabel}`,
-    copyLabel: `Copy my edits to ${current.label}`,
-    copyConfirm: replaceConfirm(current.label, current.layout),
+    notice: resolve(
+      msg("The dashboard is now saved on {label}; your edits were made for {ownerLabel}", {
+        label: current.label,
+        ownerLabel: draft.ownerLabel,
+      }),
+    ),
+    copyLabel: resolve(msg("Copy my edits to {label}", { label: current.label })),
+    copyConfirm: replaceConfirm(current.label, current.layout, resolve),
     copyBase: current.layout,
   };
 }

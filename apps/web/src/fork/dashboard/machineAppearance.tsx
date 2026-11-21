@@ -14,6 +14,7 @@ import {
   TabletIcon,
   TvIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
@@ -68,31 +69,32 @@ const SWATCH: Record<MachineColor, string> = {
   pink: "bg-pink-500",
 };
 
-const ICON_NAMES: Record<MachineIcon, string> = {
-  monitor: "Monitor",
-  laptop: "Laptop",
-  server: "Server",
-  cloud: "Cloud",
-  database: "Database",
-  cpu: "Chip",
-  router: "Router",
-  smartphone: "Phone",
-  tablet: "Tablet",
-  tv: "TV",
-  gamepad: "Console",
-  house: "Home",
+/** Each icon's toggle, named in full. */
+const ICON_LABELS: Record<MachineIcon, string> = {
+  monitor: msg("Monitor icon"),
+  laptop: msg("Laptop icon"),
+  server: msg("Server icon"),
+  cloud: msg("Cloud icon"),
+  database: msg("Database icon"),
+  cpu: msg("Chip icon"),
+  router: msg("Router icon"),
+  smartphone: msg("Phone icon"),
+  tablet: msg("Tablet icon"),
+  tv: msg("TV icon"),
+  gamepad: msg("Console icon"),
+  house: msg("Home icon"),
 };
 const COLOR_NAMES: Record<MachineColor, string> = {
-  red: "Red",
-  orange: "Orange",
-  amber: "Amber",
-  lime: "Lime",
-  emerald: "Green",
-  teal: "Teal",
-  sky: "Sky",
-  blue: "Blue",
-  violet: "Violet",
-  pink: "Pink",
+  red: msg("Red", { $context: "colour name" }),
+  orange: msg("Orange", { $context: "colour name" }),
+  amber: msg("Amber", { $context: "colour name" }),
+  lime: msg("Lime", { $context: "colour name" }),
+  emerald: msg("Green", { $context: "colour name" }),
+  teal: msg("Teal", { $context: "colour name" }),
+  sky: msg("Sky", { $context: "colour name" }),
+  blue: msg("Blue", { $context: "colour name" }),
+  violet: msg("Violet", { $context: "colour name" }),
+  pink: msg("Pink", { $context: "colour name" }),
 };
 
 const DEFAULT_ICON: Record<MachineKind, MachineIcon> = {
@@ -128,28 +130,24 @@ export function AppearancePicker(props: {
   readonly color: MachineColor | null;
   readonly onChange: (next: { icon?: MachineIcon | null; color?: MachineColor | null }) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
+  const appearanceLabel = gt("Icon and colour of {label}", { label: props.label });
   return (
     <Popover>
       <PopoverTrigger
         render={
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-xs"
-            aria-label={`Icon and colour of ${props.label}`}
-          />
+          <Button type="button" variant="outline" size="icon-xs" aria-label={appearanceLabel} />
         }
       >
         <MachineGlyph icon={props.icon} color={props.color} kind={props.kind} always />
       </PopoverTrigger>
-      <PopoverPopup
-        align="start"
-        padding="compact"
-        aria-label={`Icon and colour of ${props.label}`}
-      >
+      <PopoverPopup align="start" padding="compact" aria-label={appearanceLabel}>
         <div className="flex w-56 flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <span className="text-2xs font-medium text-muted-foreground">Icon</span>
+            <span className="text-2xs font-medium text-muted-foreground">
+              <T>Icon</T>
+            </span>
             <div className="grid grid-cols-6 gap-1">
               {MACHINE_ICONS.map((icon) => {
                 const Icon = MACHINE_ICON_COMPONENTS[icon];
@@ -158,7 +156,7 @@ export function AppearancePicker(props: {
                     key={icon}
                     size="xs"
                     variant="ghost"
-                    aria-label={`${ICON_NAMES[icon]} icon`}
+                    aria-label={m(ICON_LABELS[icon])}
                     pressed={props.icon === icon}
                     onPressedChange={(pressed) => props.onChange({ icon: pressed ? icon : null })}
                   >
@@ -169,11 +167,13 @@ export function AppearancePicker(props: {
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="text-2xs font-medium text-muted-foreground">Colour</span>
+            <span className="text-2xs font-medium text-muted-foreground">
+              <T>Colour</T>
+            </span>
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
-                aria-label="No colour"
+                aria-label={gt("No colour")}
                 aria-pressed={props.color === null}
                 onClick={() => props.onChange({ color: null })}
                 className={cn(
@@ -185,7 +185,7 @@ export function AppearancePicker(props: {
                 <button
                   key={color}
                   type="button"
-                  aria-label={COLOR_NAMES[color]}
+                  aria-label={m(COLOR_NAMES[color])}
                   aria-pressed={props.color === color}
                   onClick={() => props.onChange({ color })}
                   className={cn(
