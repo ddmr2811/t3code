@@ -4,6 +4,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isListedThreadLineage, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { cn } from "~/lib/utils";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
@@ -11,15 +12,15 @@ import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar
 const MAX_LISTED_CHILDREN = 8;
 
 const STATUS_LABEL: Record<SidebarThreadStatus, string> = {
-  approval: "Approval",
-  input: "Input",
-  request: "Request",
-  preparing: "Starting",
-  working: "Working",
-  waiting: "Waiting",
-  failed: "Failed",
-  limited: "Limited",
-  ready: "Done",
+  approval: msg("Approval", { $context: "subagent status: waiting for approval" }),
+  input: msg("Input", { $context: "subagent status: waiting for user input" }),
+  request: msg("Request", { $context: "subagent status: has a pending request" }),
+  preparing: msg("Starting", { $context: "subagent status" }),
+  working: msg("Working", { $context: "subagent status" }),
+  waiting: msg("Waiting", { $context: "subagent status" }),
+  failed: msg("Failed", { $context: "subagent status" }),
+  limited: msg("Limited", { $context: "subagent status: hit a usage limit" }),
+  ready: msg("Done", { $context: "subagent status" }),
 };
 
 const STATUS_DOT: Record<SidebarThreadStatus, string> = {
@@ -84,6 +85,8 @@ export function ForkThreadChildren(props: {
   readonly activeThreadKey: string | null;
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const listed = props.threads.slice(0, MAX_LISTED_CHILDREN);
   const hidden = props.threads.length - listed.length;
   return (
@@ -112,14 +115,16 @@ export function ForkThreadChildren(props: {
                   )}
                 />
                 <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-                <span className="shrink-0 text-2xs opacity-80">{STATUS_LABEL[status]}</span>
+                <span className="shrink-0 text-2xs opacity-80">
+                  {resolve(STATUS_LABEL[status])}
+                </span>
               </button>
             </li>
           );
         })}
         {hidden > 0 ? (
           <li className="list-none px-1.5 text-2xs text-sidebar-muted-foreground/70">
-            +{hidden} more
+            {gt("+{count} more", { count: hidden })}
           </li>
         ) : null}
       </ul>

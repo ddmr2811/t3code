@@ -12,7 +12,7 @@ import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifi
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ForkDashboardLayout } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -42,6 +42,7 @@ import {
   moveMachine,
   moveMachineToSection,
   moveSection,
+  NEW_SECTION_NAME,
   nextSectionId,
   type PlacedMachine,
   type PlacedSection,
@@ -83,7 +84,7 @@ export function DashboardMachinesEditor<T>(props: EditorProps<T>) {
           variant="outline"
           size="sm"
           onClick={() =>
-            props.onChange(addSection(props.layout, nextSectionId(props.layout), "New section"))
+            props.onChange(addSection(props.layout, nextSectionId(props.layout), NEW_SECTION_NAME))
           }
         >
           <PlusIcon />
@@ -128,14 +129,19 @@ function SectionEditor<T>(
             size="sm"
             aria-label={gt("Section name")}
             defaultValue={section.name}
-            autoFocus={section.name === "New section" && section.machines.length === 0}
+            autoFocus={
+              layout.sections.find((entry) => entry.id === section.id)?.name === NEW_SECTION_NAME &&
+              section.machines.length === 0
+            }
             onFocus={(event) => event.currentTarget.select()}
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
             }}
-            onBlur={(event) =>
-              onChange(renameSection(layout, section.id, event.currentTarget.value))
-            }
+            onBlur={(event) => {
+              // An untouched translated default keeps its saved English name.
+              if (event.currentTarget.value.trim() === section.name) return;
+              onChange(renameSection(layout, section.id, event.currentTarget.value));
+            }}
             className="max-w-64"
           />
         ) : (
@@ -225,6 +231,7 @@ function MachineRow<T>(
 ) {
   const { machine, layout, onChange, section } = props;
   const gt = useGT();
+  const m = useMessages();
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: machine.key, disabled: machine.live === null });
   const status = props.status(machine);
@@ -232,7 +239,7 @@ function MachineRow<T>(
   const sectionChoices = [
     {
       id: machine.defaultSection,
-      name: BUILT_IN_SECTIONS[machine.defaultSection as keyof typeof BUILT_IN_SECTIONS],
+      name: m(BUILT_IN_SECTIONS[machine.defaultSection as keyof typeof BUILT_IN_SECTIONS]),
     },
     ...props.sections
       .filter((entry) => entry.custom)

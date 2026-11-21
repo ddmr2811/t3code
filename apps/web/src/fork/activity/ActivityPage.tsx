@@ -157,11 +157,21 @@ export function ActivityPage() {
                 gt("{count, plural, one {{count} entry} other {{count} entries}}", {
                   count: rows.length,
                 }),
-                counts.errors > 0 ? gt("{count} failed", { count: counts.errors }) : null,
+                counts.errors > 0
+                  ? gt("{count, plural, one {{count} failed} other {{count} failed}}", {
+                      count: counts.errors,
+                      $context: "activity entries that failed",
+                    })
+                  : null,
                 counts.waiting > 0 ? gt("{count} waiting on you", { count: counts.waiting }) : null,
                 counts.running > 0 ? gt("{count} running", { count: counts.running }) : null,
                 pending > 0 ? gt("reading {count} more", { count: pending }) : null,
-                failed > 0 ? gt("{count} could not be read", { count: failed }) : null,
+                failed > 0
+                  ? gt(
+                      "{count, plural, one {{count} could not be read} other {{count} could not be read}}",
+                      { count: failed, $context: "machines whose activity feed could not be read" },
+                    )
+                  : null,
               ]
                 .filter((part) => part !== null)
                 .join(" · ")}

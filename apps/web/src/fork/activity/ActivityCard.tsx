@@ -50,7 +50,12 @@ export function ActivityCard({ nowMs }: { readonly nowMs: number }) {
             rows: rows.length,
             count: machines.length,
           }),
-          counts.errors > 0 ? gt("{count} failed", { count: counts.errors }) : null,
+          counts.errors > 0
+            ? gt("{count, plural, one {{count} failed} other {{count} failed}}", {
+                count: counts.errors,
+                $context: "activity entries that failed",
+              })
+            : null,
           counts.waiting > 0 ? gt("{count} waiting on you", { count: counts.waiting }) : null,
         ]
           .filter((part) => part !== null)

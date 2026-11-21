@@ -268,6 +268,14 @@ const fullAccessLinkedClient: McpInvocationContext.McpInvocationScope = {
   ...fullAccessClient,
   client: { ...fullAccessClient.client!, linked: true },
 };
+// A call forwarded from a linked environment: a full-access link that carries the caller's lower limit.
+const narrowedLinkedClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessLinkedClient,
+  client: {
+    ...fullAccessLinkedClient.client!,
+    narrowedTo: { runtimeMode: "approval-required", interactionMode: "default" },
+  },
+};
 const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
 
 it.effect.each([
@@ -320,6 +328,7 @@ it.effect.each([
   ["writes_outside", fullAccessClient, {}, "ran"],
   ["writes_outside", linkedClient, {}, "capability_denied"],
   ["writes_outside", fullAccessLinkedClient, {}, "ran"],
+  ["writes_outside", narrowedLinkedClient, {}, "capability_denied"],
 
   ["writes_threads", supervised, {}, "ran"],
   ["writes_threads", supervised, { threadId: planThreadId }, "ran"],
