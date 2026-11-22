@@ -564,8 +564,7 @@ describe("CLIProxyAPI built-in management API", () => {
         header: {
           Authorization: "Bearer $TOKEN$",
           "Content-Type": "application/json",
-          "User-Agent":
-            "antigravity/hub/2.24.0 (aidev_client; os_type=linux; arch=x64; cl=963137146)",
+          "User-Agent": expect.stringMatching(/^t3code\/\S+ \(antigravity-usage\)$/),
         },
       });
       const identityCalls = test.requests.filter((request) =>

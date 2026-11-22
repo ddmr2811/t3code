@@ -120,7 +120,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         );
       }
       expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
-      expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
+      // T3 Code names itself; it must not pass for Google's own client.
+      expect(request.headers["user-agent"]).toMatch(/^t3code\/\S+ \(antigravity-usage\)$/);
       return HttpClientResponse.fromWeb(
         request,
         request.url.endsWith(":retrieveUserQuotaSummary")

@@ -218,8 +218,9 @@ describe("Grok permission prompts", () => {
   ).permissionDisposition;
 
   it("leaves Auto prompts to the user unless an explicit policy launched Grok asking", () => {
+    const threadId = ThreadId.make("grok-permission-test");
     assert.equal(
-      disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read")),
+      disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read"), threadId),
       "ask",
     );
     const readOnly = runtimePolicy({
@@ -227,9 +228,13 @@ describe("Grok permission prompts", () => {
       approvalPolicy: "never",
       sandboxPolicy: { type: "readOnly" },
     });
-    assert.equal(disposition?.(readOnly, permissionRequest("execute")), "deny");
+    assert.equal(disposition?.(readOnly, permissionRequest("execute"), threadId), "deny");
     assert.equal(
-      disposition?.(runtimePolicy({ runtimeMode: "approval-required" }), permissionRequest("edit")),
+      disposition?.(
+        runtimePolicy({ runtimeMode: "approval-required" }),
+        permissionRequest("edit"),
+        threadId,
+      ),
       "ask",
     );
   });

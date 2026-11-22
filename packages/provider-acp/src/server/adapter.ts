@@ -524,6 +524,7 @@ export interface AcpAdapterV2Flavor {
   readonly permissionDisposition?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
+    threadId: ThreadId,
   ) => AcpPermissionDisposition;
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -7351,7 +7352,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
-              ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              ) =>
+                flavor.permissionDisposition === undefined
+                  ? acpPermissionDisposition(policy, request)
+                  : flavor.permissionDisposition(policy, request, input.threadId);
               if (
                 (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)

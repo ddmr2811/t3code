@@ -184,6 +184,13 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     "Custom ACP executable. Leave empty to select automatically.",
     msg("Custom ACP executable. Leave empty to select automatically."),
   ],
+  ["Sandbox", msg("Sandbox", { $context: "settings field, isolates the agent's process" })],
+  [
+    "On Linux, hides T3 Code's data and other threads' conversations from the agent. Needs bubblewrap.",
+    msg(
+      "On Linux, hides T3 Code's data and other threads' conversations from the agent. Needs bubblewrap.",
+    ),
+  ],
   [
     "Agent identifier from the official ACP Registry, for example 'devin'.",
     msg("Agent identifier from the official ACP Registry, for example 'devin'."),

@@ -9743,6 +9743,8 @@
   "8bf0f6ed8dd4b77e": "Requis pour Gemini Enterprise. Agent Platform l’utilise quand aucune clé d’API n’est définie.",
   "7c735c8fbd3fb6e3": "Région pour Gemini Enterprise ou Agent Platform.",
   "68429f58a5a70d33": "Exécutable ACP personnalisé. Laissez vide pour une sélection automatique.",
+  "eec8dcafdb998393": "Bac à sable",
+  "77af591e8ca026fa": "Sous Linux, masque à l'agent les données de T3 Code et les conversations des autres fils. Nécessite bubblewrap.",
   "0b0db4db3038102c": "Identifiant de l’agent dans le registre ACP officiel, par exemple « devin ».",
   "c731cf717a637a89": "Exécutable sur cet environnement. Pour les agents du registre, il remplace l’exécutable de la distribution tout en conservant ses arguments et son environnement.",
   "bd02885a1d63c1a1": "ID facultatif de la méthode d’authentification ACP. Par défaut, la première méthode gérée par l’agent est sélectionnée.",

@@ -98,9 +98,10 @@ function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
   }
 }
 
-function acpWorkspaceWriteAllowsMutation(
+/** True only when every location resolves inside the workspace or one of `extraRoots`. */
+function acpLocationsStayWithinRoots(
   runtimePolicy: AcpRuntimePolicy,
-  sandboxPolicy: Record<string, unknown>,
+  extraRoots: ReadonlyArray<unknown>,
   locations: AcpPolicyOperation["locations"],
 ): boolean {
   const cwd =
@@ -112,13 +113,9 @@ function acpWorkspaceWriteAllowsMutation(
     const canonicalCwd = acpCanonicalPathForContainment(cwd);
     if (canonicalCwd !== undefined) roots.push(canonicalCwd);
   }
-  const writableRoots = [
-    ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
-    ...(runtimePolicy.workspace?.extraRoots ?? []),
-  ];
-  for (const writableRoot of writableRoots) {
-    if (typeof writableRoot !== "string") continue;
-    const resolved = resolveAcpPermissionPath(writableRoot, cwd);
+  for (const root of [...extraRoots, ...(runtimePolicy.workspace?.extraRoots ?? [])]) {
+    if (typeof root !== "string") continue;
+    const resolved = resolveAcpPermissionPath(root, cwd);
     if (resolved === undefined) continue;
     const canonicalRoot = acpCanonicalPathForContainment(resolved);
     if (canonicalRoot !== undefined) roots.push(canonicalRoot);
@@ -140,6 +137,34 @@ function acpWorkspaceWriteAllowsMutation(
     }
   }
   return true;
+}
+
+function acpWorkspaceWriteAllowsMutation(
+  runtimePolicy: AcpRuntimePolicy,
+  sandboxPolicy: Record<string, unknown>,
+  locations: AcpPolicyOperation["locations"],
+): boolean {
+  return acpLocationsStayWithinRoots(
+    runtimePolicy,
+    Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : [],
+    locations,
+  );
+}
+
+/**
+ * A file read or search the request does not place inside the workspace or `readRoots`. One that
+ * names no location counts: nothing shows it stays inside.
+ */
+export function acpReadLeavesRoots(
+  runtimePolicy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+  readRoots: ReadonlyArray<string>,
+): boolean {
+  const kind = request.toolCall.kind;
+  return (
+    (kind === "read" || kind === "search") &&
+    !acpLocationsStayWithinRoots(runtimePolicy, readRoots, request.toolCall.locations)
+  );
 }
 
 function acpOperationDisposition(

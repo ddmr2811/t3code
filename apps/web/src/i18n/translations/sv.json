@@ -9749,6 +9749,8 @@
   "8bf0f6ed8dd4b77e": "Krävs för Gemini Enterprise. Agent Platform använder den när ingen API-nyckel är angiven.",
   "7c735c8fbd3fb6e3": "Region för Gemini Enterprise eller Agent Platform.",
   "68429f58a5a70d33": "Anpassad ACP-körbar fil. Lämna tomt för att välja automatiskt.",
+  "eec8dcafdb998393": "Sandlåda",
+  "77af591e8ca026fa": "På Linux döljs T3 Codes data och andra trådars konversationer för agenten. Kräver bubblewrap.",
   "0b0db4db3038102c": "Agent-ID från det officiella ACP-registret, till exempel 'devin'.",
   "c731cf717a637a89": "Körbar fil i den här miljön. För agenter från registret åsidosätter den distributionens körbara fil men behåller dess argument och miljö.",
   "bd02885a1d63c1a1": "Valfritt ID för ACP-autentiseringsmetod. Som standard väljs den första metoden som agenten hanterar.",

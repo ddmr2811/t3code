@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import { readAntigravityChildWork } from "../provider/acp/AntigravityChildWork.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import { antigravitySessionProfileDirectory } from "../provider/antigravitySandbox.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 /** Reads what a provider-native subagent's children did, on demand. Other providers stream real child sessions. */
@@ -97,8 +98,15 @@ const make = Effect.gen(function* () {
         stateDir,
         subagent.providerInstanceId,
       ).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
+      const profileDirectory = yield* Effect.promise(() =>
+        antigravitySessionProfileDirectory({
+          instanceProfile: directories.profile,
+          threadId: parentThreadId,
+          sessionId: rootSessionId,
+        }),
+      );
       const children = yield* readAntigravityChildWork({
-        profileDirectory: directories.profile,
+        profileDirectory,
         rootSessionId,
         nativeTaskId,
         launch: { title: subagent.title, prompt: subagent.prompt },

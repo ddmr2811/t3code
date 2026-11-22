@@ -25,6 +25,7 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   acpPermissionDisposition,
+  acpReadLeavesRoots,
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
@@ -184,8 +185,19 @@ export function antigravitySessionMode(
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
+  /** Folders outside the workspace this thread may read: its own attachment folder. */
+  readRoots: ReadonlyArray<string> = [],
 ) {
   const disposition = acpPermissionDisposition(policy, request);
+  // The shared ACP policy approves every read. Outside the thread's folders the user decides,
+  // except in full access, where the sandbox is what limits the agent.
+  if (
+    disposition === "allow" &&
+    policy.runtimeMode !== "full-access" &&
+    acpReadLeavesRoots(policy, request, readRoots)
+  ) {
+    return "ask";
+  }
   // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
   return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
 }

@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
+import { antigravityProfileDataDirectories } from "../antigravitySandbox.ts";
 import {
   antigravityRateModel,
   makeAntigravityUsageCache,
@@ -84,7 +85,10 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      roots.push(path.join(directories.profile, "antigravity-acp"));
+      // Sandboxed threads keep their conversations in their own profile under the instance's.
+      roots.push(
+        ...(yield* Effect.promise(() => antigravityProfileDataDirectories(directories.profile))),
+      );
     }
     const conversationDirs = new Set<string>();
     for (const root of roots) {

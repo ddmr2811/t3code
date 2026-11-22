@@ -9760,6 +9760,8 @@
   "8bf0f6ed8dd4b77e": "Gemini Enterprise 必填。未设置 API 密钥时，Agent Platform 使用此项目。",
   "7c735c8fbd3fb6e3": "Gemini Enterprise 或 Agent Platform 使用的区域。",
   "68429f58a5a70d33": "自定义 ACP 可执行文件。留空则自动选择。",
+  "eec8dcafdb998393": "沙盒",
+  "77af591e8ca026fa": "在 Linux 上，对智能体隐藏 T3 Code 的数据和其他线程的对话。需要 bubblewrap。",
   "0b0db4db3038102c": "官方 ACP Registry 中的智能体标识，例如“devin”。",
   "c731cf717a637a89": "此环境中的可执行文件。用于注册表智能体时，会覆盖分发的可执行文件，并保留其参数和环境。",
   "bd02885a1d63c1a1": "可选的 ACP 认证方式 ID。默认选择第一个由智能体管理的方式。",

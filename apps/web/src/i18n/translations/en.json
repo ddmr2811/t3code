@@ -9751,6 +9751,8 @@
   "8bf0f6ed8dd4b77e": "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",
   "7c735c8fbd3fb6e3": "Region for Gemini Enterprise or Agent Platform.",
   "68429f58a5a70d33": "Custom ACP executable. Leave empty to select automatically.",
+  "eec8dcafdb998393": "Sandbox",
+  "77af591e8ca026fa": "On Linux, hides T3 Code's data and other threads' conversations from the agent. Needs bubblewrap.",
   "0b0db4db3038102c": "Agent identifier from the official ACP Registry, for example 'devin'.",
   "c731cf717a637a89": "Executable on this environment. For registry agents, this overrides the distribution executable while keeping its arguments and environment.",
   "bd02885a1d63c1a1": "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",

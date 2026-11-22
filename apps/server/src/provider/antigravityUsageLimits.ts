@@ -16,9 +16,11 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import packageJson from "../../package.json" with { type: "json" };
 
-export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
-  return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
+/** T3 Code names itself; it never presents itself as Google's own client. */
+export function antigravityUserAgent() {
+  return `t3code/${packageJson.version} (antigravity-usage)`;
 }
 
 const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
@@ -450,7 +452,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
                 HttpClientRequest.setHeaders({
                   Authorization: `Bearer ${accessToken}`,
-                  "User-Agent": antigravityUserAgent(platform, architecture),
+                  "User-Agent": antigravityUserAgent(),
                 }),
                 HttpClientRequest.bodyJsonUnsafe(projectId ? { project: projectId } : {}),
               ),
@@ -477,7 +479,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
-        message: "Antigravity did not return usable quota information.",
+        message:
+          "Google returned no quota to T3 Code. T3 Code identifies itself as T3 Code, and Google may serve Antigravity limits only to its own apps.",
       });
     }
     return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };

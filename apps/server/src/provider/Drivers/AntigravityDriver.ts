@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderSetupError,
   settingsSecretLiteral,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -21,6 +22,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -46,6 +48,15 @@ import {
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
+import {
+  ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+  antigravityProcessSandboxSpec,
+  antigravitySandboxMasks,
+  antigravityThreadProfileDirectory,
+  findUsableBubblewrap,
+  linkAntigravityThreadCredentials,
+  sandboxAntigravitySpawn,
+} from "../antigravitySandbox.ts";
 import {
   antigravityModelOptions,
   antigravitySessionMode,
@@ -89,6 +100,10 @@ const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
+
+/** What a turn fails with when every session slot is taken; a delegating agent reads this text. */
+const antigravitySessionLimitMessage = (limit: number) =>
+  `Antigravity is already running ${limit} ${limit === 1 ? "session" : "sessions"}, the limit for this provider instance. Wait for one to finish or stop one, then retry; maxSessionProcesses in the Antigravity provider settings raises the limit.`;
 
 // Keep upstream diagnostics in cause; only recognized, fixed text reaches clients.
 function refreshFailureDetail(cause: unknown) {
@@ -156,11 +171,9 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
-    const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
-      processEnvironment,
-      yield* HostProcess.HomeDirectory,
-    );
+    const hostPlatform = yield* HostProcess.Platform;
+    const hostHome = yield* HostProcess.HomeDirectory;
+    const userHome = resolveAntigravityUserHome(hostPlatform, processEnvironment, hostHome);
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
       instanceId,
@@ -204,9 +217,45 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
+    // Only Linux has the mount namespace the sandbox is made of.
+    const sandboxed = settings.sandbox && hostPlatform === "linux";
+    if (settings.sandbox && !sandboxed) {
+      yield* Effect.logWarning(
+        "Antigravity runs without a sandbox on this platform: its tools can read every file this user can.",
+        { instanceId },
+      );
+    }
+    const threadProfile = (threadId: ThreadId) =>
+      antigravityThreadProfileDirectory(profileDirectory, threadId);
+    const sandboxFailed = (cause?: unknown) =>
+      new ProviderSetupError({
+        instanceId,
+        operation: "start",
+        detail: ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+        cause,
+      });
+    let bubblewrapPath: string | undefined;
+    const requireBubblewrap = Effect.gen(function* () {
+      if (bubblewrapPath !== undefined) return bubblewrapPath;
+      const found = yield* findUsableBubblewrap().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      if (found === undefined) return yield* sandboxFailed();
+      bubblewrapPath = found;
+      return found;
+    });
+    const sandboxMasks = antigravitySandboxMasks({
+      baseDir: host.paths.baseDir,
+      stateDir: host.paths.stateDir,
+      homeDirectory: hostHome,
+      uid: process.getuid?.(),
+      runtimeDirectory: processEnvironment.XDG_RUNTIME_DIR,
+    });
+
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      thread?: AntigravityAdapterV2RuntimeInput["thread"],
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -233,8 +282,14 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const bubblewrap = sandboxed ? yield* requireBubblewrap : undefined;
+      // Without the sandbox nothing keeps one thread's process out of another's profile.
+      const sessionProfile =
+        thread !== undefined && bubblewrap !== undefined
+          ? threadProfile(thread.id)
+          : profileDirectory;
       const profile = yield* prepareAntigravityProfile({
-        profileDirectory,
+        profileDirectory: sessionProfile,
         baseEnv: processEnvironment,
         auth,
         userHome,
@@ -278,18 +333,73 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
-      return {
-        executable,
-        spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
-          profile,
-          cwd,
-          baseEnv,
-          auth,
-          runtimeTempDirectory,
-        }),
-      };
+      const spawn = buildAntigravityAcpSpawnInput({
+        installation: executable,
+        profile,
+        cwd,
+        baseEnv,
+        auth,
+        runtimeTempDirectory,
+      });
+      if (bubblewrap === undefined) return { executable, spawn };
+      const sandboxedSpawn = yield* Effect.tryPromise({
+        try: async () =>
+          sandboxAntigravitySpawn({
+            bubblewrapPath: bubblewrap,
+            spawn,
+            spec: antigravityProcessSandboxSpec({
+              masks: sandboxMasks,
+              executablePath: executable.executablePath,
+              instanceProfile: profileDirectory,
+              profile: sessionProfile,
+              runtimeTempDirectory,
+              thread:
+                thread === undefined
+                  ? undefined
+                  : {
+                      extraRoots: thread.extraRoots,
+                      attachmentsFolder: thread.attachmentsFolder,
+                      sharedCredentials: await linkAntigravityThreadCredentials({
+                        instanceProfile: profileDirectory,
+                        threadProfile: sessionProfile,
+                      }),
+                    },
+            }),
+          }),
+        catch: sandboxFailed,
+      });
+      return { executable, spawn: sandboxedSpawn };
     });
+
+    const sessionThreads = new Map<string, number>();
+    const helperProcesses = yield* Semaphore.make(1);
+    // A thread's session holds a slot while its process lives. Helpers (model refresh, titles,
+    // sign-in) take turns on one slot of their own, so they never add more than one process.
+    const takeProcessSlot = (thread: AntigravityAdapterV2RuntimeInput["thread"]) =>
+      thread === undefined
+        ? Effect.acquireRelease(helperProcesses.take(1), () => helperProcesses.release(1))
+        : Effect.acquireRelease(
+            Effect.suspend(() => {
+              const held = sessionThreads.get(thread.id) ?? 0;
+              if (held === 0 && sessionThreads.size >= settings.maxSessionProcesses) {
+                return Effect.fail(
+                  new ProviderSetupError({
+                    instanceId,
+                    operation: "start",
+                    detail: antigravitySessionLimitMessage(settings.maxSessionProcesses),
+                  }),
+                );
+              }
+              sessionThreads.set(thread.id, held + 1);
+              return Effect.void;
+            }),
+            () =>
+              Effect.sync(() => {
+                const held = (sessionThreads.get(thread.id) ?? 1) - 1;
+                if (held === 0) sessionThreads.delete(thread.id);
+                else sessionThreads.set(thread.id, held);
+              }),
+          );
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: AntigravityAdapterV2RuntimeInput,
@@ -300,12 +410,14 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, thread, ...runtimeInput } = input;
+      yield* takeProcessSlot(thread);
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        thread,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -417,6 +529,7 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
+      yield* takeProcessSlot(undefined);
       const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
@@ -601,6 +714,7 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
+      ...(sandboxed ? { threadProfileDirectory: threadProfile } : {}),
       onSessionStarted: (started, cwd) =>
         provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {

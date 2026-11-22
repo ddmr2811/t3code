@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -225,7 +228,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     instanceId,
     displayName: "Google test account",
     enabled: options.enabled ?? true,
-    config: { ...AntigravityDriver.defaultConfig(), ...options.config },
+    // The stand-in agent is a script in this checkout, which the sandbox hides unless a test
+    // names the checkout as a workspace folder. Tests that open several sessions are not about
+    // the session limit.
+    config: {
+      ...AntigravityDriver.defaultConfig(),
+      sandbox: false,
+      maxSessionProcesses: 16,
+      ...options.config,
+    },
     environment: [
       { name: "PATH", value: instancePath },
       { name: "T3_ACP_ANTIGRAVITY", value: "1" },
@@ -277,7 +288,37 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     launches,
     readRequests,
     assertClosed,
+    root,
+    nodePath,
+    mockAgentPath,
   };
+});
+
+const sandboxHost =
+  hostPlatform === "linux" && NodeFS.existsSync("/usr/bin/bwrap") && process.getuid !== undefined;
+
+const openThreadSession = Effect.fn("AntigravityDriverTest.openThreadSession")(function* (
+  h: Effect.Success<ReturnType<typeof makeHarness>>,
+  name: string,
+  extraRoots: ReadonlyArray<string> = [],
+) {
+  const threadId = ThreadId.make(`thread-antigravity-${name}`);
+  const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: `t3-ag-${name}-` });
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: workspace,
+    workspace: { folders: [], extraRoots: [...extraRoots] },
+  });
+  const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+  const session = yield* h.instance.orchestrationAdapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`provider-session-antigravity-${name}`),
+    modelSelection,
+    runtimePolicy,
+  });
+  yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+  return { threadId, workspace };
 });
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
@@ -532,6 +573,94 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           T3_ACP_MCP_ENTRYPOINT: "/ambient/entrypoint.mjs",
         });
         yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "fails a session past the limit with a clear error and frees the slot when one closes",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ config: { maxSessionProcesses: 2 } });
+        const limit =
+          "Antigravity is already running 2 sessions, the limit for this provider instance. Wait for one to finish or stop one, then retry; maxSessionProcesses in the Antigravity provider settings raises the limit.";
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* openThreadSession(h, "limit-one");
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                yield* openThreadSession(h, "limit-two");
+                const refused = yield* Effect.scoped(openThreadSession(h, "limit-three")).pipe(
+                  Effect.flip,
+                );
+                expect(knownProviderFailureMessage(refused)).toBe(limit);
+                // The refused session never started a process.
+                expect(
+                  h.launches.filter((launch) => launch.command === h.first.executablePath),
+                ).toHaveLength(2);
+                // A helper is not a session: it runs on its own slot while both are taken.
+                yield* h.refresh();
+              }),
+            );
+            yield* Effect.scoped(openThreadSession(h, "limit-three"));
+          }),
+        );
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(!sandboxHost)(
+    "runs a thread's session in the sandbox, on that thread's own profile and the shared sign-in",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ config: { sandbox: true } });
+        const token = h.path.join(h.profileDirectory, "antigravity-acp", "antigravity-oauth-token");
+        yield* h.fs.makeDirectory(h.path.dirname(token), { recursive: true });
+        yield* h.fs.writeFileString(token, "sign-in");
+        // The stand-in agent's script, Node and request log must be inside a workspace folder.
+        const repository = h.path.resolve(h.path.dirname(h.mockAgentPath), "..", "..", "..");
+        const launched = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const one = yield* openThreadSession(h, "sandbox-one", [repository, h.root]);
+            const two = yield* openThreadSession(h, "sandbox-two", [repository, h.root]);
+            return [one, two];
+          }),
+        );
+        const sessions = h.launches.filter(
+          (launch) => launch.command === "/usr/bin/bwrap" && launch.args.includes("acp"),
+        );
+        expect(sessions).toHaveLength(2);
+        const profiles = sessions.map((launch) => launch.profileDirectory ?? "");
+        expect(new Set(profiles).size).toBe(2);
+        for (const [index, launch] of sessions.entries()) {
+          const profile = profiles[index]!;
+          expect(profile.startsWith(h.path.join(h.profileDirectory, "threads") + h.path.sep)).toBe(
+            true,
+          );
+          expect(launch.args.slice(launch.args.indexOf("--") + 1)).toEqual([
+            h.first.executablePath,
+            "acp",
+            "--gemini-dir",
+            profile,
+            "--app-data-dir",
+            "antigravity-acp",
+          ]);
+          expect(launch.cwd).toBe(launched[index]?.workspace);
+          const mounts = launch.args.slice(0, launch.args.indexOf("--")).join(" ");
+          // T3's state is under the temporary directory here, which is emptied whole.
+          expect(mounts).toContain("--tmpfs /tmp ");
+          expect(mounts).toContain(`--bind ${profile} ${profile}`);
+          expect(mounts).toContain(`--bind ${token} ${token}`);
+          expect(mounts).not.toContain(profiles[1 - index]);
+          expect(mounts).not.toContain(`${h.profileDirectory} `);
+          expect(
+            yield* h.fs.readLink(
+              h.path.join(profile, "antigravity-acp", "antigravity-oauth-token"),
+            ),
+          ).toBe(token);
+        }
+        // Both stand-in agents answered from inside the sandbox.
+        const methods = (yield* h.readRequests).map((request) => request.method);
+        expect(methods.filter((method) => method === "session/new")).toHaveLength(2);
       }),
   );
 

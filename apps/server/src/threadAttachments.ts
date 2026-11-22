@@ -244,6 +244,21 @@ export const threadAttachmentsDirIdentity = Effect.fn("ThreadAttachments.identit
   },
 );
 
+/** The thread folder while it is still the directory `identity` names; a swapped one is null. */
+export function threadAttachmentsDirIfUnchanged(
+  input: { readonly attachmentsDir: string; readonly threadId: string },
+  identity: { readonly dev: number; readonly ino: number },
+): string | null {
+  const threadDir = existingThreadAttachmentsDir(input);
+  if (threadDir === null) return null;
+  try {
+    const stats = NodeFS.lstatSync(threadDir);
+    return stats.dev === identity.dev && stats.ino === identity.ino ? threadDir : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Copies stored files, by attachment or by id, into the thread folder; missing ones are skipped. */
 export const placeThreadAttachments = Effect.fn("ThreadAttachments.place")(function* (input: {
   readonly attachmentsDir: string;

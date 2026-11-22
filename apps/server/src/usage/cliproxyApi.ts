@@ -368,10 +368,10 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
     "antigravity",
     {
       driver: ProviderDriverKind.make("antigravity"),
-      header: (_account, platform, architecture) => ({
+      header: () => ({
         Authorization: "Bearer $TOKEN$",
         "Content-Type": "application/json",
-        "User-Agent": antigravityUserAgent(platform, architecture),
+        "User-Agent": antigravityUserAgent(),
       }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
         const project = account.project_id?.trim();

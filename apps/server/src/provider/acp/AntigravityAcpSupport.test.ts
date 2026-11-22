@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -133,6 +138,72 @@ describe("Antigravity Auto", () => {
       ).toBe("deny");
     },
   );
+});
+
+describe("Antigravity read requests", () => {
+  const read = (kind: "read" | "search", paths?: ReadonlyArray<string>) =>
+    ({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "call-1",
+        title: "Read",
+        kind,
+        ...(paths === undefined ? {} : { locations: paths.map((path) => ({ path })) }),
+      },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    }) satisfies EffectAcpSchema.RequestPermissionRequest;
+
+  it("approves reads only inside the workspace, its extra roots and the thread's folder", () => {
+    const root = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-antigravity-read-policy-")),
+    );
+    try {
+      const [cwd, extra, folder, store] = ["work", "extra", "thread", "attachments"].map((name) => {
+        const directory = NodePath.join(root, name);
+        NodeFS.mkdirSync(directory);
+        NodeFS.writeFileSync(NodePath.join(directory, "file.txt"), name);
+        return directory;
+      }) as [string, string, string, string];
+      NodeFS.symlinkSync(store, NodePath.join(cwd, "link"));
+      const policy = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") => ({
+        runtimeMode,
+        cwd,
+        workspace: { extraRoots: [extra] },
+      });
+      const disposition = (
+        request: EffectAcpSchema.RequestPermissionRequest,
+        runtimeMode: Parameters<typeof policy>[0] = "approval-required",
+      ) => antigravityPermissionDisposition(policy(runtimeMode), request, [folder]);
+
+      expect(disposition(read("read", ["file.txt"]))).toBe("allow");
+      expect(disposition(read("search", [NodePath.join(extra, "file.txt")]))).toBe("allow");
+      expect(disposition(read("read", [NodePath.join(folder, "file.txt")]))).toBe("allow");
+
+      // The shared ACP policy approved all of these without asking.
+      expect(disposition(read("read", [NodePath.join(store, "file.txt")]))).toBe("ask");
+      expect(disposition(read("read", ["file.txt", NodePath.join(store, "file.txt")]))).toBe("ask");
+      expect(disposition(read("read", [NodePath.join(cwd, "link", "file.txt")]))).toBe("ask");
+      expect(disposition(read("read", [NodePath.join(cwd, "..", "attachments")]))).toBe("ask");
+      expect(disposition(read("search"))).toBe("ask");
+      expect(
+        disposition(read("read", [NodePath.join(store, "file.txt")]), "auto-accept-edits"),
+      ).toBe("ask");
+      // Without the thread's folder as a root, its files are outside too.
+      expect(
+        antigravityPermissionDisposition(
+          policy("approval-required"),
+          read("read", [NodePath.join(folder, "file.txt")]),
+        ),
+      ).toBe("ask");
+
+      // Full access answers for the user; the sandbox is what limits the agent there.
+      expect(disposition(read("read", [NodePath.join(store, "file.txt")]), "full-access")).toBe(
+        "allow",
+      );
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

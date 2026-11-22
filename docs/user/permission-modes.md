@@ -71,6 +71,13 @@ directly to the agent that asked, including a subagent. Other pending requests s
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+On Linux, Antigravity runs in a sandbox in every mode: its agent cannot read T3 Code's data,
+other threads' attachments or conversations, or `/tmp`. This needs `bubblewrap`; without it
+Antigravity does not start until you install it or turn off **Sandbox** in the provider's settings.
+Outside **Full access**, Antigravity asks before reading files outside the thread's folders.
+At most two Antigravity threads run at once per provider instance; a third fails until one
+finishes. `maxSessionProcesses` in the instance's settings changes that limit.
+
 Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also asks you to
 review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
 

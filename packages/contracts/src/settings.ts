@@ -961,12 +961,26 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
+    sandbox: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Sandbox",
+        description:
+          "On Linux, hides T3 Code's data and other threads' conversations from the agent. Needs bubblewrap.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
+    // Each session is one `agy` process that unpacks about 1 GB when it starts.
+    maxSessionProcesses: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 })).pipe(
+      Schema.withDecodingDefault(Effect.succeed(2)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath", "sandbox"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

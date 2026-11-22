@@ -9743,6 +9743,8 @@
   "8bf0f6ed8dd4b77e": "Erforderlich für Gemini Enterprise. Agent Platform verwendet es, wenn kein API-Schlüssel gesetzt ist.",
   "7c735c8fbd3fb6e3": "Region für Gemini Enterprise oder Agent Platform.",
   "68429f58a5a70d33": "Eigene ACP-Programmdatei. Leer lassen für automatische Auswahl.",
+  "eec8dcafdb998393": "Sandbox",
+  "77af591e8ca026fa": "Verbirgt unter Linux die Daten von T3 Code und die Unterhaltungen anderer Threads vor dem Agenten. Benötigt bubblewrap.",
   "0b0db4db3038102c": "Agent-Kennung aus der offiziellen ACP Registry, zum Beispiel „devin“.",
   "c731cf717a637a89": "Programmdatei in dieser Umgebung. Bei Registry-Agenten ersetzt sie die Programmdatei der Distribution, behält aber deren Argumente und Umgebung bei.",
   "bd02885a1d63c1a1": "Optionale ID der ACP-Authentifizierungsmethode. Standardmäßig wird die erste vom Agenten verwaltete Methode gewählt.",

@@ -46,6 +46,19 @@ its user-global skill directories under that profile, so the profile links those
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
+Antigravity's own tools read the disk without asking T3, and the shared ACP policy approves every
+read, so no T3-side check can keep a thread's agent out of T3's state. On Linux each `agy` process
+therefore runs in a bubblewrap mount namespace: T3's home, `/tmp` and the user's runtime directory
+are empty, and only the workspace folders, the thread's attachment folder and the process's own
+profile are mounted back. `/tmp` and the runtime directory are hidden for their sockets (tmux, the
+session bus), which would run commands outside the namespace. A thread's session gets a profile of
+its own under the instance's, because the agent names its conversation files itself and one shared
+profile would show every thread's; the sign-in files are links to the instance's. Anything T3 reads
+from a session's native files must use that session's profile. A missing bubblewrap fails the launch
+instead of running unsandboxed; other platforms have no equivalent and only log a warning. The
+namespace does not limit the network, the rest of the home directory, or files the agent writes for
+a later process to run. See [the sandbox](../../apps/server/src/provider/antigravitySandbox.ts).
+
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
 client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer
 selecting the version for new processes. Running processes hold leases on their version. Updates

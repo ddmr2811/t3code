@@ -9741,6 +9741,8 @@
   "8bf0f6ed8dd4b77e": "Obligatorio para Gemini Enterprise. Agent Platform lo usa cuando no hay ninguna clave de API.",
   "7c735c8fbd3fb6e3": "Región de Gemini Enterprise o Agent Platform.",
   "68429f58a5a70d33": "Ejecutable ACP personalizado. Déjalo vacío para seleccionarlo automáticamente.",
+  "eec8dcafdb998393": "Sandbox",
+  "77af591e8ca026fa": "En Linux, oculta al agente los datos de T3 Code y las conversaciones de otros hilos. Necesita bubblewrap.",
   "0b0db4db3038102c": "Identificador del agente en el ACP Registry oficial, por ejemplo, 'devin'.",
   "c731cf717a637a89": "Ejecutable en este entorno. En los agentes del registro, sustituye el ejecutable de la distribución y conserva sus argumentos y su entorno.",
   "bd02885a1d63c1a1": "ID opcional del método de autenticación ACP. De forma predeterminada se selecciona el primer método gestionado por el agente.",

@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -41,6 +42,7 @@ import {
   ensureThreadAttachmentsDir,
   threadAttachmentsDir,
   threadAttachmentsDirIdentity,
+  threadAttachmentsDirIfUnchanged,
 } from "../../threadAttachments.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
@@ -84,7 +86,16 @@ const AntigravityProviderCapabilitiesV2 = {
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
-> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+> & {
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  /** Present for a thread's session; setup and helper processes serve no thread. */
+  readonly thread?: {
+    readonly id: ThreadId;
+    readonly extraRoots: ReadonlyArray<string>;
+    /** The thread's own attachment folder, the only part of the store its agent may see. */
+    readonly attachmentsFolder: string | null;
+  };
+};
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -108,6 +119,8 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  /** The GEMINI_HOME of one thread's sessions, when each thread keeps its own. */
+  readonly threadProfileDirectory?: (threadId: ThreadId) => string;
 }
 
 /**
@@ -155,6 +168,9 @@ export function makeAntigravityAcpAdapterFlavor(
   // Roots are compared after resolving links, so the folder must still be the directory this
   // session opened: one swapped for a link elsewhere is no longer a root.
   const openedFolders = new Map<string, { readonly dev: number; readonly ino: number }>();
+  // The server reads a session's native files where that session's process wrote them.
+  const sessionProfiles = new Map<string, string>();
+  const profileOf = (sessionId: string) => sessionProfiles.get(sessionId);
   const antigravityClientFileRoots = Effect.fn("AntigravityAdapterV2.clientFileRoots")(function* (
     cwd: string | null,
     threadId: string,
@@ -187,11 +203,30 @@ export function makeAntigravityAcpAdapterFlavor(
       });
       if (identity === null) openedFolders.delete(input.threadId);
       else openedFolders.set(input.threadId, identity);
+      const sessionProfile = options.threadProfileDirectory?.(input.threadId);
+      // Every session this process opens keeps its files in this process's profile.
+      const ownSession = (sessionId: string) => {
+        if (sessionProfile !== undefined) sessionProfiles.set(sessionId, sessionProfile);
+      };
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
+            thread: {
+              id: input.threadId,
+              extraRoots: [
+                ...(input.extraRoots ?? []),
+                ...(input.runtimePolicy.workspace?.extraRoots ?? []),
+              ],
+              attachmentsFolder:
+                identity === null
+                  ? null
+                  : threadAttachmentsDir({
+                      attachmentsDir: options.host.paths.attachmentsDir,
+                      threadId: input.threadId,
+                    }),
+            },
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
@@ -234,13 +269,20 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
-            ),
+          runtime.start().pipe(
+            Effect.tap((started) => {
+              ownSession(started.sessionId);
+              return options.onSessionStarted?.(started, input.cwd) ?? Effect.void;
+            }),
+          ),
+        loadSession: (sessionId, loadOptions) => {
+          ownSession(sessionId);
+          return runtime.loadSession(sessionId, loadOptions);
+        },
+        resumeSession: (sessionId, resumeOptions) => {
+          ownSession(sessionId);
+          return runtime.resumeSession(sessionId, resumeOptions);
+        },
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -314,7 +356,17 @@ export function makeAntigravityAcpAdapterFlavor(
           ),
         ),
     },
-    permissionDisposition: antigravityPermissionDisposition,
+    permissionDisposition: (policy, request, threadId) => {
+      const opened = openedFolders.get(threadId);
+      const folder =
+        opened === undefined
+          ? null
+          : threadAttachmentsDirIfUnchanged(
+              { attachmentsDir: options.host.paths.attachmentsDir, threadId },
+              opened,
+            );
+      return antigravityPermissionDisposition(policy, request, folder === null ? [] : [folder]);
+    },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -338,16 +390,16 @@ export function makeAntigravityAcpAdapterFlavor(
       ? {}
       : {
           watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
+            watchAntigravityPromptOutcome(profileOf(sessionId) ?? profileDirectory, sessionId),
           subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
-              profileDirectory,
+              profileDirectory: profileOf(sessionId) ?? profileDirectory,
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
             }),
           hasPendingReply: (sessionId: string) =>
             readAntigravityPendingReply({
-              profileDirectory,
+              profileDirectory: profileOf(sessionId) ?? profileDirectory,
               sessionId,
             }),
         }),
