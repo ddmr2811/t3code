@@ -140,6 +140,7 @@ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { setThreadNotificationsMuted } from "../threadNotificationMute";
 import { setHomeThread } from "../fork/homeThreadSetting";
 import { isHomeThread } from "../fork/homeThread.logic";
+import { NeedsYouBlock } from "../fork/decisions/NeedsYouBlock";
 import { isThreadNotificationsMuted } from "./ThreadNotificationCoordinator.logic";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -3116,6 +3117,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   return (
     <SidebarFolderDrop>
       <SidebarChromeHeader isElectron={isElectron} />
+      <NeedsYouBlock />
       <SidebarContent
         ref={sidebarContentRef}
         className="min-h-full"

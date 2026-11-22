@@ -13,7 +13,7 @@ import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
-function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
+export function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const gt = useGT();

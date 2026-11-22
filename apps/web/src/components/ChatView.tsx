@@ -296,6 +296,7 @@ import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ForkNewThreadWidgets } from "../fork/widgets/ForkWidgets";
+import { ForkThreadHero } from "../fork/status/ForkThreadHero";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -3528,6 +3529,9 @@ export default function ChatView(props: ChatViewProps) {
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
           </header>
+        )}
+        {embedded || !isServerThread || activeThreadRef === null ? null : (
+          <ForkThreadHero threadRef={activeThreadRef} />
         )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">

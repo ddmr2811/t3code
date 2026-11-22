@@ -68,6 +68,7 @@ import {
   HouseIcon,
   HistoryIcon,
   LayoutDashboardIcon,
+  CircleAlertIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -200,6 +201,7 @@ import {
   useThreadNotificationsMuted,
 } from "../threadNotificationMute";
 import { setHomeThread, useIsHomeThread } from "../fork/homeThreadSetting";
+import { useDecisionsPanel } from "../fork/decisions/decisionsState";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
@@ -565,6 +567,7 @@ function OpenCommandPaletteDialog(props: {
       ),
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const decisionsPanel = useDecisionsPanel();
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
   const portForwardItem = useCommandPalettePortForwardItem({
@@ -1600,6 +1603,14 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+  actionItems.push({
+    kind: "action",
+    value: "action:fork-toggle-decisions-panel",
+    searchTerms: ["decisions", "needs you", "approvals", "questions", "pending", "waiting"],
+    title: gt("Toggle decisions panel"),
+    icon: <CircleAlertIcon className={ITEM_ICON_CLASS} />,
+    run: async () => decisionsPanel.setOpen(!decisionsPanel.open),
+  });
 
   if (activeThread !== null) {
     const thread = activeThread;

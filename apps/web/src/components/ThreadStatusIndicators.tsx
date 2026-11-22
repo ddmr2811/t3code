@@ -24,6 +24,7 @@ import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
+import { ThreadStatusGlyph } from "../fork/status/ThreadStatusGlyph";
 import {
   pullRequestListLines,
   resolveThreadCurrentPullRequestLink,
@@ -826,11 +827,7 @@ function ThreadStatusLabel({
             />
           }
         >
-          <span
-            className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "motion-safe:animate-status-pulse" : ""
-            }`}
-          />
+          <ThreadStatusGlyph kind={status.kind} pulse={status.pulse} className="size-3.5" />
         </TooltipTrigger>
         <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
@@ -848,11 +845,7 @@ function ThreadStatusLabel({
           />
         }
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "motion-safe:animate-status-pulse" : ""
-          }`}
-        />
+        <ThreadStatusGlyph kind={status.kind} pulse={status.pulse} className="size-3" />
         <span className="hidden md:inline">{label}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
