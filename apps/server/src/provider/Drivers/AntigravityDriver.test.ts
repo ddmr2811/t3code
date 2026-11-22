@@ -16,6 +16,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
@@ -31,6 +32,7 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
+import { BubblewrapCandidates } from "../antigravitySandbox.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -69,6 +71,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly platform?: NodeJS.Platform;
+    /** A stand-in `bwrap` that exits with this code, as the only candidate. */
+    readonly bubblewrapExitCode?: number;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -133,6 +138,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     } satisfies AntigravityInstallation.AntigravityExecutable;
   });
 
+  const bubblewrap = path.join(root, "bwrap");
+  if (options.bubblewrapExitCode !== undefined) {
+    yield* fs.writeFileString(bubblewrap, `#!/bin/sh\nexit ${options.bubblewrapExitCode}\n`);
+    yield* fs.chmod(bubblewrap, 0o755);
+  }
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
@@ -252,6 +262,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   }).pipe(
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
+    Effect.provideService(HostProcess.Platform, options.platform ?? hostPlatform),
+    options.bubblewrapExitCode === undefined
+      ? identity
+      : Effect.provideService(BubblewrapCandidates, [bubblewrap]),
   );
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
@@ -663,6 +677,38 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(methods.filter((method) => method === "session/new")).toHaveLength(2);
       }),
   );
+
+  for (const { name, options, message } of [
+    {
+      name: "a platform without the sandbox",
+      options: { platform: "darwin" },
+      message:
+        "Antigravity's sandbox only exists on Linux. On this platform, turn off Sandbox in the Antigravity provider settings to run it without isolation.",
+    },
+    {
+      name: "Linux where bubblewrap is refused its user namespace",
+      options: { platform: "linux", bubblewrapExitCode: 1 },
+      message:
+        "Antigravity runs inside a bubblewrap sandbox, and bubblewrap (bwrap) is missing or not allowed to create user namespaces on this machine. Install bubblewrap, or turn off Sandbox in the Antigravity provider settings to run it without isolation.",
+    },
+  ] as const) {
+    it.effect.skipIf(windowsHost)(`starts no agent with Sandbox on ${name}`, () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ ...options, config: { sandbox: true } });
+        const session = yield* Effect.scoped(openThreadSession(h, "no-sandbox")).pipe(Effect.flip);
+        expect(knownProviderFailureMessage(session)).toBe(message);
+        // Model refresh stands for every helper: sign-in and titles launch through the same step.
+        expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(message);
+        expect(h.acquisitions).toEqual([]);
+        expect(
+          h.launches.filter(
+            (launch) => launch.command === h.first.executablePath || launch.args.includes("acp"),
+          ),
+        ).toEqual([]);
+        expect(yield* h.fs.exists(h.profileDirectory)).toBe(false);
+      }),
+    );
+  }
 
   it.effect.skipIf(windowsHost)(
     "refuses to open a session on a PATH executable older than 1.5",

@@ -16,6 +16,7 @@ import {
   type AntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import {
+  BubblewrapCandidates,
   antigravityProcessSandboxSpec,
   antigravityProfileDataDirectories,
   antigravitySessionProfileDirectory,
@@ -337,10 +338,17 @@ describe("Antigravity sandbox with real bubblewrap", () => {
     }),
   );
 
-  it.live.skipIf(!sandboxHost)("finds no sandbox where bubblewrap is missing", () =>
+  it.live.skipIf(!sandboxHost)("finds no sandbox where bubblewrap is missing or refused", () =>
     Effect.gen(function* () {
-      expect(yield* findUsableBubblewrap(["/nonexistent/bwrap", "/etc/hostname"])).toBeUndefined();
-      expect(yield* findUsableBubblewrap()).toBe("/usr/bin/bwrap");
+      using home = makeHome();
+      // Installed, but refused its user namespace, as under an AppArmor policy.
+      const refused = NodePath.join(home.root, "bwrap");
+      NodeFS.writeFileSync(refused, "#!/bin/sh\nexit 1\n");
+      NodeFS.chmodSync(refused, 0o755);
+      const find = (candidates: ReadonlyArray<string>) =>
+        findUsableBubblewrap().pipe(Effect.provideService(BubblewrapCandidates, candidates));
+      expect(yield* find(["/nonexistent/bwrap", "/etc/hostname", refused])).toBeUndefined();
+      expect(yield* find([refused, "/usr/bin/bwrap"])).toBe("/usr/bin/bwrap");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

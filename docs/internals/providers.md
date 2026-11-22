@@ -54,8 +54,9 @@ profile are mounted back. `/tmp` and the runtime directory are hidden for their 
 session bus), which would run commands outside the namespace. A thread's session gets a profile of
 its own under the instance's, because the agent names its conversation files itself and one shared
 profile would show every thread's; the sign-in files are links to the instance's. Anything T3 reads
-from a session's native files must use that session's profile. A missing bubblewrap fails the launch
-instead of running unsandboxed; other platforms have no equivalent and only log a warning. The
+from a session's native files must use that session's profile. With Sandbox on, no `agy`
+process starts unless the namespace can be built: a missing or refused bubblewrap fails the launch,
+and so does any platform other than Linux, until the user turns Sandbox off. The
 namespace does not limit the network, the rest of the home directory, or files the agent writes for
 a later process to run. See [the sandbox](../../apps/server/src/provider/antigravitySandbox.ts).
 

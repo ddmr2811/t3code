@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -23,10 +24,17 @@ export interface AntigravitySandboxSpec {
   readonly hidden: ReadonlyArray<string>;
 }
 
-const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/usr/local/bin/bwrap", "/bin/bwrap"];
+/** Fixed paths, not PATH: the AppArmor profile that allows user namespaces names the binary. */
+export const BubblewrapCandidates = Context.Reference<ReadonlyArray<string>>(
+  "t3/provider/antigravitySandbox/BubblewrapCandidates",
+  { defaultValue: () => ["/usr/bin/bwrap", "/usr/local/bin/bwrap", "/bin/bwrap"] },
+);
 
 export const ANTIGRAVITY_SANDBOX_UNAVAILABLE =
   "Antigravity runs inside a bubblewrap sandbox, and bubblewrap (bwrap) is missing or not allowed to create user namespaces on this machine. Install bubblewrap, or turn off Sandbox in the Antigravity provider settings to run it without isolation.";
+
+export const ANTIGRAVITY_SANDBOX_LINUX_ONLY =
+  "Antigravity's sandbox only exists on Linux. On this platform, turn off Sandbox in the Antigravity provider settings to run it without isolation.";
 
 function isWithin(path: string, parent: string): boolean {
   const relative = NodePath.relative(parent, path);
@@ -161,37 +169,38 @@ async function canonicalAntigravitySandboxSpec(
 }
 
 /** The first bubblewrap that can build the sandbox here; AppArmor may forbid its user namespace. */
-export const findUsableBubblewrap = Effect.fn("antigravitySandbox.findUsableBubblewrap")(function* (
-  candidates: ReadonlyArray<string> = BWRAP_CANDIDATES,
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  for (const candidate of candidates) {
-    const info = yield* Effect.promise(() => NodeFSP.stat(candidate).catch(() => undefined));
-    if (info?.isFile() !== true) continue;
-    const usable = yield* spawner
-      .spawn(
-        ChildProcess.make(
-          candidate,
-          [
-            ...antigravitySandboxArgs({ masks: [], roots: [], grants: [], hidden: [] }, "/"),
-            "/bin/sh",
-            "-c",
-            ":",
-          ],
-          { shell: false },
-        ),
-      )
-      .pipe(
-        Effect.flatMap((child) => child.exitCode),
-        Effect.map((exitCode) => Number(exitCode) === 0),
-        Effect.scoped,
-        Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
-        Effect.orElseSucceed(() => false),
-      );
-    if (usable) return candidate;
-  }
-  return undefined;
-});
+export const findUsableBubblewrap = Effect.fn("antigravitySandbox.findUsableBubblewrap")(
+  function* () {
+    const candidates = yield* BubblewrapCandidates;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    for (const candidate of candidates) {
+      const info = yield* Effect.promise(() => NodeFSP.stat(candidate).catch(() => undefined));
+      if (info?.isFile() !== true) continue;
+      const usable = yield* spawner
+        .spawn(
+          ChildProcess.make(
+            candidate,
+            [
+              ...antigravitySandboxArgs({ masks: [], roots: [], grants: [], hidden: [] }, "/"),
+              "/bin/sh",
+              "-c",
+              ":",
+            ],
+            { shell: false },
+          ),
+        )
+        .pipe(
+          Effect.flatMap((child) => child.exitCode),
+          Effect.map((exitCode) => Number(exitCode) === 0),
+          Effect.scoped,
+          Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
+          Effect.orElseSucceed(() => false),
+        );
+      if (usable) return candidate;
+    }
+    return undefined;
+  },
+);
 
 const THREAD_PROFILES_DIRECTORY = "threads";
 // Where `agy` keeps a Google sign-in: 1.4 and 1.5 use different files.

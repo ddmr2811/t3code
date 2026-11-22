@@ -74,6 +74,8 @@ approvals for actions that support them.
 On Linux, Antigravity runs in a sandbox in every mode: its agent cannot read T3 Code's data,
 other threads' attachments or conversations, or `/tmp`. This needs `bubblewrap`; without it
 Antigravity does not start until you install it or turn off **Sandbox** in the provider's settings.
+The sandbox exists only on Linux: on macOS and Windows Antigravity does not start until you turn
+**Sandbox** off, which runs it without isolation.
 Outside **Full access**, Antigravity asks before reading files outside the thread's folders.
 At most two Antigravity threads run at once per provider instance; a third fails until one
 finishes. `maxSessionProcesses` in the instance's settings changes that limit.

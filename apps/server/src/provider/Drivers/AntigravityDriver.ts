@@ -49,7 +49,9 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
+  ANTIGRAVITY_SANDBOX_LINUX_ONLY,
   ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+  BubblewrapCandidates,
   antigravityProcessSandboxSpec,
   antigravitySandboxMasks,
   antigravityThreadProfileDirectory,
@@ -217,29 +219,31 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
-    // Only Linux has the mount namespace the sandbox is made of.
-    const sandboxed = settings.sandbox && hostPlatform === "linux";
-    if (settings.sandbox && !sandboxed) {
-      yield* Effect.logWarning(
-        "Antigravity runs without a sandbox on this platform: its tools can read every file this user can.",
-        { instanceId },
-      );
-    }
     const threadProfile = (threadId: ThreadId) =>
       antigravityThreadProfileDirectory(profileDirectory, threadId);
     const sandboxFailed = (cause?: unknown) =>
       new ProviderSetupError({
         instanceId,
         operation: "start",
-        detail: ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+        // Only Linux has the mount namespace the sandbox is made of.
+        detail:
+          hostPlatform === "linux"
+            ? ANTIGRAVITY_SANDBOX_UNAVAILABLE
+            : ANTIGRAVITY_SANDBOX_LINUX_ONLY,
         cause,
       });
+    const bubblewrapCandidates = yield* BubblewrapCandidates;
     let bubblewrapPath: string | undefined;
+    // With Sandbox on, no `agy` process starts unless the sandbox can be built around it.
     const requireBubblewrap = Effect.gen(function* () {
       if (bubblewrapPath !== undefined) return bubblewrapPath;
-      const found = yield* findUsableBubblewrap().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+      const found =
+        hostPlatform === "linux"
+          ? yield* findUsableBubblewrap().pipe(
+              Effect.provideService(BubblewrapCandidates, bubblewrapCandidates),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            )
+          : undefined;
       if (found === undefined) return yield* sandboxFailed();
       bubblewrapPath = found;
       return found;
@@ -271,6 +275,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
+      const bubblewrap = settings.sandbox ? yield* requireBubblewrap : undefined;
       const executable = yield* installation.acquire(settings.binaryPath, processEnvironment).pipe(
         Effect.mapError(
           (cause) =>
@@ -282,7 +287,6 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      const bubblewrap = sandboxed ? yield* requireBubblewrap : undefined;
       // Without the sandbox nothing keeps one thread's process out of another's profile.
       const sessionProfile =
         thread !== undefined && bubblewrap !== undefined
@@ -714,7 +718,7 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-      ...(sandboxed ? { threadProfileDirectory: threadProfile } : {}),
+      ...(settings.sandbox ? { threadProfileDirectory: threadProfile } : {}),
       onSessionStarted: (started, cwd) =>
         provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {
