@@ -843,6 +843,15 @@ describe("isSidebarToggleShortcut", () => {
 
 describe("composer and pull request shortcuts", () => {
   it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    // Fork: the decisions panel sits on its own chord; macOS Option turns D into "Î".
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Î", code: "KeyD", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+      "decisions.toggle",
+    );
     const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
     assert.strictEqual(
       resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {

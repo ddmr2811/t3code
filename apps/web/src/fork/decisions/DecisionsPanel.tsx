@@ -25,13 +25,15 @@ import { Link } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
 import { ArrowRightIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { BackgroundThreadContext } from "~/components/chat/backgroundThread";
 import { ChildApproval } from "~/components/chat/ChildThreadApprovals";
 import { ComposerPendingUserInputPanel } from "~/components/chat/ComposerPendingUserInputPanel";
 import { Button } from "~/components/ui/button";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { derivePendingUserInputProgress } from "~/pendingUserInput";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import type { PendingUserInput } from "~/session-logic";
 import { useProject } from "~/state/entities";
 import { useEnvironmentScope } from "~/state/session";
@@ -48,6 +50,18 @@ const NO_REQUESTS_ATOM = Atom.make<PendingThreadRequests | null>(null).pipe(
 export function DecisionsPanel() {
   const gt = useGT();
   const { threads, open, setOpen } = useDecisionsPanel();
+  const toggle = useStableCallback(() => setOpen(!open));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the decisions shortcut with the keyboard dispatcher while the panel host is mounted
+  useEffect(
+    () =>
+      registerCommands({
+        "decisions.toggle": (event) => {
+          event.preventDefault();
+          if (!event.repeat) toggle();
+        },
+      }),
+    [toggle],
+  );
   if (!open) return null;
   return (
     <aside
