@@ -1,0 +1,196 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
+import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  type ConnectionCatalogEntry,
+} from "@t3tools/client-runtime/connection";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
+import { type FormEvent, useContext, useState } from "react";
+
+import { pairMachine } from "./connection/pairing.ts";
+import { environmentCatalog, environmentShell } from "./connection/runtime.ts";
+import { machineStatus } from "./connection/status.ts";
+
+// A link that opens the ADE to pair (`?host=…#token=…`) leaves the address bar before anything
+// renders: the one-time token must not stay in the URL, the history, or a later Referer.
+const pairingLinkFromAddressBar = (() => {
+  const link = window.location.href;
+  if (readHostedPairingRequest(new URL(link)) === null) return "";
+  window.history.replaceState(null, "", window.location.pathname);
+  return link;
+})();
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+function useMachineStatus(environmentId: EnvironmentId, entry: ConnectionCatalogEntry) {
+  const state = AsyncResult.getOrElse(
+    useAtomValue(environmentCatalog.stateAtom(environmentId)),
+    () => AVAILABLE_CONNECTION_STATE,
+  );
+  return machineStatus(entry, state);
+}
+
+function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCatalogEntry }) {
+  const registry = useContext(RegistryContext);
+  const status = useMachineStatus(props.environmentId, props.entry);
+  const label = props.entry.target.label;
+  return (
+    <li className="ade-machine" data-tone={status.tone}>
+      <span className="ade-dot" />
+      <span className="ade-machine-name">{label}</span>
+      <span className="ade-machine-status">{status.text}</span>
+      <button
+        type="button"
+        className="ade-icon-button"
+        aria-label={`Quitar ${label}`}
+        onClick={() => {
+          if (
+            window.confirm(`¿Quitar ${label}? Para volver a usarla habrá que emparejarla otra vez.`)
+          )
+            void runAtomCommand(registry, environmentCatalog.remove, props.environmentId);
+        }}
+      >
+        <TrashIcon size={14} />
+      </button>
+    </li>
+  );
+}
+
+function PairingForm(props: { onDone: () => void }) {
+  const registry = useContext(RegistryContext);
+  const [link, setLink] = useState(pairingLinkFromAddressBar);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    const result = await runAtomCommand(
+      registry,
+      pairMachine,
+      code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code },
+      // The form shows the failure; the console would only repeat it.
+      { reportFailure: false },
+    );
+    setBusy(false);
+    if (AsyncResult.isSuccess(result)) return props.onDone();
+    const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+    setError(failure?.message ?? "No se pudo emparejar la máquina.");
+  };
+
+  return (
+    <form className="ade-pairing" onSubmit={submit}>
+      <label>
+        Enlace de emparejamiento o dirección
+        <input
+          value={link}
+          onChange={(event) => setLink(event.target.value)}
+          placeholder="https://maquina:3773/pair#token=…"
+          autoComplete="off"
+          spellCheck={false}
+          required
+        />
+      </label>
+      <label>
+        Código (solo si has puesto una dirección)
+        <input
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      {error !== null && (
+        <p className="ade-pairing-error" role="alert">
+          {error}
+        </p>
+      )}
+      <button type="submit" className="ade-button" disabled={busy}>
+        {busy ? "Emparejando…" : "Emparejar"}
+      </button>
+    </form>
+  );
+}
+
+export function MachinesSidebar() {
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const [adding, setAdding] = useState(pairingLinkFromAddressBar !== "");
+  const machines = [...catalog.entries];
+  return (
+    <>
+      <div className="ade-label">
+        Máquinas
+        <button
+          type="button"
+          className="ade-icon-button"
+          aria-label="Añadir máquina"
+          aria-expanded={adding}
+          onClick={() => setAdding(!adding)}
+        >
+          <PlusIcon size={14} />
+        </button>
+      </div>
+      {adding && <PairingForm onDone={() => setAdding(false)} />}
+      {machines.length === 0 ? (
+        <div className="ade-sidebar-empty">
+          <HardDrivesIcon size={16} />
+          {catalog.isReady ? "Ninguna emparejada" : "Cargando…"}
+        </div>
+      ) : (
+        <ul className="ade-machines">
+          {machines.map(([environmentId, entry]) => (
+            <MachineRow key={environmentId} environmentId={environmentId} entry={entry} />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function MachineCard(props: { environmentId: EnvironmentId; entry: ConnectionCatalogEntry }) {
+  const status = useMachineStatus(props.environmentId, props.entry);
+  const snapshot = Option.getOrNull(
+    useAtomValue(environmentShell.stateValueAtom(props.environmentId)).snapshot,
+  );
+  return (
+    <section className="ade-card" data-tone={status.tone}>
+      <h2>
+        <span className="ade-dot" />
+        {props.entry.target.label}
+      </h2>
+      <p>{status.text}</p>
+      {snapshot !== null && (
+        <p className="ade-card-counts">
+          {count(snapshot.projects.length, "proyecto")} · {count(snapshot.threads.length, "hilo")}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Null while no machine is paired, so the shell can show its empty state. */
+export function MachineCards() {
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  if (catalog.entries.size === 0) return null;
+  return (
+    <div className="ade-cards">
+      {[...catalog.entries].map(([environmentId, entry]) => (
+        <MachineCard key={environmentId} environmentId={environmentId} entry={entry} />
+      ))}
+    </div>
+  );
+}
+
+export function ConnectionSummary() {
+  const machines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
+  return <>{machines === 0 ? "Sin máquinas" : count(machines, "máquina")}</>;
+}

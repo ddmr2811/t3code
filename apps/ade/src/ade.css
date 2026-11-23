@@ -130,3 +130,174 @@ body {
 .ade-empty p {
   margin: 0;
 }
+
+/* Only the empty state when no machine card precedes it. */
+.ade-cards + .ade-empty {
+  display: none;
+}
+
+.ade-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ade-icon-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text-tertiary);
+  cursor: pointer;
+}
+
+.ade-icon-button:hover,
+.ade-icon-button:focus-visible {
+  background: var(--ade-surface);
+  color: var(--ade-text);
+}
+
+.ade-machines {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-machine {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0 8px;
+  padding: 6px 4px 6px 8px;
+  border-radius: var(--ade-radius-md);
+}
+
+.ade-machine:hover {
+  background: var(--ade-surface);
+}
+
+.ade-machine-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-machine-status {
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-machine .ade-icon-button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+[data-tone="ok"] .ade-dot {
+  background: #4cc38a;
+}
+
+[data-tone="busy"] .ade-dot {
+  background: #e2b340;
+}
+
+[data-tone="error"] .ade-dot {
+  background: #e5484d;
+}
+
+[data-tone="error"] .ade-machine-status,
+.ade-pairing-error {
+  color: #ff8589;
+}
+
+.ade-pairing {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+}
+
+.ade-pairing label {
+  display: grid;
+  gap: 4px;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-pairing input {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-pairing-error {
+  margin: 0;
+  font-size: 12px;
+}
+
+.ade-button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-accent);
+  color: #0a0a0a;
+  font: 600 13px var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ade-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+}
+
+.ade-card {
+  min-width: 240px;
+  max-width: 360px;
+  padding: 20px 24px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  color: var(--ade-text-muted);
+}
+
+.ade-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  color: var(--ade-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ade-card p {
+  margin: 0;
+}
+
+.ade-card-counts {
+  padding-top: 8px;
+  color: var(--ade-text);
+  font: 13px var(--ade-font-mono);
+}
