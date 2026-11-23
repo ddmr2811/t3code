@@ -1,6 +1,7 @@
 import {
   AuthDiagnosticsReadScope,
   AuthForkGatewayScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
   FORK_WS_METHODS,
@@ -30,6 +31,10 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   // Listing the sidecars is for whoever may reach them, and only them.
   [WS_METHODS.forkGatewayList]: AuthForkGatewayScope,
   [WS_METHODS.forkGatewayPanelTicket]: AuthForkGatewayScope,
+  // Project coordination board: reading follows threads, writing needs orchestration operate.
+  [WS_METHODS.forkCoordinationList]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkCoordinationUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkCoordinationRemove]: AuthOrchestrationOperateScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

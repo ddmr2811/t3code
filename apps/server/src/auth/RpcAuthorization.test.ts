@@ -116,6 +116,18 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.forkActivityFeed)).toBe(AuthDiagnosticsReadScope);
   });
 
+  it("lets thread readers list the project coordination board and requires operate scope to edit it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkCoordinationList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkCoordinationUpsert)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkCoordinationRemove)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("lets file readers see a task folder and takes source control to add a repository to it", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(

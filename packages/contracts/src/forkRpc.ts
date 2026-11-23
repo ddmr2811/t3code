@@ -1,7 +1,20 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
-import { AuthProvidersManageScope, EnvironmentAuthorizationError } from "./auth.ts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
 import { HostResourcesSnapshot } from "./resourceTelemetry.ts";
+import {
+  ForkCoordinationEntry,
+  ForkCoordinationError,
+  ForkCoordinationListInput,
+  ForkCoordinationListResult,
+  ForkCoordinationRemoveInput,
+  ForkCoordinationRemoveResult,
+  ForkCoordinationUpsertInput,
+} from "./forkCoordination.ts";
 import {
   ForkAuthorizeCompleteInput,
   ForkAuthorizeEvent,
@@ -48,6 +61,10 @@ export const FORK_WS_METHODS = {
   // Fork: the sidecars declared in the extension gateway's manifest.
   forkGatewayList: "forkGateway.list",
   forkGatewayPanelTicket: "forkGateway.panelTicket",
+  // Fork: project coordination board shared across machines.
+  forkCoordinationList: "forkCoordination.list",
+  forkCoordinationUpsert: "forkCoordination.upsert",
+  forkCoordinationRemove: "forkCoordination.remove",
 } as const;
 
 // Fork: Extensions settings page.
@@ -180,6 +197,30 @@ const WsForkGatewayPanelTicketRpc = Rpc.make(FORK_WS_METHODS.forkGatewayPanelTic
   error: EnvironmentAuthorizationError,
 });
 
+// Fork: project coordination board.
+const ForkCoordinationRpcError = Schema.Union([
+  ForkCoordinationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsForkCoordinationListRpc = Rpc.make(FORK_WS_METHODS.forkCoordinationList, {
+  payload: ForkCoordinationListInput,
+  success: ForkCoordinationListResult,
+  error: ForkCoordinationRpcError,
+});
+
+const WsForkCoordinationUpsertRpc = Rpc.make(FORK_WS_METHODS.forkCoordinationUpsert, {
+  payload: ForkCoordinationUpsertInput,
+  success: ForkCoordinationEntry,
+  error: ForkCoordinationRpcError,
+});
+
+const WsForkCoordinationRemoveRpc = Rpc.make(FORK_WS_METHODS.forkCoordinationRemove, {
+  payload: ForkCoordinationRemoveInput,
+  success: ForkCoordinationRemoveResult,
+  error: ForkCoordinationRpcError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -197,6 +238,9 @@ export const FORK_RPCS = [
   WsForkActivityFeedRpc,
   WsForkGatewayListRpc,
   WsForkGatewayPanelTicketRpc,
+  WsForkCoordinationListRpc,
+  WsForkCoordinationUpsertRpc,
+  WsForkCoordinationRemoveRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
@@ -206,4 +250,6 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkExtensionsSetEnabled]: AuthProvidersManageScope,
   [FORK_WS_METHODS.forkExtensionsAuthorize]: AuthProvidersManageScope,
   [FORK_WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
+  [FORK_WS_METHODS.forkCoordinationUpsert]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkCoordinationRemove]: AuthOrchestrationOperateScope,
 } as const;

@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 import * as ForkActivity from "./activity/ForkActivity.ts";
+import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkGatewayHttp from "./gateway/http.ts";
@@ -21,6 +22,8 @@ export const ForkLayer = Layer.mergeAll(
   ForkActivity.layer,
   // Reads its manifest on each request, so it holds nothing.
   ForkGateway.layer,
+  // Shared project coordination board persisted atomically in `<stateDir>/fork/coordination.json`.
+  ForkCoordination.layer,
 );
 
 /** Every fork HTTP route; `server.ts` merges this beside its own routes. */

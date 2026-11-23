@@ -4,6 +4,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ForkActivity from "./activity/ForkActivity.ts";
+import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
@@ -22,6 +23,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkInsights = yield* ForkInsights.ForkInsights;
   const forkActivity = yield* ForkActivity.ForkActivity;
   const forkGateway = yield* ForkGateway.ForkGateway;
+  const forkCoordination = yield* ForkCoordination.ForkCoordination;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
     // Extensions settings page.
@@ -49,5 +51,9 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
         Effect.map(({ token }) => ({ ticket: token })),
         Effect.orDie,
       ),
+    // Project coordination board.
+    [WS_METHODS.forkCoordinationList]: (input) => forkCoordination.list(input),
+    [WS_METHODS.forkCoordinationUpsert]: (input) => forkCoordination.upsert(input),
+    [WS_METHODS.forkCoordinationRemove]: (input) => forkCoordination.remove(input),
   });
 });
