@@ -749,6 +749,38 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect(
+      "runs none of the repository's hooks to capture, restore or delete a checkpoint",
+      () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* initRepoWithCommit(tmp);
+          // Hooks an agent could write in the checkout, as a repository with `core.hooksPath` keeps.
+          const ran = NodePath.join(yield* makeTmpDir("checkpoint-hooks-ran-"), "ran");
+          for (const hook of ["post-index-change", "reference-transaction", "post-checkout"]) {
+            const file = NodePath.join(tmp, "hooks", hook);
+            yield* fileSystem.makeDirectory(NodePath.dirname(file), { recursive: true });
+            yield* writeTextFile(file, `#!/bin/sh\necho ${hook} >> '${ran}'\n`);
+            yield* fileSystem.chmod(file, 0o755);
+          }
+          yield* git(tmp, ["config", "core.hooksPath", "hooks"]);
+          yield* fileSystem.remove(ran, { force: true });
+          const checkpointRef = CheckpointRef.make("refs/t3/test/hooks/0");
+
+          yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+          yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+          expect(yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+          yield* checkpointStore.deleteCheckpointRefs({
+            cwd: tmp,
+            checkpointRefs: [checkpointRef],
+          });
+
+          expect(yield* fileSystem.exists(ran)).toBe(false);
+        }),
+    );
+
     it.effect("reads a folder as clean only when nothing in it differs from HEAD", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

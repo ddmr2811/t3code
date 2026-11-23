@@ -714,7 +714,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       4_096,
     ).pipe(Effect.map((stdout) => stdout?.trim() === "true"));
 
-  const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
+  const executeAsAsked: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
       ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
@@ -728,13 +728,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
+  // What this driver runs by itself, checkpoints above all, runs no hook: index writes, ref updates
+  // and restores each fire one, and an agent can write the repository's hooks.
+  const execute: typeof executeAsAsked = (input) =>
+    executeAsAsked({ ...input, args: ["-c", "core.hooksPath=/dev/null", ...input.args] });
+
   // --diff-merges=remerge needs Git 2.36.
   let remergeDiffSupported: boolean | undefined;
   const supportsRemergeDiff = Effect.fn("GitVcsDriver.supportsRemergeDiff")(function* (
     cwd: string,
   ) {
     if (remergeDiffSupported === undefined) {
-      const version = yield* execute({
+      const version = yield* executeAsAsked({
         operation: "GitVcsDriver.version",
         cwd,
         args: ["version"],
@@ -2512,7 +2517,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   };
 
   return {
-    execute,
+    execute: executeAsAsked,
     checkpoints,
     detectRepository,
     isInsideWorkTree,
