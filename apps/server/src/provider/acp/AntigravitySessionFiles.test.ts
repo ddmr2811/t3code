@@ -122,6 +122,34 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
       }),
   );
 
+  it.effect(
+    "leaves another folder alone when the agent put a link where its brain folder goes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" }),
+        );
+        const fixture = yield* makeNativeSessionFixture({ workspacePaths: [cwd] });
+        const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-other-" });
+        const kept = path.join(elsewhere, fixture.sessionId, "notes.md");
+        yield* fs.makeDirectory(path.dirname(kept));
+        yield* fs.writeFileString(kept, "another thread's");
+        yield* fs.remove(path.dirname(fixture.brain), { recursive: true });
+        yield* fs.symlink(elsewhere, path.dirname(fixture.brain));
+
+        yield* removeAntigravitySessionFiles({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd,
+        });
+
+        expect(yield* fs.exists(`${fixture.base}.db`)).toBe(false);
+        expect(yield* fs.readFileString(kept)).toBe("another thread's");
+      }),
+  );
+
   it.effect("matches a symlinked temporary cwd against the canonical path stored in the DB", () =>
     Effect.gen(function* () {
       if (!symlinksSupported) return;

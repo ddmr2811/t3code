@@ -156,10 +156,14 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
     for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"]) {
       yield* fs.remove(`${base}${suffix}`, { force: true });
     }
-    yield* fs.remove(path.join(acpDirectory, "brain", sessionId), {
-      recursive: true,
-      force: true,
+    // The agent wrote this profile: a link standing in for a folder must not aim the removal.
+    const brain = yield* Effect.promise(async () => {
+      const root = await antigravityProfileRoot(input.profileDirectory);
+      return root === undefined
+        ? undefined
+        : antigravityManagedPath(root, ["antigravity-acp", "brain", sessionId], "directory");
     });
+    if (brain !== undefined) yield* fs.remove(brain.path, { recursive: true, force: true });
     yield* fs.remove(path.join(acpDirectory, "annotations", `${sessionId}.pbtxt`), {
       force: true,
     });
