@@ -8,6 +8,7 @@ import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-lab
 import {
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
+  turnItemOutputImages,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import type {
@@ -17,11 +18,13 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { AsyncResult } from "effect/reactivity";
 import { memo, type ReactNode, useContext, useState } from "react";
 
 import { environmentThreadDetails, orchestrationEnvironment, threadEnvironment } from "../state.ts";
 import { AgentMarkdown } from "./AgentMarkdown.tsx";
+import { MediaStrip } from "./Media.tsx";
 import { formatCount, groupTurns, rowKind } from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
@@ -72,6 +75,18 @@ function localOutput(item: OrchestrationV2TurnItem): string | null {
   return turnItemOutputText(item);
 }
 
+function outputImages(item: OrchestrationV2TurnItem) {
+  return turnItemOutputImages(item).map((resource) => ({
+    key: String(resource.index),
+    resource,
+    alt: `imagen ${resource.index + 1} de ${toolLabel(item)}`,
+  }));
+}
+
+// A file read as an image has only the file's metadata as text: the image says it all.
+const showsOnlyImages = (item: OrchestrationV2TurnItem, images: ReadonlyArray<unknown>) =>
+  item.type === "dynamic_tool" && item.viewedImagePath !== undefined && images.length > 0;
+
 /** Collapsed until opened; its content renders only while open, so closed rows stay cheap. */
 function Fold(props: { className: string; summary: ReactNode; children: () => ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -95,6 +110,16 @@ function OutputText(props: { text: string | null }) {
   );
 }
 
+function ToolOutput(props: RowTarget & { item: OrchestrationV2TurnItem }) {
+  const images = outputImages(props.item);
+  return (
+    <>
+      <MediaStrip environmentId={props.environmentId} images={images} />
+      {showsOnlyImages(props.item, images) ? null : <OutputText text={localOutput(props.item)} />}
+    </>
+  );
+}
+
 // The snapshot leaves long outputs out; the row asks the server once it is opened.
 function FetchedOutput(props: RowTarget & { item: OrchestrationV2TurnItem }) {
   const result = useAtomValue(
@@ -112,11 +137,25 @@ function FetchedOutput(props: RowTarget & { item: OrchestrationV2TurnItem }) {
   }
   const fetched = AsyncResult.getOrElse(result, () => null);
   if (fetched === null) return <p className="ade-tool-empty">Cargando la salida…</p>;
-  return <OutputText text={fetched.item === null ? null : localOutput(fetched.item)} />;
+  return fetched.item === null ? (
+    <OutputText text={null} />
+  ) : (
+    <ToolOutput environmentId={props.environmentId} threadId={props.threadId} item={fetched.item} />
+  );
 }
 
 function ToolRow(props: RowTarget & { item: OrchestrationV2TurnItem }) {
   const status = STATUS_TEXT[props.item.status];
+  const images = outputImages(props.item);
+  // An image the agent opened shows in the timeline, as in T3; there is nothing else to open.
+  if (showsOnlyImages(props.item, images)) {
+    return (
+      <div className="ade-tool ade-tool-viewed">
+        <span className="ade-tool-label">{toolLabel(props.item)}</span>
+        <MediaStrip environmentId={props.environmentId} images={images} />
+      </div>
+    );
+  }
   return (
     <Fold
       className="ade-tool"
@@ -135,7 +174,7 @@ function ToolRow(props: RowTarget & { item: OrchestrationV2TurnItem }) {
         turnItemNeedsDetailFetch(props.item) ? (
           <FetchedOutput {...props} />
         ) : (
-          <OutputText text={localOutput(props.item)} />
+          <ToolOutput {...props} />
         )
       }
     </Fold>
@@ -186,6 +225,28 @@ function DeferredWork(props: RowTarget & { row: OrchestrationV2ProjectedTurnItem
   );
 }
 
+function UserMessage(props: RowTarget & { item: Item<"user_message"> }) {
+  // The agent needs words to start a turn; the user sent only the attachments.
+  const text = isAttachmentOnlyBootstrapPrompt(props.item.text) ? "" : props.item.text;
+  const images = props.item.attachments.flatMap((attachment) =>
+    attachment.type === "image"
+      ? [
+          {
+            key: attachment.id,
+            resource: { _tag: "attachment" as const, attachmentId: attachment.id },
+            alt: attachment.name,
+          },
+        ]
+      : [],
+  );
+  return (
+    <div className="ade-msg-user">
+      <MediaStrip environmentId={props.environmentId} images={images} />
+      {text === "" ? null : <p className="ade-msg-user-text">{text}</p>}
+    </div>
+  );
+}
+
 // Rows keep their object while unchanged, so only the row whose item moved renders again.
 const TimelineRow = memo(function TimelineRow(
   props: RowTarget & { row: OrchestrationV2ProjectedTurnItem },
@@ -198,7 +259,7 @@ const TimelineRow = memo(function TimelineRow(
       return (
         <>
           {deferred}
-          <div className="ade-msg-user">{item.type === "user_message" ? item.text : null}</div>
+          {item.type === "user_message" ? <UserMessage {...props} item={item} /> : null}
         </>
       );
     case "assistant":

@@ -1,3 +1,5 @@
+import { createAssetEnvironmentAtoms } from "@t3tools/client-runtime/state/assets";
+import { createAttachmentEnvironmentAtoms } from "@t3tools/client-runtime/state/attachments";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { createOrchestrationEnvironmentAtoms } from "@t3tools/client-runtime/state/orchestration";
 import { createEnvironmentProjectAtoms } from "@t3tools/client-runtime/state/projects";
@@ -24,7 +26,11 @@ import {
   environmentShell,
 } from "./connection/runtime.ts";
 
-const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
+export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
+// Signed, short-lived URLs for attachments and tool images, minted over the session's socket.
+export const assetEnvironment = createAssetEnvironmentAtoms(connectionAtomRuntime);
+// Upload slots for the composer's images: a signed URL per file, then the bytes over HTTP.
+export const attachmentEnvironment = createAttachmentEnvironmentAtoms(connectionAtomRuntime);
 // Its hidden-thread tags keep a thread the user hides in T3 hidden here too.
 // Also the machine's providers and models, for the composer's pickers.
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {

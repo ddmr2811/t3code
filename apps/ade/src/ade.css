@@ -402,8 +402,10 @@ body {
   opacity: 0.3;
 }
 
+/* minmax(0, …): an auto track grows to a long title, and its ellipsis never shows. */
 .ade-tree {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -425,6 +427,7 @@ body {
 
 .ade-tree-threads {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -609,8 +612,95 @@ body {
   overflow-wrap: anywhere;
 }
 
+.ade-msg-user-text {
+  margin: 0;
+}
+
+.ade-msg-user .ade-media-strip + .ade-msg-user-text {
+  margin-top: 8px;
+}
+
 .ade-msg-agent {
   min-width: 0;
+}
+
+.ade-media-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ade-media {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  overflow: hidden;
+  background: var(--ade-bg);
+  cursor: zoom-in;
+}
+
+.ade-media:focus-visible {
+  outline: 1px solid var(--ade-accent);
+}
+
+.ade-media img {
+  display: block;
+  max-width: min(320px, 100%);
+  max-height: 200px;
+  object-fit: contain;
+}
+
+.ade-msg-user .ade-media img {
+  max-width: 200px;
+  max-height: 120px;
+}
+
+/* Holds the thumbnail's place while its URL is minted, so the rows below do not jump. */
+.ade-media-loading {
+  display: block;
+  width: 160px;
+  height: 100px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+}
+
+.ade-media-missing {
+  color: var(--ade-text-tertiary);
+  font-size: 12px;
+}
+
+.ade-media-viewer {
+  max-width: 92vw;
+  max-height: 92vh;
+  padding: 0;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+  cursor: zoom-out;
+}
+
+.ade-media-viewer::backdrop {
+  background: rgb(0 0 0 / 0.8);
+}
+
+.ade-media-viewer img {
+  display: block;
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+}
+
+.ade-tool-viewed {
+  display: grid;
+  gap: 6px;
+  padding-left: 16px;
+  font: 12.5px var(--ade-font-mono);
+}
+
+.ade-tool > .ade-media-strip {
+  margin-top: 8px;
 }
 
 .ade-md > :first-child > :first-child {
@@ -838,6 +928,161 @@ body {
 
 .ade-composer-actions .ade-button-quiet {
   margin-top: 0;
+}
+
+.ade-composer-bar > .ade-composer-settings {
+  flex: 1;
+}
+
+.ade-composer-icon,
+.ade-composer-send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--ade-border);
+  border-radius: 50%;
+  background: none;
+  color: var(--ade-text-muted);
+  cursor: pointer;
+}
+
+.ade-composer-icon:hover,
+.ade-composer-icon:focus-visible {
+  color: var(--ade-text);
+}
+
+.ade-composer-send {
+  border-color: var(--ade-accent);
+  background: var(--ade-accent);
+  color: #0a0a0a;
+}
+
+.ade-composer-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ade-composer-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-composer-images li {
+  position: relative;
+}
+
+.ade-composer-images img {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  object-fit: cover;
+}
+
+.ade-composer-images button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--ade-border);
+  border-radius: 50%;
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  cursor: pointer;
+}
+
+.ade-composer-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  color: var(--ade-text-tertiary);
+  font: 11.5px var(--ade-font-mono);
+}
+
+.ade-composer-where span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-provider-icon {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.ade-provider-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ade-provider-initials {
+  font: 600 9px/1 var(--ade-font-sans);
+}
+
+.ade-provider-badge {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  min-width: 12px;
+  padding: 0 2px;
+  border: 1px solid var(--ade-bg);
+  border-radius: 6px;
+  background: var(--ade-border);
+  color: var(--ade-text);
+  font: 600 7px/10px var(--ade-font-sans);
+  text-align: center;
+}
+
+.ade-picker summary,
+.ade-picker-menu label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ade-picker-menu label {
+  display: flex;
+}
+
+.ade-picker-menu label svg[width] {
+  margin-left: auto;
+}
+
+/* Settings that rarely change: no frame until hovered, like T3's footer chips. */
+.ade-picker.ade-picker-chip summary {
+  padding: 4px 6px;
+  border-color: transparent;
+  font-size: 11.5px;
+}
+
+.ade-picker.ade-picker-chip summary:hover,
+.ade-picker.ade-picker-chip[open] summary {
+  border-color: var(--ade-border);
 }
 
 .ade-composer-note {

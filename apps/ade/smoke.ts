@@ -620,6 +620,54 @@ try {
   await forceTerminalOpen();
   await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
   await conversation.waitFor();
+
+  // An image alone is sent as T3 sends it, and comes back from the server as the message's own.
+  const userRows = conversation.locator(".ade-msg-user");
+  const rowsBeforeImage = await userRows.count();
+  const repliesBeforeImage = await conversation.locator(".ade-msg-agent").count();
+  await composer.locator('input[type="file"]').setInputFiles({
+    name: `punto-${run}.png`,
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  });
+  const pending = composer.getByRole("list", { name: "Imágenes adjuntas" });
+  await pending.getByRole("img", { name: `punto-${run}.png` }).waitFor();
+  await shot("compositor-imagen");
+  await message.press("Enter");
+  await pending.waitFor({ state: "detached" });
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".ade-msg-user").length > count,
+    rowsBeforeImage,
+  );
+  const sentImage = userRows.last().getByRole("img", { name: `punto-${run}.png` });
+  // Loaded, not only placed: the signed URL is the server's and the CSP lets it in.
+  await page.waitForFunction(
+    (name) =>
+      [...document.querySelectorAll<HTMLImageElement>(".ade-msg-user img")].some(
+        (image) => image.alt === name && image.complete && image.naturalWidth > 0,
+      ),
+    `punto-${run}.png`,
+  );
+  NodeAssert.equal(await sentImage.count(), 1, "the sent image shows in its message");
+  NodeAssert.doesNotMatch(
+    await userRows.last().innerText(),
+    /User attached/,
+    "the agent's placeholder for an image alone is not shown",
+  );
+  await shot("mensaje-con-imagen");
+  // Replay's ACP agent takes no images: its turn ends in an error, and the thread's later turns
+  // fail too. So this comes last of the turns.
+  await page.waitForFunction(
+    (count) =>
+      document.querySelectorAll(".ade-msg-agent").length > count ||
+      document.querySelector(".ade-turn:last-child .ade-error") !== null,
+    repliesBeforeImage,
+  );
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
   const repaired = await readCatalog();
   NodeAssert.equal(
     repaired.match(/accessToken/g)?.length,

@@ -10,10 +10,10 @@ import { connectSrc, parseConnectOrigins } from "./src/connection/csp.ts";
 // "http://100.101.102.103:3773". Unset allows none.
 const connectOrigins = parseConnectOrigins(process.env.ADE_CONNECT_ORIGINS);
 
-// img-src allows the dither's data: SVG masks. Inline styles carry the diff's theme and syntax
-// colors (@pierre/diffs); with img-src, font-src and connect-src closed they cannot send data out.
+// img-src: the dither's data: masks, composer previews and the servers' signed asset URLs. Inline
+// styles (@pierre/diffs) can reach only the servers connect-src already names; font-src is closed.
 // Dev skips the CSP: React refresh injects an inline script there.
-const CSP = `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${connectSrc(connectOrigins)}`;
+const CSP = `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src ${["'self'", "data:", ...connectOrigins].join(" ")}; connect-src ${connectSrc(connectOrigins)}`;
 
 export default defineConfig({
   define: { __ADE_CONNECT_ORIGINS__: JSON.stringify(connectOrigins) },

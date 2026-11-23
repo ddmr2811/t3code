@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { providerChoices, turnSettings } from "./composer.logic.ts";
+import { acceptImages, effortBars, providerChoices, turnSettings } from "./composer.logic.ts";
 
 const project = ProjectId.make("project");
 const provider = (id: string, extra: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -70,8 +70,10 @@ describe("turnSettings", () => {
   } as const;
   const choice = (interactionModes: boolean) => ({
     instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
     label: "Codex",
-    models: [{ slug: "m", name: "M" }],
+    accentColor: undefined,
+    models: [{ slug: "m", name: "M", descriptors: [] }],
     runtimeModes: ["approval-required", "auto"] as const,
     interactionModes,
   });
@@ -89,5 +91,55 @@ describe("turnSettings", () => {
     const draft = { text: "", interactionMode: "default" } as const;
     expect(turnSettings(draft, thread, [choice(false)]).interactionMode).toBe("plan");
     expect(turnSettings(draft, thread, [choice(true)]).interactionMode).toBe("default");
+  });
+});
+
+describe("acceptImages", () => {
+  const file = (name: string, type: string, size = 1024) => ({ name, type, size });
+
+  it("takes only what the turn contract accepts", () => {
+    const { accepted, error } = acceptImages(
+      [],
+      [
+        file("a.png", "image/png"),
+        file("b.svg", "image/svg+xml"),
+        file("c.webp", "image/webp", 10 * 1024 * 1024),
+        file("d.jpg", "image/jpeg", 10 * 1024 * 1024 + 1),
+        file("e.gif", "image/gif", 0),
+      ],
+    );
+    expect(accepted.map((image) => image.name)).toEqual(["a.png", "c.webp"]);
+    expect(error).toContain("b.svg");
+    expect(error).toContain("d.jpg");
+    expect(error).toContain("e.gif");
+  });
+
+  it("stops at the message's total image size", () => {
+    // 80 MB in all: eight 10 MB images fit, a ninth does not.
+    const ten = 10 * 1024 * 1024;
+    const { accepted } = acceptImages(
+      [],
+      Array.from({ length: 9 }, (_, index) => file(`${index}.png`, "image/png", ten)),
+    );
+    expect(accepted).toHaveLength(8);
+  });
+});
+
+describe("effortBars", () => {
+  const select = (ids: ReadonlyArray<string>) => ({
+    id: "effort",
+    label: "Effort",
+    type: "select" as const,
+    options: ids.map((id) => ({ id, label: id })),
+  });
+
+  it("fills up to the current level, an off level filling none", () => {
+    expect(effortBars(select(["low", "medium", "high"]), "medium")).toEqual({
+      count: 3,
+      filled: 2,
+    });
+    expect(effortBars(select(["off", "low", "high"]), "off")).toEqual({ count: 2, filled: 0 });
+    // Max is named, not a bar: it fills them all.
+    expect(effortBars(select(["low", "high", "max"]), "max")).toEqual({ count: 2, filled: 2 });
   });
 });
