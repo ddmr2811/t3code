@@ -1,12 +1,13 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { StrictMode, useContext, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
 // Shared with apps/web's fork rather than copied: same fonts, same dither code.
 import { gradientFillStyle } from "../../web/src/fork/dither/style.ts";
 import "./ade.css";
-import { connectionAtomRuntime } from "./connection/runtime.ts";
+import { followMachine } from "./connection/pairing.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
 import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
@@ -38,8 +39,10 @@ function MainContent() {
 function Shell() {
   const registry = useContext(RegistryContext);
   useEffect(
-    // Rebuilding the connections reads the stored machines again; drafts live outside them.
-    () => onMachinesChanged(() => registry.refresh(connectionAtomRuntime)),
+    () =>
+      onMachinesChanged(
+        (environmentId) => void runAtomCommand(registry, followMachine, environmentId),
+      ),
     [registry],
   );
   return (

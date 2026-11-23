@@ -570,9 +570,35 @@ try {
 
   // Paired once more without the terminal, at the first address: the grant is gone for good.
   // Another tab of the same browser follows, and nothing of the older sessions is kept.
+  // This browser's catalog is one an earlier ADE stored: it named a route by its address, so
+  // pairing at another address left the older route, and its terminal grant, beside the new one.
+  const legacyRoute = `bearer:${ownEnvironmentId}:${otherT3Url}`;
+  await page.evaluate(
+    (legacy) =>
+      new Promise<void>((resolve) => {
+        const open = indexedDB.open("ade");
+        open.addEventListener("success", () => {
+          const store = open.result.transaction("kv", "readwrite").objectStore("kv");
+          const read = store.get("catalog");
+          read.addEventListener("success", () => {
+            const route = JSON.parse(read.result).targets[0].connectionId;
+            store
+              .put(read.result.replaceAll(route, legacy), "catalog")
+              .addEventListener("success", () => resolve());
+          });
+        });
+      }),
+    legacyRoute,
+  );
+  await page.reload();
+  await terminalButtonIs(page, "on");
   const tab = await page.context().newPage();
   await tab.goto(page.url());
   await terminalButtonIs(tab, "on");
+  // The other tab has its terminal open: paired again, nothing opens one for it.
+  const tabTerminal = tab.getByRole("region", { name: "Terminal", exact: true });
+  await tab.getByRole("button", { name: "Terminal", exact: true }).click();
+  await tabTerminal.getByRole("status").filter({ hasText: "En marcha" }).waitFor();
   // The other tab takes the change in where it stands: a reload would lose both of these.
   const tabDraft = tab
     .getByRole("region", { name: "Compositor" })
@@ -582,6 +608,11 @@ try {
   await pairAgain(linkFor(mintToken()), false);
   await page.getByText("Conectada", { exact: true }).first().waitFor();
   await terminalButtonIs(tab, "off");
+  NodeAssert.equal(
+    await tabTerminal.count(),
+    0,
+    "a terminal opened under the earlier pairing is not opened again",
+  );
   NodeAssert.ok(await tab.evaluate("window.smokeMark"), "the other tab did not reload");
   NodeAssert.equal(await tabDraft.inputValue(), `Borrador ${run}`, "the other tab kept its draft");
   await tab.close();
@@ -599,6 +630,7 @@ try {
     granted.slice(0, -1).every((grant) => !repaired.includes(grant.access_token)),
     "no earlier session's token is kept",
   );
+  NodeAssert.ok(!repaired.includes(legacyRoute), "no route of the earlier pairing is kept");
 
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(

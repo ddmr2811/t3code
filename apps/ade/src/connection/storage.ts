@@ -1,11 +1,14 @@
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
+  BearerConnectionRegistration,
   type ConnectionCredential,
+  connectionRouteId,
   ConnectionTransientError,
   CredentialStore,
   ProfileStore,
 } from "@t3tools/client-runtime/connection";
 import {
+  catalogRoutes,
   ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   Persistence,
@@ -17,6 +20,7 @@ import {
   setConnectionEnabledInCatalog,
   setRoutesInCatalog,
 } from "@t3tools/client-runtime/platform";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -78,6 +82,8 @@ const decodeCatalog = Schema.decodeUnknownOption(CatalogJson);
 const parseCatalog = (raw: unknown) =>
   Option.getOrElse(decodeCatalog(raw), () => EMPTY_CONNECTION_CATALOG_DOCUMENT);
 
+const stalePairing = () => new Error("The machine was paired again or removed in another tab.");
+
 // The cause stays out of the message: a catalog that fails to decode holds tokens.
 const storageError = () =>
   new ConnectionTransientError({
@@ -119,6 +125,77 @@ export function putCredentialInCatalog(
   };
 }
 
+const pairedCredentials = (document: Catalog, environmentId: EnvironmentId) => {
+  const routeIds = new Set(catalogRoutes(document, environmentId).map(connectionRouteId));
+  return document.credentials.filter((entry) => routeIds.has(entry.connectionId));
+};
+
+/**
+ * Which pairing a machine's stored routes come from. Every pairing has a connection id of its
+ * own, so this changes when the machine is paired again and is empty once it is removed.
+ */
+export const storedPairing = (document: Catalog, environmentId: EnvironmentId) =>
+  pairedCredentials(document, environmentId)
+    .map((entry) => entry.connectionId)
+    .join(" ");
+
+// The pairing this tab's connections were built from, per machine. Another tab may have paired
+// the machine again or removed it since: what this tab then writes for it belongs to a pairing
+// that is gone, and must not bring it back or touch the one stored now.
+const tabPairing = new Map<EnvironmentId, string>();
+
+/** Routes from a tab whose `pairing` is no longer the stored one are refused. */
+export function setRoutesOfPairing(
+  document: Catalog,
+  environmentId: EnvironmentId,
+  routes: Parameters<typeof setRoutesInCatalog>[2],
+  pairing: string | undefined,
+): Catalog {
+  if (storedPairing(document, environmentId) !== pairing) throw stalePairing();
+  return setRoutesInCatalog(document, environmentId, routes);
+}
+
+/** A tab on an older `pairing` only lets go of its own connections: the stored one stays. */
+export const removePairing = (
+  document: Catalog,
+  environmentId: EnvironmentId,
+  pairing: string | undefined,
+): Catalog =>
+  storedPairing(document, environmentId) === pairing
+    ? removeConnectionFromCatalog(document, environmentId)
+    : document;
+
+// Registrations read back from the catalog: taking one in must not write it again.
+const adopted = new WeakSet<object>();
+
+/** What is stored for a machine, for a tab to take in after another tab paired it. */
+export const storedRegistration = (environmentId: EnvironmentId) =>
+  catalog.read.pipe(
+    Effect.map((document) => {
+      const stored = pairedCredentials(document, environmentId)[0];
+      const target = catalogRoutes(document, environmentId).find(
+        (route) => connectionRouteId(route) === stored?.connectionId,
+      );
+      const profile = document.profiles.find(
+        (entry) => entry.connectionId === stored?.connectionId,
+      );
+      if (
+        stored === undefined ||
+        target?._tag !== "BearerConnectionTarget" ||
+        profile?._tag !== "BearerConnectionProfile"
+      ) {
+        return Option.none();
+      }
+      const registration = new BearerConnectionRegistration({
+        target,
+        profile,
+        credential: stored.credential,
+      });
+      adopted.add(registration);
+      return Option.some(registration);
+    }),
+  );
+
 const persistenceError =
   (operation: Persistence.ConnectionPersistenceError["operation"]) =>
   (error: ConnectionTransientError) =>
@@ -154,7 +231,12 @@ const layerCatalogStores = Layer.succeedContext(
     Persistence.ConnectionTargetStore,
     Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
-        Effect.map((document) => document.targets),
+        Effect.map((document) => {
+          for (const { environmentId } of document.targets) {
+            tabPairing.set(environmentId, storedPairing(document, environmentId));
+          }
+          return document.targets;
+        }),
         Effect.mapError(persistenceError("list-targets")),
       ),
       listDisabled: catalog.read.pipe(
@@ -166,22 +248,41 @@ const layerCatalogStores = Layer.succeedContext(
     Context.add(
       Persistence.ConnectionRegistrationStore,
       Persistence.ConnectionRegistrationStore.of({
-        register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
-          (registration, routes) =>
-            catalog
-              .update((document) => registerConnectionInCatalog(document, registration, routes))
-              .pipe(Effect.mapError(persistenceError("register-connection"))),
-        ),
+        // A pairing replaces every route the machine had, with their profiles and credentials:
+        // the routes the registry still holds from an earlier pairing are not stored again.
+        register: Effect.fn("Persistence.ConnectionRegistrationStore.register")((registration) => {
+          const { environmentId } = registration.target;
+          const pairing = connectionRouteId(registration.target);
+          return catalog
+            .update((document) => {
+              if (!adopted.has(registration)) {
+                return registerConnectionInCatalog(document, registration);
+              }
+              if (storedPairing(document, environmentId) !== pairing) throw stalePairing();
+              return document;
+            })
+            .pipe(
+              Effect.tap(() => Effect.sync(() => tabPairing.set(environmentId, pairing))),
+              Effect.mapError(persistenceError("register-connection")),
+            );
+        }),
         setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
           (environmentId, routes) =>
             catalog
-              .update((document) => setRoutesInCatalog(document, environmentId, routes))
+              .update((document) =>
+                setRoutesOfPairing(document, environmentId, routes, tabPairing.get(environmentId)),
+              )
               .pipe(Effect.mapError(persistenceError("set-connection-routes"))),
         ),
         remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")((environmentId) =>
           catalog
-            .update((document) => removeConnectionFromCatalog(document, environmentId))
-            .pipe(Effect.mapError(persistenceError("remove-connection"))),
+            .update((document) =>
+              removePairing(document, environmentId, tabPairing.get(environmentId)),
+            )
+            .pipe(
+              Effect.tap(() => Effect.sync(() => tabPairing.delete(environmentId))),
+              Effect.mapError(persistenceError("remove-connection")),
+            ),
         ),
         setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
           (environmentId, enabled) =>
@@ -203,14 +304,18 @@ const layerCatalogStores = Layer.succeedContext(
             ),
           ),
         put: (profile) =>
-          catalog.update((document) => ({
-            ...document,
-            profiles: replaceCatalogValue(
-              document.profiles,
-              (value) => value.connectionId,
-              profile,
-            ),
-          })),
+          catalog.update((document) =>
+            storedPairing(document, profile.environmentId) === tabPairing.get(profile.environmentId)
+              ? {
+                  ...document,
+                  profiles: replaceCatalogValue(
+                    document.profiles,
+                    (value) => value.connectionId,
+                    profile,
+                  ),
+                }
+              : document,
+          ),
         remove: (connectionId) =>
           catalog.update((document) => ({
             ...document,

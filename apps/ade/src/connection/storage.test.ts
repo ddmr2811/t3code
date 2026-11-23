@@ -1,8 +1,23 @@
-import { DpopConnectionCredential } from "@t3tools/client-runtime/connection";
-import { EMPTY_CONNECTION_CATALOG_DOCUMENT } from "@t3tools/client-runtime/platform";
+import {
+  BearerConnectionProfile,
+  BearerConnectionRegistration,
+  BearerConnectionTarget,
+  DpopConnectionCredential,
+} from "@t3tools/client-runtime/connection";
+import {
+  EMPTY_CONNECTION_CATALOG_DOCUMENT,
+  registerConnectionInCatalog,
+  removeConnectionFromCatalog,
+} from "@t3tools/client-runtime/platform";
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { putCredentialInCatalog } from "./storage.ts";
+import {
+  putCredentialInCatalog,
+  removePairing,
+  setRoutesOfPairing,
+  storedPairing,
+} from "./storage.ts";
 
 const credential = (accessToken: string) =>
   new DpopConnectionCredential({ accessToken, expiresAtEpochMs: 1 });
@@ -41,5 +56,43 @@ describe("putCredentialInCatalog", () => {
       credential("first"),
     );
     expect(stored(renewed)).toEqual([]);
+  });
+});
+
+describe("a tab on an older pairing", () => {
+  const environmentId = EnvironmentId.make("machine");
+  const pairedAs = (connectionId: string) => {
+    const route = { connectionId, environmentId, label: "Machine" };
+    return registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: new BearerConnectionTarget(route),
+        profile: new BearerConnectionProfile({
+          ...route,
+          httpBaseUrl: "http://localhost:3773/",
+          wsBaseUrl: "ws://localhost:3773/",
+        }),
+        credential: credential(connectionId),
+      }),
+    );
+  };
+  const first = pairedAs("first");
+  const tabPairing = storedPairing(first, environmentId);
+
+  it("writes the routes of a pairing that is still the stored one", () => {
+    expect(setRoutesOfPairing(first, environmentId, first.targets, tabPairing)).toEqual(first);
+  });
+
+  it.each([
+    ["removed", removeConnectionFromCatalog(first, environmentId)],
+    ["paired again", pairedAs("second")],
+  ])("does not bring its routes back once the machine was %s", (_name, storedNow) => {
+    expect(() => setRoutesOfPairing(storedNow, environmentId, first.targets, tabPairing)).toThrow();
+  });
+
+  it("removes nothing of the pairing that replaced its own", () => {
+    const second = pairedAs("second");
+    expect(removePairing(second, environmentId, tabPairing)).toBe(second);
+    expect(removePairing(first, environmentId, tabPairing).targets).toEqual([]);
   });
 });

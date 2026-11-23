@@ -65,7 +65,7 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
             environmentCatalog.remove,
             props.environmentId,
           );
-          if (AsyncResult.isSuccess(removed)) machinesChanged();
+          if (AsyncResult.isSuccess(removed)) machinesChanged(props.environmentId);
         }}
       >
         <TrashIcon size={14} />

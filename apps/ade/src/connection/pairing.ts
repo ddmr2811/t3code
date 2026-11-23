@@ -3,6 +3,8 @@ import {
   BearerConnectionProfile,
   BearerConnectionRegistration,
   BearerConnectionTarget,
+  connectionRouteId,
+  connectionRoutes,
   DpopConnectionCredential,
   EnvironmentRegistry,
   mapRemoteEnvironmentError,
@@ -20,15 +22,20 @@ import {
   AuthOrchestrationReadScope,
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Clock from "effect/Clock";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { originAllowed } from "./csp.ts";
 import { connectionAtomRuntime } from "./runtime.ts";
 import { failureText } from "./status.ts";
+import { storedRegistration } from "./storage.ts";
 import { machinesChanged } from "./tabs.ts";
 
 // Read threads; answer approvals and questions and send turns. Both of the latter are
@@ -61,6 +68,23 @@ export const TOKEN_IN_QUERY_TEXT =
   "Este enlace lleva el código en «?token=», a la vista del servidor que aloja la página. No se ha usado: crea un enlace nuevo y ábrelo con el código en «#token=».";
 
 /**
+ * The registry adds a pairing to the routes it already holds. Storage kept only the new one, so
+ * the others leave the registry as well.
+ */
+const keepOnlyRoute = Effect.fn("ade.pairing.keepOnlyRoute")(function* (
+  environmentId: EnvironmentId,
+  connectionId: string,
+) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+  for (const route of entry === undefined ? [] : connectionRoutes(entry)) {
+    const routeId = connectionRouteId(route.target);
+    if (routeId !== connectionId) yield* registry.removeRoute(environmentId, routeId);
+  }
+  yield* registry.setCompatibility(environmentId, null);
+});
+
+/**
  * `ConnectionOnboarding.registerPairing` with two differences the ADE needs: it asks for
  * `ADE_SCOPES` (plus the terminal, when chosen) instead of the link's whole grant, and it never
  * falls back to a bearer token.
@@ -89,8 +113,10 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     );
   }
 
-  // A machine has one route, whatever its address: pairing it again replaces that route.
-  const connectionId = `bearer:${descriptor.environmentId}`;
+  // A machine has one route, whatever its address, and each pairing names it anew: a connection
+  // made before the machine was paired again asks for a credential that is no longer stored.
+  const random = yield* SecureRandom.SecureRandom;
+  const connectionId = `bearer:${descriptor.environmentId}:${yield* random.uuidV4()}`;
   const route = {
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
@@ -141,8 +167,8 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     }),
   );
   if (!registered) return yield* failed("Esta máquina no se puede volver a emparejar.");
-  yield* registry.setCompatibility(descriptor.environmentId, null);
-  machinesChanged();
+  yield* keepOnlyRoute(descriptor.environmentId, connectionId);
+  machinesChanged(descriptor.environmentId);
   return descriptor.environmentId;
 });
 
@@ -157,8 +183,25 @@ export const pairMachine = createRuntimeCommand(connectionAtomRuntime, {
           : failed(
               error._tag === "ConnectionPersistenceError"
                 ? "No se pudo guardar la máquina en este navegador."
-                : failureText(error),
+                : failureText("reason" in error ? error : null),
             ),
       ),
     ),
+});
+
+/** Takes in, for one machine, what another tab stored: its new pairing, or its removal. */
+export const followMachine = createRuntimeCommand(connectionAtomRuntime, {
+  label: "ade:follow-machine",
+  concurrency: { mode: "serial", key: () => "ade-pairing" },
+  execute: Effect.fn("ade.pairing.followMachine")(function* (environmentId: EnvironmentId) {
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+    const stored = yield* storedRegistration(environmentId);
+    if (Option.isNone(stored)) {
+      return yield* registry
+        .remove(environmentId)
+        .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
+    }
+    yield* registry.register(stored.value);
+    yield* keepOnlyRoute(environmentId, connectionRouteId(stored.value.target));
+  }),
 });

@@ -3,6 +3,7 @@ import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
+import { connectionRouteId, credentialConnectionId } from "@t3tools/client-runtime/connection";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -316,10 +317,10 @@ export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
   const ref = key === null ? null : parseScopedThreadKey(key);
-  const [terminalKey, setTerminalKey] = useState<string | null>(null);
+  const [terminal, setTerminal] = useState<{ key: string; pairing: string } | null>(null);
   const openDiff = (range: DiffRange) => {
     if (key === null) return;
-    setTerminalKey(null);
+    setTerminal(null);
     setDiff({ key, range });
   };
   const openRange = diff !== null && diff.key === key ? diff.range : null;
@@ -329,7 +330,14 @@ export function SelectedThread() {
   const machine = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) =>
     ref === null ? null : (catalog.entries.get(ref.environmentId)?.target.label ?? null),
   );
+  // The route's id is new each time the machine is paired. A terminal opened under another
+  // pairing, or before the machine was removed, is not opened again by itself.
+  const pairing = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) => {
+    const target = ref === null ? undefined : catalog.entries.get(ref.environmentId)?.target;
+    return target === undefined ? null : credentialConnectionId(connectionRouteId(target));
+  });
   if (ref === null) return null;
+  const terminalOpen = terminal !== null && terminal.key === key && terminal.pairing === pairing;
   return (
     <section className="ade-thread-view">
       <header className="ade-thread-view-header">
@@ -351,20 +359,23 @@ export function SelectedThread() {
         )}
         <div className="ade-thread-view-actions">
           {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
-          {machine === null || thread === null ? null : (
-            <TerminalButton environmentId={ref.environmentId} onOpen={() => setTerminalKey(key)} />
+          {key === null || pairing === null || thread === null ? null : (
+            <TerminalButton
+              environmentId={ref.environmentId}
+              onOpen={() => setTerminal({ key, pairing })}
+            />
           )}
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
             Volver al resumen
           </button>
         </div>
       </header>
-      {machine === null ? null : terminalKey === key && thread !== null ? (
+      {machine === null ? null : terminalOpen && thread !== null ? (
         <ThreadTerminal
           key={key}
           threadRef={ref}
           thread={thread}
-          onClose={() => setTerminalKey(null)}
+          onClose={() => setTerminal(null)}
         />
       ) : openRange !== null ? (
         <Suspense fallback={<p className="ade-diff-note">Cargando el diff…</p>}>
