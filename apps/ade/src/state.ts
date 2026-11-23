@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   type EnvironmentId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -62,6 +63,16 @@ export const operateAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     if (session === null) return null;
     return sessionGrantsScope(session, AuthOrchestrationOperateScope) ? "operate" : "read";
   }).pipe(Atom.withLabel(`ade-operate-access:${environmentId}`)),
+);
+
+/** Whether this ADE's session may run a shell on a machine: only if pairing asked for it. */
+export const terminalAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    if (result._tag === "Failure") return false;
+    const session = AsyncResult.getOrElse(result, () => null);
+    return session !== null && sessionGrantsScope(session, AuthTerminalOperateScope);
+  }).pipe(Atom.withLabel(`ade-terminal-access:${environmentId}`)),
 );
 
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();

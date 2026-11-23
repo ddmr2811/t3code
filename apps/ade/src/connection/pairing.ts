@@ -18,6 +18,7 @@ import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
@@ -37,6 +38,8 @@ export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
 ];
 
 export interface PairingInput {
+  /** Also ask for a shell on the machine. Off by default: it is more than driving its agents. */
+  readonly terminal?: boolean;
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
@@ -51,7 +54,8 @@ const failed = (message: string) => new PairingError({ message });
 
 /**
  * `ConnectionOnboarding.registerPairing` with two differences the ADE needs: it asks for
- * `ADE_SCOPES` instead of the link's whole grant, and it never falls back to a bearer token.
+ * `ADE_SCOPES` (plus the terminal, when chosen) instead of the link's whole grant, and it never
+ * falls back to a bearer token.
  */
 const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   const target = yield* Effect.try({
@@ -103,7 +107,8 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   const access = yield* exchangeRemoteDpopAccessToken({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: ADE_SCOPES,
+    // The server grants only what the link carries, so asking never widens a narrower link.
+    scopes: input.terminal === true ? [...ADE_SCOPES, AuthTerminalOperateScope] : ADE_SCOPES,
     clientMetadata: presentation.metadata,
     dpopProof,
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));
@@ -122,9 +127,14 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     }),
   );
   yield* registry.setCompatibility(descriptor.environmentId, null);
+  // A machine paired again keeps the socket its old session opened, with the old grants: off and
+  // on makes it connect with the new one.
   yield* registry
-    .setEnabled(descriptor.environmentId, true)
-    .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
+    .setEnabled(descriptor.environmentId, false)
+    .pipe(
+      Effect.andThen(registry.setEnabled(descriptor.environmentId, true)),
+      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
+    );
   return descriptor.environmentId;
 });
 

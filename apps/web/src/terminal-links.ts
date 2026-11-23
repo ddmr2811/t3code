@@ -1,5 +1,5 @@
 import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { isMacPlatform } from "./lib/utils";
+import { isMacPlatform } from "@t3tools/shared/keybindings";
 
 export type TerminalLinkKind = "url" | "path";
 

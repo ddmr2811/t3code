@@ -1,7 +1,7 @@
 // Smoke test of the built ADE against a real T3 dev server, Replay (dev) turns only. Newest thread:
 // a finished Replay `command-output` turn, nothing pending, its project a Git repo (ADE_SMOKE_REPO).
 // T3_URL allows ADE_URL (T3CODE_DEV_ALLOWED_ORIGINS); the ADE is built with ADE_CONNECT_ORIGINS=T3_URL.
-// T3_PAIRING_TOKEN, T3_READONLY_PAIRING_TOKEN (`t3 pair --scope orchestration:read`); ADE_SMOKE_SHOTS.
+// T3_PAIRING_TOKEN, T3_TERMINAL_PAIRING_TOKEN, T3_READONLY_PAIRING_TOKEN (--scope orchestration:read).
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -17,6 +17,7 @@ const adeUrl = env("ADE_URL");
 const t3Url = env("T3_URL");
 const pairingToken = env("T3_PAIRING_TOKEN");
 const readOnlyPairingToken = env("T3_READONLY_PAIRING_TOKEN");
+const terminalPairingToken = env("T3_TERMINAL_PAIRING_TOKEN");
 const repo = env("ADE_SMOKE_REPO");
 const shots = process.env.ADE_SMOKE_SHOTS;
 
@@ -24,12 +25,26 @@ const browser = await chromium.launch();
 const consoleText: Array<string> = [];
 const requestUrls: Array<string> = [];
 const granted: Array<{ token_type: string; scope: string; access_token: string }> = [];
+// What the server itself turned down, read off the socket: a refusal the ADE made up is not here.
+const refusedScopes: Array<string> = [];
 // Each page is its own browser profile: its own key, its own session.
 const openPage = async () => {
-  const opened = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const opened = await browser.newPage({
+    viewport: { width: 1920, height: 1080 },
+    // The terminal is a canvas: the test reads what it shows by copying it.
+    permissions: ["clipboard-read", "clipboard-write"],
+  });
   opened.on("console", (message) => consoleText.push(message.text()));
   opened.on("request", (request) => requestUrls.push(request.url()));
-  opened.on("websocket", (socket) => requestUrls.push(socket.url()));
+  opened.on("websocket", (socket) => {
+    requestUrls.push(socket.url());
+    socket.on("framereceived", (frame) => {
+      const scope = /"EnvironmentAuthorizationError".*?"requiredScope":"([a-z:-]+)"/.exec(
+        String(frame.payload),
+      )?.[1];
+      if (scope !== undefined) refusedScopes.push(scope);
+    });
+  });
   opened.on("response", async (response) => {
     if (response.url().endsWith("/oauth/token") && response.ok())
       granted.push(await response.json());
@@ -274,6 +289,91 @@ try {
   await reader.close();
   await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
 
+  // The terminal is a grant of its own, and this session did not ask for it: the button is off
+  // and says why. React drops a click on a disabled button, so forcing it calls its handler.
+  const terminalButton = page.getByRole("button", { name: "Terminal", exact: true });
+  const terminal = page.getByRole("region", { name: "Terminal", exact: true });
+  NodeAssert.ok(await terminalButton.isDisabled(), "without the terminal grant the button is off");
+  await terminalButton.hover({ force: true });
+  await page.getByRole("tooltip").filter({ hasText: "permiso de terminal" }).waitFor();
+  await shot("terminal-sin-permiso");
+  await terminalButton.evaluate((button) => {
+    const props = Object.entries(button).find(([name]) => name.startsWith("__reactProps$"))?.[1];
+    props.onClick();
+  });
+  await terminal.getByRole("alert").filter({ hasText: "La máquina rechazó el terminal" }).waitFor();
+  NodeAssert.ok(refusedScopes.includes("terminal:operate"), "the server refused the terminal");
+  await shot("terminal-forzado-rechazado");
+  await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
+  await conversation.waitFor();
+
+  // Pairing again with «Permitir terminal» is what turns it on, for a link that carries it.
+  await page.getByRole("button", { name: "Añadir máquina" }).click();
+  await page.getByLabel("Enlace de emparejamiento o dirección").fill(linkFor(terminalPairingToken));
+  await page.getByLabel(/^Permitir terminal/).check();
+  await pair();
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll("button")].some(
+      (button) => button.textContent === "Terminal" && !button.disabled,
+    ),
+  );
+  NodeAssert.equal(
+    granted.at(-1)?.scope.split(" ").toSorted().join(" "),
+    "orchestration:operate orchestration:read terminal:operate",
+    "asking for the terminal adds that one scope",
+  );
+
+  // A command typed into the terminal runs in the thread's folder and its output is drawn.
+  await terminalButton.click();
+  await terminal.getByRole("status").filter({ hasText: "En marcha" }).waitFor();
+  // Each command prints its own mark, so what is read back is that command's output.
+  let commands = 0;
+  const shell = async (command: (mark: string) => string, expected: (mark: string) => RegExp) => {
+    const mark = `m${(commands += 1)}x${run}`;
+    await terminal.locator("canvas").click();
+    await page.keyboard.insertText(command(mark));
+    await page.keyboard.press("Enter");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await page.keyboard.press("Control+Shift+A");
+      await page.keyboard.press("Control+Shift+C");
+      const match = expected(mark).exec(await page.evaluate(() => navigator.clipboard.readText()));
+      if (match !== null) return match[1];
+      await page.waitForTimeout(100);
+    }
+    throw new Error(`the terminal never showed ${expected(mark)}`);
+  };
+  NodeAssert.equal(
+    await shell(
+      (mark) => `echo ${mark}-$((1234*5678)) "$PWD"`,
+      (mark) => new RegExp(`${mark}-7006652 (\\S+)`),
+    ),
+    repo,
+    "the shell starts in the thread's folder",
+  );
+  // Reading it back selected everything; a click leaves the capture as a user sees it.
+  await terminal.locator("canvas").click();
+  await shot("terminal-con-salida");
+  // The shell's own grid follows the window.
+  const shellSize = () =>
+    shell(
+      (mark) => `echo ${mark}-$(stty size | tr ' ' x)-fin`,
+      (mark) => new RegExp(`${mark}-(\\d+x\\d+)-fin`),
+    );
+  const wide = await shellSize();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  let narrow = wide;
+  for (let attempt = 0; attempt < 20 && narrow === wide; attempt += 1) narrow = await shellSize();
+  NodeAssert.notEqual(narrow, wide, "resizing the window resizes the shell");
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  // A shell that ends says so and stays on screen; another one is a click away.
+  await page.keyboard.insertText("exit");
+  await page.keyboard.press("Enter");
+  await terminal.getByRole("status").filter({ hasText: "El proceso terminó" }).waitFor();
+  await terminal.getByRole("button", { name: "Abrir otro" }).click();
+  await terminal.getByRole("status").filter({ hasText: "En marcha" }).waitFor();
+  await terminal.getByRole("button", { name: "Cerrar terminal" }).click();
+  await conversation.waitFor();
+
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(
     granted[0]?.scope.split(" ").toSorted().join(" "),
@@ -344,6 +444,7 @@ try {
   const secrets = [
     pairingToken,
     readOnlyPairingToken,
+    terminalPairingToken,
     ...granted.map((grant) => grant.access_token),
   ];
   for (const secret of secrets) {

@@ -8,8 +8,9 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        // Deep-merged with tsconfig.base.json. The remote HTTP client wraps the browser's fetch.
-        "diagnosticSeverity": { "globalFetch": "off" }
+        // Deep-merged with tsconfig.base.json. The remote HTTP client wraps the browser's fetch;
+        // the ghostty runtime shared with apps/web logs libghostty's messages to the console.
+        "diagnosticSeverity": { "globalFetch": "off", "globalConsole": "off" }
       }
     ]
   },

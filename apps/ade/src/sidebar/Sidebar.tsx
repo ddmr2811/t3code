@@ -32,6 +32,7 @@ import {
   environmentThreadDetails,
   environmentThreadShells,
   operableEnvironmentIdsAtom,
+  terminalAccessAtom,
 } from "../state.ts";
 import { groupThreads, listedThreads, type ThreadState, threadState } from "./sidebar.logic.ts";
 
@@ -228,6 +229,9 @@ const NO_THREAD = Atom.make(null);
 // The diff renderer loads with the first diff opened, not with the app.
 const DiffView = lazy(() => import("../diff/DiffView.tsx"));
 
+// Ghostty's wasm loads with the first terminal opened.
+const TerminalView = lazy(() => import("../terminal/TerminalView.tsx"));
+
 const turnRange = (checkpoint: ThreadCheckpointSummary): DiffRange => ({
   fromTurnCount: checkpoint.checkpointTurnCount - 1,
   toTurnCount: checkpoint.checkpointTurnCount,
@@ -260,12 +264,64 @@ function ThreadChangesButton(props: {
   );
 }
 
+function TerminalButton(props: { environmentId: EnvironmentId; onOpen: () => void }) {
+  const allowed = useAtomValue(terminalAccessAtom(props.environmentId));
+  return (
+    <span className="ade-why-anchor">
+      <button
+        type="button"
+        className="ade-button-quiet"
+        disabled={!allowed}
+        aria-describedby={allowed ? undefined : "ade-terminal-why"}
+        onClick={props.onOpen}
+      >
+        Terminal
+      </button>
+      {allowed ? null : (
+        <span id="ade-terminal-why" role="tooltip" className="ade-why">
+          Esta sesión no tiene permiso de terminal. Vuelve a emparejar la máquina marcando «Permitir
+          terminal».
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A shell in the thread's worktree, or in its project's folder when it has none. */
+function ThreadTerminal(props: {
+  threadRef: ScopedThreadRef;
+  thread: EnvironmentThreadShell;
+  onClose: () => void;
+}) {
+  const root = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(props.threadRef.environmentId),
+    (index) => index.get(props.thread.projectId)?.workspaceRoot ?? null,
+  );
+  const cwd = props.thread.worktreePath ?? root;
+  if (cwd === null) return <p className="ade-diff-note">Cargando el proyecto…</p>;
+  return (
+    <Suspense fallback={<p className="ade-diff-note">Cargando el terminal…</p>}>
+      <TerminalView
+        threadRef={props.threadRef}
+        cwd={cwd}
+        worktreePath={props.thread.worktreePath}
+        onClose={props.onClose}
+      />
+    </Suspense>
+  );
+}
+
 /** The selected thread: its header and its timeline; null with nothing selected. */
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
   const ref = key === null ? null : parseScopedThreadKey(key);
-  const openDiff = (range: DiffRange) => key !== null && setDiff({ key, range });
+  const [terminalKey, setTerminalKey] = useState<string | null>(null);
+  const openDiff = (range: DiffRange) => {
+    if (key === null) return;
+    setTerminalKey(null);
+    setDiff({ key, range });
+  };
   const openRange = diff !== null && diff.key === key ? diff.range : null;
   const thread = useAtomValue(
     ref === null ? NO_THREAD : environmentThreadShells.quietThreadShellAtom(ref),
@@ -295,12 +351,22 @@ export function SelectedThread() {
         )}
         <div className="ade-thread-view-actions">
           {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
+          {machine === null || thread === null ? null : (
+            <TerminalButton environmentId={ref.environmentId} onOpen={() => setTerminalKey(key)} />
+          )}
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
             Volver al resumen
           </button>
         </div>
       </header>
-      {machine === null ? null : openRange !== null ? (
+      {machine === null ? null : terminalKey === key && thread !== null ? (
+        <ThreadTerminal
+          key={key}
+          threadRef={ref}
+          thread={thread}
+          onClose={() => setTerminalKey(null)}
+        />
+      ) : openRange !== null ? (
         <Suspense fallback={<p className="ade-diff-note">Cargando el diff…</p>}>
           <DiffView threadRef={ref} range={openRange} onClose={() => setDiff(null)} />
         </Suspense>

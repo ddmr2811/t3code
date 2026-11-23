@@ -67,6 +67,7 @@ function PairingForm(props: { onDone: () => void }) {
   const registry = useContext(RegistryContext);
   const [link, setLink] = useState(pairingLinkFromAddressBar);
   const [code, setCode] = useState("");
+  const [terminal, setTerminal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,7 +78,10 @@ function PairingForm(props: { onDone: () => void }) {
     const result = await runAtomCommand(
       registry,
       pairMachine,
-      code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code },
+      {
+        ...(code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code }),
+        terminal,
+      },
       // The form shows the failure; the console would only repeat it.
       { reportFailure: false },
     );
@@ -108,6 +112,14 @@ function PairingForm(props: { onDone: () => void }) {
           autoComplete="off"
           spellCheck={false}
         />
+      </label>
+      <label className="ade-pairing-check">
+        <input
+          type="checkbox"
+          checked={terminal}
+          onChange={(event) => setTerminal(event.target.checked)}
+        />
+        Permitir terminal (un shell en la máquina)
       </label>
       {error !== null && (
         <p className="ade-pairing-error" role="alert">
