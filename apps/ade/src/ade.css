@@ -1705,6 +1705,11 @@ body {
   place-items: stretch;
 }
 
+/* The board's column heads sit where the grain is. */
+.ade-main:has(.ade-board) .ade-dither {
+  display: none;
+}
+
 .ade-views {
   display: grid;
   gap: 2px;
@@ -1893,7 +1898,7 @@ body {
 }
 
 .ade-session-group[data-state="needs-you"] h2,
-.ade-board-column[data-state="needs-you"] h2 {
+.ade-board-column[data-state="needs-you"]:not([data-empty]) h2 {
   color: var(--ade-accent);
 }
 
@@ -2017,6 +2022,10 @@ body {
     max-height: 40vh;
     border-right: 0;
     border-bottom: 1px solid var(--ade-divider);
+  }
+
+  .ade-dither {
+    display: none;
   }
 
   .ade-summary {

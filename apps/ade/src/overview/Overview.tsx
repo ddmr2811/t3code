@@ -87,7 +87,12 @@ const NO_LOAD = Atom.make(AsyncResult.initial<never, never>());
 /** Colour only for what is close to full; everything else stays quiet. */
 const level = (share: number) => (share >= 0.95 ? "full" : share >= 0.85 ? "high" : undefined);
 const percent = (share: number) => `${Math.round(share * 100)} %`;
-const gigabytes = (bytes: number) => (bytes / 2 ** 30).toFixed(bytes < 10 * 2 ** 30 ? 1 : 0);
+const gigabytes = (bytes: number) =>
+  (bytes / 2 ** 30).toLocaleString("es-ES", {
+    maximumFractionDigits: bytes < 10 * 2 ** 30 ? 1 : 0,
+  });
+// The server names its windows in English.
+const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as const;
 
 export function ViewNav() {
   const [view, setView] = useAtom(viewAtom);
@@ -187,7 +192,9 @@ function UsageCard() {
           <li key={account.key}>
             <span className="ade-summary-name">{account.name}</span>
             <span className="ade-summary-aside">
-              {account.window.label}
+              {account.window.kind === "other"
+                ? account.window.label
+                : WINDOW_NAME[account.window.kind]}
               <span className="ade-meter" data-level={level(account.share)}>
                 <span style={{ width: `${Math.round(account.share * 100)}%` }} />
               </span>
@@ -344,7 +351,12 @@ function Board() {
   return (
     <div className="ade-board">
       {SESSION_GROUPS.map((state) => (
-        <section key={state} className="ade-board-column" data-state={state}>
+        <section
+          key={state}
+          className="ade-board-column"
+          data-state={state}
+          data-empty={groups[state].length === 0 ? "" : undefined}
+        >
           <h2>
             {GROUP_TITLE[state]} <span>{groups[state].length}</span>
           </h2>
@@ -353,6 +365,7 @@ function Board() {
               <BoardCard key={sessionKey(thread)} thread={thread} state={state} onOpen={open} />
             ))}
           </ul>
+          {groups[state].length === 0 ? <p className="ade-session-more">Nada aquí.</p> : null}
           <More count={groups[state].length} />
         </section>
       ))}
