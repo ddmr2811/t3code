@@ -121,15 +121,9 @@ export function DecisionsPanel() {
         </Button>
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-        {threads.length === 0 ? (
-          <p className="px-2 py-6 text-center text-muted-foreground text-sm">
-            {gt("Nothing is waiting on you.")}
-          </p>
-        ) : (
-          threads.map((thread) => (
-            <DecisionCard key={`${thread.environmentId}:${thread.id}`} thread={thread} />
-          ))
-        )}
+        {threads.map((thread) => (
+          <DecisionCard key={`${thread.environmentId}:${thread.id}`} thread={thread} />
+        ))}
       </div>
     </aside>
   );

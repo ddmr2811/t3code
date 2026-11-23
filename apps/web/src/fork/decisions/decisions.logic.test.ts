@@ -76,7 +76,7 @@ describe("isDecisionsPanelOpen", () => {
     expect(isDecisionsPanelOpen(closed, ["b", "c"])).toBe(true);
   });
 
-  it("stays open when the user opens it with nothing waiting", () => {
-    expect(isDecisionsPanelOpen({ open: true, seenKeys: [] }, [])).toBe(true);
+  it("closes once nothing waits, even if the user opened it", () => {
+    expect(isDecisionsPanelOpen({ open: true, seenKeys: ["a"] }, [])).toBe(false);
   });
 });

@@ -1603,15 +1603,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-  actionItems.push({
-    kind: "action",
-    value: "action:fork-toggle-decisions-panel",
-    searchTerms: ["decisions", "needs you", "approvals", "questions", "pending", "waiting"],
-    title: gt("Toggle decisions panel"),
-    icon: <CircleAlertIcon className={ITEM_ICON_CLASS} />,
-    shortcutCommand: "decisions.toggle",
-    run: async () => decisionsPanel.setOpen(!decisionsPanel.open),
-  });
+  if (decisionsPanel.threads.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:fork-toggle-decisions-panel",
+      searchTerms: ["decisions", "needs you", "approvals", "questions", "pending", "waiting"],
+      title: gt("Toggle decisions panel"),
+      icon: <CircleAlertIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "decisions.toggle",
+      run: async () => decisionsPanel.setOpen(!decisionsPanel.open),
+    });
+  }
 
   if (activeThread !== null) {
     const thread = activeThread;

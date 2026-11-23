@@ -43,14 +43,15 @@ export interface DecisionsPanelChoice {
 
 /**
  * Open while something waits, unless the user chose otherwise; a thread that starts
- * waiting after that choice opens the panel again.
+ * waiting after that choice opens the panel again. Never open with nothing waiting.
  */
 export function isDecisionsPanelOpen(
   choice: DecisionsPanelChoice | null,
   waitingKeys: ReadonlyArray<string>,
 ): boolean {
+  if (waitingKeys.length === 0) return false;
   if (choice !== null && waitingKeys.every((key) => choice.seenKeys.includes(key))) {
     return choice.open;
   }
-  return waitingKeys.length > 0;
+  return true;
 }

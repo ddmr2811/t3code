@@ -1,6 +1,7 @@
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { createRef, type ReactNode } from "react";
 
 import { render } from "../../../test/render";
@@ -10,6 +11,46 @@ vi.mock(import("../../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   return { ...actual, primaryServerKeybindingsAtom: Atom.make([]) };
 });
+// One thread waits on a plan, so the block has a panel to open.
+vi.mock(import("../../state/threads"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const { EnvironmentId, ProjectId, RunId, ThreadId } = await import("@t3tools/contracts");
+  const shell = {
+    environmentId: EnvironmentId.make("env-1"),
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Plan ready",
+    archivedAt: null,
+    deletedAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingGuestMessageCount: 0,
+    interactionMode: "plan",
+    hasActionableProposedPlan: true,
+    latestRun: {
+      runId: RunId.make("run-1"),
+      status: "completed",
+      requestedAt: "2026-11-22T10:00:00.000Z",
+      startedAt: "2026-11-22T10:00:00.000Z",
+      completedAt: "2026-11-22T10:05:00.000Z",
+      assistantMessageId: null,
+    },
+    runtime: null,
+  } as unknown as EnvironmentThreadShell;
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      quietThreadShellsAtom: Atom.make<ReadonlyArray<EnvironmentThreadShell>>([shell]),
+    },
+  };
+});
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentsWithScope: (environments) =>
+    new Set(environments.map(({ environmentId }) => environmentId)),
+}));
 
 import { ComposerPromptEditorTiptap } from "~/components/ComposerPromptEditorTiptap";
 import { DecisionsPanel } from "./DecisionsPanel";
@@ -28,7 +69,9 @@ async function renderOpenPanel(extra: ReactNode = null) {
     ),
   );
   const panel = () => screen.container.querySelector("#fork-decisions-panel");
-  await userEvent.click(screen.container.querySelector('[aria-controls="fork-decisions-panel"]')!);
+  // It opens by itself the first time; a test before this one may have closed it.
+  const block = screen.container.querySelector('[aria-controls="fork-decisions-panel"]')!;
+  if (block.getAttribute("aria-expanded") !== "true") await userEvent.click(block);
   await vi.waitFor(() => expect(panel()).not.toBeNull());
   // Focus stays outside the panel, as it does when the panel opens by itself.
   await userEvent.click(screen.getByRole("button", { name: "Outside" }));
