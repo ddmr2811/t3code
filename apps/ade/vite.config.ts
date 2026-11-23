@@ -1,6 +1,8 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A build plugin, outside any Effect program.
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
@@ -19,7 +21,13 @@ const CSP = `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src
 
 export default defineConfig({
   define: { __ADE_CONNECT_ORIGINS__: JSON.stringify(connectOrigins) },
+  resolve: {
+    alias: {
+      "~": NodeURL.fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   plugins: [
+    tailwindcss(),
     react(),
     {
       name: "ade:csp-meta",

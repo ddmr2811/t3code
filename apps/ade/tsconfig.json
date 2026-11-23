@@ -5,6 +5,9 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "~/*": ["./src/*"]
+    },
     "plugins": [
       {
         "name": "@effect/language-service",

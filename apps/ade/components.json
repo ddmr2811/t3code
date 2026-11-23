@@ -1,0 +1,29 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-mira",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/ade.css",
+    "baseColor": "zinc",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "phosphor",
+  "rtl": false,
+  "menuColor": "default",
+  "menuAccent": "bold",
+  "aliases": {
+    "components": "~/ui",
+    "utils": "~/ui/utils",
+    "ui": "~/ui/primitives",
+    "lib": "~/ui",
+    "hooks": "~/ui/hooks"
+  },
+  "registries": {
+    "@coss": "https://coss.com/ui/r/{name}.json",
+    "@spell": "https://spell.sh/r/{name}.json",
+    "@efferd": "https://efferd.com/r/default/{name}.json"
+  }
+}

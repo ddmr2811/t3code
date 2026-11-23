@@ -440,6 +440,15 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@ui-sdk/core':
+        specifier: 0.1.0-beta.16
+        version: 0.1.0-beta.16
+      '@ui-sdk/react':
+        specifier: 0.1.0-beta.16
+        version: 0.1.0-beta.16(@types/react@19.3.0)(@ui-sdk/core@0.1.0-beta.16)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
       effect:
         specifier: 4.1.5
         version: 4.1.5
@@ -452,7 +461,13 @@ importers:
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1)
+      tailwind-merge:
+        specifier: ^3.4.0
+        version: 3.6.0
     devDependencies:
+      '@tailwindcss/vite':
+        specifier: 4.3.3
+        version: 4.3.3(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -465,6 +480,9 @@ importers:
       playwright:
         specifier: 1.64.1
         version: 1.64.1
+      tailwindcss:
+        specifier: 4.3.3
+        version: 4.3.3
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@1.4.0
         version: '@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0)'
@@ -7593,6 +7611,20 @@ packages:
 
   '@types/yauzl@3.4.0':
     resolution: {integrity: sha512-NRPn5w6h8dhcnmx3YIRQcqMywY/+nND/uOkJessedcrowO3C0AssHp3tMJpxKAwOhFOo0OV1y9VtsC5hbKKBAw==}
+
+  '@ui-sdk/core@0.1.0-beta.16':
+    resolution: {integrity: sha512-I2GMqOviLS/lYfIj2lTqKLbae0V9uSnysK+bSdbhuw2De8zNvrLZiDTc0qzsPNiZvB/bMmUZJS5UDA5Q2Pq4Ng==}
+
+  '@ui-sdk/react@0.1.0-beta.16':
+    resolution: {integrity: sha512-pCM1Vb5Dycj05E63kY1CeX/jab9OlfDCGwhs29QtVenX0YrYzSRgkLYaHWscbew2gxVCBwcr8KBkh5BgH9eV+Q==}
+    peerDependencies:
+      '@types/react': '>=19.2.10'
+      '@ui-sdk/core': ^0.1.0-beta.16
+      react: '>=19'
+      react-dom: '>=19'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   '@ungap/structured-clone@1.3.1':
     resolution: {integrity: sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==}
@@ -17674,6 +17706,16 @@ snapshots:
   '@types/yauzl@3.4.0':
     dependencies:
       '@types/node': 24.12.4
+
+  '@ui-sdk/core@0.1.0-beta.16': {}
+
+  '@ui-sdk/react@0.1.0-beta.16(@types/react@19.3.0)(@ui-sdk/core@0.1.0-beta.16)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@ui-sdk/core': 0.1.0-beta.16
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+    optionalDependencies:
+      '@types/react': 19.3.0
 
   '@ungap/structured-clone@1.3.1': {}
 

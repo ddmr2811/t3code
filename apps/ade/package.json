@@ -18,16 +18,22 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@ui-sdk/core": "0.1.0-beta.16",
+    "@ui-sdk/react": "0.1.0-beta.16",
+    "class-variance-authority": "^0.7.1",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^6.1.2",
     "playwright": "1.64.1",
+    "tailwindcss": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

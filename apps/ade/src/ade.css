@@ -1,4 +1,33 @@
+@layer ui-sdk;
 @import "../../web/src/fork/fonts/fonts.css";
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--ade-bg);
+  --color-foreground: var(--ade-text);
+  --color-card: var(--ade-surface);
+  --color-card-foreground: var(--ade-text);
+  --color-popover: var(--ade-surface);
+  --color-popover-foreground: var(--ade-text);
+  --color-primary: var(--ade-accent);
+  --color-primary-foreground: var(--ade-bg);
+  --color-secondary: var(--ade-divider);
+  --color-secondary-foreground: var(--ade-text);
+  --color-muted: var(--ade-divider);
+  --color-muted-foreground: var(--ade-text-muted);
+  --color-accent: var(--ade-surface);
+  --color-accent-foreground: var(--ade-text);
+  --color-destructive: var(--ade-danger);
+  --color-destructive-foreground: var(--ade-bg);
+  --color-border: var(--ade-border);
+  --color-input: var(--ade-border);
+  --color-ring: var(--ade-accent);
+  --radius-sm: var(--ade-radius-sm);
+  --radius-md: var(--ade-radius-md);
+  --radius-lg: var(--ade-radius-lg);
+  --font-sans: var(--ade-font-sans);
+  --font-mono: var(--ade-font-mono);
+}
 
 /* Dark v4 palette, from themes/t3-fork-v4.json. */
 :root {
@@ -683,6 +712,37 @@ body {
 .ade-md blockquote,
 .ade-md table {
   margin: 0 0 10px;
+}
+
+.ade-md ul {
+  padding-left: 1.5em;
+  list-style: disc;
+}
+
+.ade-md ol {
+  padding-left: 1.5em;
+  list-style: decimal;
+}
+
+.ade-md h1,
+.ade-md h2,
+.ade-md h3,
+.ade-md h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ade-md h1 {
+  font-size: 1.35em;
+}
+
+.ade-md h2 {
+  font-size: 1.2em;
+}
+
+.ade-md h3 {
+  font-size: 1.08em;
 }
 
 .ade-md a {
