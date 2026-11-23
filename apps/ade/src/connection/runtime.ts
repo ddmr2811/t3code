@@ -98,13 +98,17 @@ const layerRuntime = Layer.mergeAll(
 );
 
 export const connectionAtomRuntime = Atom.runtime(
-  Layer.mergeAll(
-    ShellSnapshotLoader.layer,
-    BoundedThreadSnapshotLoader.layer,
-    ThreadHistoryController.layer,
-  ).pipe(
-    Layer.provideMerge(Connection.layer),
-    Layer.provideMerge(Layer.merge(layerRuntime, layerPlatform)),
+  // Fresh, so refreshing this runtime builds every service again from what is stored: that is
+  // how a tab takes in the machines another tab paired or removed.
+  Layer.fresh(
+    Layer.mergeAll(
+      ShellSnapshotLoader.layer,
+      BoundedThreadSnapshotLoader.layer,
+      ThreadHistoryController.layer,
+    ).pipe(
+      Layer.provideMerge(Connection.layer),
+      Layer.provideMerge(Layer.merge(layerRuntime, layerPlatform)),
+    ),
   ),
 );
 

@@ -89,7 +89,8 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     );
   }
 
-  const connectionId = `bearer:${descriptor.environmentId}:${new URL(target.httpBaseUrl).origin}`;
+  // A machine has one route, whatever its address: pairing it again replaces that route.
+  const connectionId = `bearer:${descriptor.environmentId}`;
   const route = {
     target: new BearerConnectionTarget({
       environmentId: descriptor.environmentId,
@@ -128,16 +129,9 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   }
 
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-  // A machine paired again starts from nothing: removing it closes the socket its old session
-  // opened before the credential changes, and drops every route and credential it had, also
-  // those of another address.
-  yield* registry.remove(descriptor.environmentId).pipe(
-    Effect.catchTags({
-      EnvironmentNotRegisteredError: () => Effect.void,
-      PlatformEnvironmentRemovalError: () => failed("Esta máquina no se puede volver a emparejar."),
-    }),
-  );
-  yield* registry.register(
+  // One stored write swaps the address and the credential, and only then is the old socket
+  // closed: if the write fails, the machine stays as it was.
+  const registered = yield* registry.register(
     new BearerConnectionRegistration({
       ...route,
       credential: new DpopConnectionCredential({
@@ -146,6 +140,7 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
       }),
     }),
   );
+  if (!registered) return yield* failed("Esta máquina no se puede volver a emparejar.");
   yield* registry.setCompatibility(descriptor.environmentId, null);
   machinesChanged();
   return descriptor.environmentId;

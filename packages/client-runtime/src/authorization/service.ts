@@ -599,7 +599,7 @@ export const make = Effect.gen(function* () {
           accessToken: access.access_token,
           expiresAtEpochMs: (yield* Clock.currentTimeMillis) + access.expires_in * 1_000,
         });
-        yield* credentials.put(connection.connectionId, renewed);
+        yield* credentials.put(connection.connectionId, renewed, current);
         return renewed;
       }),
     );

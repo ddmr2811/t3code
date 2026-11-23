@@ -1,11 +1,13 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
-import { StrictMode } from "react";
+import { StrictMode, useContext, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
 // Shared with apps/web's fork rather than copied: same fonts, same dither code.
 import { gradientFillStyle } from "../../web/src/fork/dither/style.ts";
 import "./ade.css";
+import { connectionAtomRuntime } from "./connection/runtime.ts";
+import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
 import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
 import {
@@ -34,6 +36,12 @@ function MainContent() {
 }
 
 function Shell() {
+  const registry = useContext(RegistryContext);
+  useEffect(
+    // Rebuilding the connections reads the stored machines again; drafts live outside them.
+    () => onMachinesChanged(() => registry.refresh(connectionAtomRuntime)),
+    [registry],
+  );
   return (
     <div className="ade-shell">
       <aside className="ade-sidebar">

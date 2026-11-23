@@ -60,8 +60,12 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
             )
           )
             return;
-          await runAtomCommand(registry, environmentCatalog.remove, props.environmentId);
-          machinesChanged();
+          const removed = await runAtomCommand(
+            registry,
+            environmentCatalog.remove,
+            props.environmentId,
+          );
+          if (AsyncResult.isSuccess(removed)) machinesChanged();
         }}
       >
         <TrashIcon size={14} />
