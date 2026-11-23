@@ -1,7 +1,7 @@
-// Smoke test of the built ADE against a real T3 server; `vp run --filter @t3tools/ade smoke`.
-// Needs a server whose newest thread has a finished turn (a Replay `showcase` turn will do), T3_URL (dev server started with T3CODE_DEV_ALLOWED_ORIGINS=<ADE_URL>), ADE_URL (a
-// `preview` of a build made with ADE_CONNECT_ORIGINS=<T3_URL>) and T3_PAIRING_TOKEN (`t3 pair`).
-// ADE_SMOKE_SHOT=<file.png> also saves the connected sidebar.
+// Smoke test of the built ADE against a real T3 dev server, on Replay (dev) turns only. Needs:
+// a newest thread with a finished Replay `command-output` turn; T3_URL (T3CODE_DEV_ALLOWED_ORIGINS=
+// <ADE_URL>); ADE_URL (built with ADE_CONNECT_ORIGINS=<T3_URL>); T3_PAIRING_TOKEN and, from
+// `t3 pair --scope orchestration:read`, T3_READONLY_PAIRING_TOKEN. ADE_SMOKE_SHOT(S) save captures.
 import * as NodeAssert from "node:assert/strict";
 
 import { chromium } from "playwright";
@@ -14,9 +14,14 @@ const env = (name: string) => {
 const adeUrl = env("ADE_URL");
 const t3Url = env("T3_URL");
 const pairingToken = env("T3_PAIRING_TOKEN");
+const readOnlyPairingToken = env("T3_READONLY_PAIRING_TOKEN");
+const shots = process.env.ADE_SMOKE_SHOTS;
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const shot = async (name: string) => {
+  if (shots) await page.screenshot({ path: `${shots}/${name}.png` });
+};
 const consoleText: Array<string> = [];
 const requestUrls: Array<string> = [];
 const granted: Array<{ token_type: string; scope: string; access_token: string }> = [];
@@ -26,7 +31,8 @@ page.on("websocket", (socket) => requestUrls.push(socket.url()));
 page.on("response", async (response) => {
   if (response.url().endsWith("/oauth/token") && response.ok()) granted.push(await response.json());
 });
-const pairingLink = `${adeUrl}/?host=${encodeURIComponent(t3Url)}#token=${pairingToken}`;
+const linkFor = (token: string) => `${adeUrl}/?host=${encodeURIComponent(t3Url)}#token=${token}`;
+const pairingLink = linkFor(pairingToken);
 const pair = () => page.getByRole("button", { name: "Emparejar", exact: true }).click();
 
 try {
@@ -72,6 +78,52 @@ try {
     (await conversation.locator(".ade-msg-agent").first().innerText()).trim(),
     "",
     "the agent's reply is shown",
+  );
+
+  // A turn sent from the composer runs on the server and its reply streams back into the timeline.
+  const composer = page.getByRole("region", { name: "Compositor" });
+  const message = composer.getByRole("textbox", { name: "Mensaje" });
+  const repliesBefore = await conversation.locator(".ade-msg-agent").count();
+  // Each run's messages are its own, so an earlier run's rows never satisfy a wait.
+  const run = Math.random().toString(36).slice(2, 8);
+  await shot("compositor-vacio");
+  // The model comes from the machine's own list: a short scenario first, then a long one that
+  // leaves time to queue and stop.
+  const model = composer.locator("summary", { hasText: "Modelo:" });
+  await model.click();
+  await shot("compositor-selector");
+  await composer.getByRole("radio", { name: "Command output" }).click();
+  await message.fill(`Repite el comando ${run}`);
+  await message.press("Enter");
+  await conversation.locator(".ade-msg-user", { hasText: `Repite el comando ${run}` }).waitFor();
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".ade-msg-agent").length > count,
+    repliesBefore,
+  );
+  NodeAssert.equal(await message.inputValue(), "", "a sent message leaves the composer");
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
+  await model.click();
+  await composer.getByRole("radio", { name: "Showcase" }).click();
+  await message.fill(`Turno largo ${run}`);
+  await message.press("Enter");
+  const stop = composer.getByRole("button", { name: "Parar", exact: true });
+  await stop.waitFor();
+  // While the agent works, a message waits in the server's queue and can be taken back.
+  await message.fill(`Esto espera su turno ${run}`);
+  await message.press("Enter");
+  const queue = composer.getByRole("list", { name: "Mensajes en cola" });
+  await queue.getByText(`Esto espera su turno ${run}`).waitFor();
+  await shot("compositor-en-cola");
+  await queue.getByRole("button", { name: "Retirar" }).click();
+  await queue.waitFor({ state: "detached" });
+  await stop.click();
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+  NodeAssert.equal(await stop.count(), 0, "a stopped turn offers no Stop");
+  NodeAssert.equal(
+    await conversation.locator(".ade-msg-user", { hasText: `Esto espera su turno ${run}` }).count(),
+    0,
+    "a message taken out of the queue never runs",
   );
 
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
@@ -141,20 +193,48 @@ try {
   );
   NodeAssert.doesNotMatch(forgotten, /accessToken/, "removing a machine forgets its credential");
 
-  const secrets = [pairingToken, ...granted.map((grant) => grant.access_token)];
+  // A read-only session sees threads but cannot send: the ADE disables the composer, and a send
+  // that gets past it anyway is refused by the server and shown.
+  await page.goto(linkFor(readOnlyPairingToken));
+  await pair();
+  await page.getByText("Conectada", { exact: true }).first().waitFor();
+  NodeAssert.equal(granted.at(-1)?.scope, "orchestration:read", "the server granted read only");
+  await firstThread.click();
+  await composer.getByText(/^Solo lectura/).waitFor();
+  await conversation.locator(".ade-msg-user").first().waitFor();
+  NodeAssert.ok(await message.isDisabled(), "a read-only machine's composer is disabled");
+  await shot("compositor-solo-lectura");
+  await composer
+    .locator("fieldset")
+    .first()
+    .evaluate((field) => field.removeAttribute("disabled"));
+  await message.fill("No debería llegar");
+  await message.press("Enter");
+  await composer.getByRole("alert").filter({ hasText: "No se pudo" }).waitFor();
+  await shot("compositor-solo-lectura-rechazo");
+
+  const secrets = [
+    pairingToken,
+    readOnlyPairingToken,
+    ...granted.map((grant) => grant.access_token),
+  ];
   for (const secret of secrets) {
     NodeAssert.ok(
       !consoleText.some((line) => line.includes(secret)),
       "no token reaches the console",
     );
     NodeAssert.ok(
-      !requestUrls.some((url) => url !== pairingLink && url.includes(secret)),
+      !requestUrls.some(
+        (url) =>
+          url !== pairingLink && url !== linkFor(readOnlyPairingToken) && url.includes(secret),
+      ),
       "no token travels in a URL",
     );
   }
   console.log("ADE smoke: ok");
 } catch (error) {
   console.error("Sidebar at failure:", await page.locator("aside").innerText());
+  await shot("fallo");
   throw error;
 } finally {
   await browser.close();

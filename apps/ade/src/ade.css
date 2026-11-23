@@ -765,3 +765,202 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+
+/* The composer sits under the timeline; an empty thread still pushes it to the bottom. */
+.ade-thread-view .ade-timeline-empty {
+  flex: 1;
+}
+
+.ade-composer {
+  display: grid;
+  /* The timeline's column, so the message lines up with the turns above it. */
+  grid-template-columns: minmax(0, 696px);
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 32px 20px;
+  border-top: 1px solid var(--ade-divider);
+  background: var(--ade-bg);
+}
+
+.ade-composer-form fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ade-composer-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  max-height: 40vh;
+  padding: 10px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 14px/1.5 var(--ade-font-sans);
+  resize: vertical;
+}
+
+.ade-composer-text:focus-visible {
+  outline: 1px solid var(--ade-accent);
+  outline-offset: 0;
+}
+
+.ade-composer-text:disabled {
+  color: var(--ade-text-tertiary);
+}
+
+.ade-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ade-composer-settings,
+.ade-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ade-composer-actions .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-composer-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-picker {
+  position: relative;
+}
+
+.ade-picker summary {
+  padding: 4px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+  list-style: none;
+  cursor: pointer;
+}
+
+.ade-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.ade-picker summary::after {
+  content: " ▾";
+  color: var(--ade-text-tertiary);
+}
+
+.ade-picker[open] summary,
+.ade-picker summary:hover {
+  color: var(--ade-text);
+}
+
+.ade-composer-form fieldset:disabled .ade-picker summary {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.ade-picker-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  display: grid;
+  gap: 8px;
+  min-width: 220px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+}
+
+.ade-picker-menu fieldset {
+  display: grid;
+  gap: 2px;
+}
+
+.ade-picker-menu legend {
+  padding: 0 6px 2px;
+  color: var(--ade-text-tertiary);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+}
+
+.ade-picker-menu label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--ade-radius-sm);
+  color: var(--ade-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ade-picker-menu label:hover,
+.ade-picker-menu label:has(:checked) {
+  background: var(--ade-bg);
+  color: var(--ade-text);
+}
+
+.ade-picker-menu input {
+  accent-color: var(--ade-accent);
+}
+
+.ade-queue {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-queued {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  border: 1px dashed var(--ade-border);
+  border-radius: var(--ade-radius-md);
+}
+
+.ade-queued-tag {
+  color: var(--ade-accent);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+}
+
+.ade-queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-queued .ade-button-quiet {
+  margin-top: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.ade-queued .ade-error {
+  flex-basis: 100%;
+}

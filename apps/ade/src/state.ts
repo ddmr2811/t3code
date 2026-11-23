@@ -24,8 +24,9 @@ import {
 } from "./connection/runtime.ts";
 
 const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
-// Read for the hidden-thread tags only, so a thread the user hides in T3 stays hidden here.
-const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
+// Its hidden-thread tags keep a thread the user hides in T3 hidden here too.
+// Also the machine's providers and models, for the composer's pickers.
+export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
 const threadFamilies = createThreadFamilyAtoms(connectionAtomRuntime, environmentShell.stateAtom);
@@ -51,16 +52,25 @@ export const environmentProjects = createEnvironmentProjectAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
 
+/** Whether this ADE's session may operate on a machine; null while the session is still loading. */
+export const operateAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): "operate" | "read" | "unknown" | null => {
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    // A failed revalidation keeps the old session as its value; it no longer proves the grant.
+    if (result._tag === "Failure") return "unknown";
+    const session = AsyncResult.getOrElse(result, () => null);
+    if (session === null) return null;
+    return sessionGrantsScope(session, AuthOrchestrationOperateScope) ? "operate" : "read";
+  }).pipe(Atom.withLabel(`ade-operate-access:${environmentId}`)),
+);
+
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();
 /** The machines where this ADE's session may answer: only those are asked to. */
 export const operableEnvironmentIdsAtom = Atom.make((get) => {
   const next = new Set(
-    [...enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))].filter((environmentId) => {
-      const result = get(environmentSession.sessionStateAtom(environmentId));
-      // A failed revalidation keeps the old session as its value; it no longer proves the grant.
-      const session = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
-      return session !== null && sessionGrantsScope(session, AuthOrchestrationOperateScope);
-    }),
+    [...enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))].filter(
+      (environmentId) => get(operateAccessAtom(environmentId)) === "operate",
+    ),
   );
   if (next.size === previousOperable.size && [...next].every((id) => previousOperable.has(id))) {
     return previousOperable;

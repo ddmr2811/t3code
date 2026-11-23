@@ -17,6 +17,7 @@ import { memo } from "react";
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import { selectNeedsYouThreads } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
+import { Composer } from "../composer/Composer.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
   environmentProjects,
@@ -236,6 +237,9 @@ export function SelectedThread() {
         </button>
       </header>
       {machine === null ? null : <ThreadTimeline key={key} threadRef={ref} />}
+      {machine === null || thread === null ? null : (
+        <Composer key={key} threadRef={ref} thread={thread} />
+      )}
     </section>
   );
 }
