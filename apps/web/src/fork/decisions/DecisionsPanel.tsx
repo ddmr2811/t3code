@@ -15,6 +15,7 @@ import {
 import {
   type PendingThreadRequests,
   seedUserInputDraftAnswers,
+  userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
   AuthOrchestrationOperateScope,
@@ -32,11 +33,18 @@ import { BackgroundThreadContext } from "~/components/chat/backgroundThread";
 import { ChildApproval } from "~/components/chat/ChildThreadApprovals";
 import { ComposerPendingUserInputPanel } from "~/components/chat/ComposerPendingUserInputPanel";
 import { Button } from "~/components/ui/button";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { derivePendingUserInputProgress } from "~/pendingUserInput";
 import { registerCommands } from "~/shortcuts/dispatcher";
+import {
+  questionAttachmentDraftId,
+  usePendingUserInputAnswers,
+  useQuestionAttachmentPreparation,
+} from "~/questionAttachments";
 import type { PendingUserInput } from "~/session-logic";
 import { useProject } from "~/state/entities";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentScope } from "~/state/session";
 import { environmentThreadDetails, threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -130,6 +138,8 @@ function DecisionCard({ thread }: { thread: EnvironmentThreadShell }) {
   const gt = useGT();
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const project = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
+  const environment = useEnvironment(thread.environmentId);
+  const isRemote = thread.environmentId !== usePrimaryEnvironmentId();
   // Only a request the thread itself holds needs its detail stream.
   const requests = useAtomValue(
     thread.hasPendingApprovals || thread.hasPendingUserInput
@@ -155,6 +165,9 @@ function DecisionCard({ thread }: { thread: EnvironmentThreadShell }) {
           {tag}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+          {isRemote
+            ? `${environment?.label ?? gt("Remote", { $context: "machine location" })} · `
+            : null}
           {project?.title ?? ""}
         </span>
         <Link
@@ -175,6 +188,9 @@ function DecisionCard({ thread }: { thread: EnvironmentThreadShell }) {
       ))}
       {question !== null ? (
         <DecisionQuestion key={question.requestId} threadRef={threadRef} prompt={question} />
+      ) : null}
+      {requests !== null && approvals.length === 0 && question === null ? (
+        <p className="text-muted-foreground text-sm">{gt("Review the request in the thread.")}</p>
       ) : null}
       {!thread.hasPendingApprovals && !thread.hasPendingUserInput ? (
         <p className="text-muted-foreground text-sm">
@@ -207,11 +223,37 @@ function DecisionQuestion({
   const [error, setError] = useState<string | null>(null);
   const answers = seedUserInputDraftAnswers(prompt.questions, edits);
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const { environmentId, threadId } = threadRef;
+  const attachmentDraftIds = prompt.questions.map((question) =>
+    questionAttachmentDraftId(environmentId, threadId, prompt.requestId, question.id),
+  );
+  // Answering here would resolve the request and prune what the thread holds unsent for it.
+  const hasThreadAnswer = usePendingUserInputAnswers(
+    (drafts) =>
+      Object.keys(drafts[userInputDraftKey(environmentId, threadId, prompt.requestId)] ?? {})
+        .length > 0,
+  );
+  const hasThreadAttachments = useComposerDraftStore((store) =>
+    attachmentDraftIds.some((id) => {
+      const draft = store.getComposerDraft(id);
+      return (draft?.images.length ?? 0) + (draft?.files.length ?? 0) > 0;
+    }),
+  );
+  const isPreparingAttachments = useQuestionAttachmentPreparation((state) =>
+    attachmentDraftIds.some((id) => (state.counts[id] ?? 0) > 0),
+  );
 
   if (prompt.questions.some((question) => question.options.length === 0)) {
     return (
       <p className="text-muted-foreground text-sm">
         {gt("This question needs a written answer. Answer it in the thread.")}
+      </p>
+    );
+  }
+  if (hasThreadAnswer || hasThreadAttachments || isPreparingAttachments) {
+    return (
+      <p className="text-muted-foreground text-sm">
+        {gt("This question has a draft in the thread. Answer it there.")}
       </p>
     );
   }

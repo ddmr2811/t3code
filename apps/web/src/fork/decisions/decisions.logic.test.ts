@@ -1,10 +1,7 @@
-import { EnvironmentId, RunId } from "@t3tools/contracts";
+import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { isDecisionsPanelOpen, selectNeedsYouThreads } from "./decisions.logic";
-
-const HERE = EnvironmentId.make("env-here");
-const OTHER = EnvironmentId.make("env-other");
 
 const settledRun = {
   runId: RunId.make("run-1"),
@@ -17,7 +14,6 @@ const settledRun = {
 
 type Input = Parameters<typeof selectNeedsYouThreads>[0][number];
 const thread = (overrides: Partial<Input> = {}): Input => ({
-  environmentId: HERE,
   archivedAt: null,
   deletedAt: null,
   hasPendingApprovals: false,
@@ -62,13 +58,7 @@ describe("selectNeedsYouThreads", () => {
     ],
     ["a finished thread", thread(), false],
   ])("%s → %s", (_name, input, expected) => {
-    expect(selectNeedsYouThreads([input], HERE).length === 1).toBe(expected);
-  });
-
-  it("counts only the chosen environment", () => {
-    const here = thread({ hasPendingApprovals: true });
-    const elsewhere = thread({ environmentId: OTHER, hasPendingApprovals: true });
-    expect(selectNeedsYouThreads([here, elsewhere], HERE)).toEqual([here]);
+    expect(selectNeedsYouThreads([input]).length === 1).toBe(expected);
   });
 });
 

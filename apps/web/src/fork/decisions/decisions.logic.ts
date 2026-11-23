@@ -1,11 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId } from "@t3tools/contracts";
 
 import { isLatestRunSettled } from "~/session-logic";
 
 type NeedsYouInput = Pick<
   EnvironmentThreadShell,
-  | "environmentId"
   | "archivedAt"
   | "deletedAt"
   | "hasPendingApprovals"
@@ -32,14 +30,9 @@ function threadNeedsYou(thread: NeedsYouInput): boolean {
   );
 }
 
-/** One environment's threads that wait on the user, in input order. */
-export function selectNeedsYouThreads<T extends NeedsYouInput>(
-  threads: ReadonlyArray<T>,
-  environmentId: EnvironmentId,
-): T[] {
-  return threads.filter(
-    (thread) => thread.environmentId === environmentId && threadNeedsYou(thread),
-  );
+/** The threads that wait on the user, in input order. */
+export function selectNeedsYouThreads<T extends NeedsYouInput>(threads: ReadonlyArray<T>): T[] {
+  return threads.filter(threadNeedsYou);
 }
 
 export interface DecisionsPanelChoice {

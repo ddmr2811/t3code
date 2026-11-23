@@ -1,13 +1,13 @@
-// Fork-only: the threads on this machine that wait on the user, and whether the decisions panel is open.
+// Fork-only: the threads on every connected machine that wait on the user, and whether the decisions panel is open.
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { create } from "zustand";
 
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironmentsWithScope } from "~/state/session";
 import { environmentThreadShells } from "~/state/threads";
 import {
   type DecisionsPanelChoice,
@@ -16,31 +16,32 @@ import {
 } from "./decisions.logic";
 
 const NO_THREADS: ReadonlyArray<EnvironmentThreadShell> = [];
-const NO_THREADS_ATOM = Atom.make(NO_THREADS).pipe(Atom.withLabel("fork-needs-you:none"));
 
-const needsYouThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
+const needsYouThreadsAtom = (() => {
   let previous = NO_THREADS;
   // Shells change on every streamed event; readers re-render only when the waiting list does.
   return Atom.make((get) => {
-    const next = selectNeedsYouThreads(
-      get(environmentThreadShells.visibleThreadShellsAtom),
-      environmentId,
-    );
+    const next = selectNeedsYouThreads(get(environmentThreadShells.visibleThreadShellsAtom));
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next.length === 0 ? NO_THREADS : next;
     return previous;
-  }).pipe(Atom.withLabel(`fork-needs-you:${environmentId}`));
-});
+  }).pipe(Atom.withLabel("fork-needs-you"));
+})();
 
 const useDecisionsPanelChoice = create<{ choice: DecisionsPanelChoice | null }>(() => ({
   choice: null,
 }));
 
 export function useDecisionsPanel() {
-  const environmentId = usePrimaryEnvironmentId();
-  const threads = useAtomValue(
-    environmentId === null ? NO_THREADS_ATOM : needsYouThreadsAtom(environmentId),
+  const waiting = useAtomValue(needsYouThreadsAtom);
+  // A connection that cannot answer is not asked to.
+  const operable = useEnvironmentsWithScope(
+    [...new Set(waiting.map((thread) => thread.environmentId))].map((environmentId) => ({
+      environmentId,
+    })),
+    AuthOrchestrationOperateScope,
   );
+  const threads = waiting.filter((thread) => operable.has(thread.environmentId));
   const choice = useDecisionsPanelChoice((state) => state.choice);
   const keys = threads.map((thread) =>
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
