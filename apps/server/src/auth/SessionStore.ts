@@ -7,6 +7,7 @@ import {
   type AuthClientSession,
   type AuthEnvironmentScope,
   AuthWebSocketTicketUse,
+  ForkGatewayTicketAudience,
   RuntimeMode,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
@@ -68,7 +69,7 @@ export interface VerifiedSession {
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
-  readonly audience?: AuthWebSocketTicketUse;
+  readonly audience?: AuthWebSocketTicketUse | ForkGatewayTicketAudience;
 }
 
 export type SessionCredentialChange =
@@ -447,7 +448,7 @@ export class SessionStore extends Context.Service<
       sessionId: AuthSessionId,
       input?: {
         readonly ttl?: Duration.Duration;
-        readonly audience?: AuthWebSocketTicketUse;
+        readonly audience?: AuthWebSocketTicketUse | ForkGatewayTicketAudience;
         readonly proofKeyThumbprint?: string;
       },
     ) => Effect.Effect<
@@ -514,7 +515,7 @@ const WebSocketClaims = Schema.Struct({
   v: Schema.Literal(1),
   kind: Schema.Literal("websocket"),
   sid: AuthSessionId,
-  aud: Schema.optionalKey(AuthWebSocketTicketUse),
+  aud: Schema.optionalKey(Schema.Union([AuthWebSocketTicketUse, ForkGatewayTicketAudience])),
   jkt: Schema.optionalKey(Schema.String),
   iat: Schema.Number,
   exp: Schema.Number,

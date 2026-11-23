@@ -2,14 +2,13 @@
 // A panel opens in a sandboxed frame: the gateway serves it with an opaque origin, and the frame
 // cannot reach this page, its storage, or its DPoP key either.
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
+import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
 import {
+  createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
-  createRuntimeCommand,
   runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type ForkGatewayList, WS_METHODS } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import { useContext } from "react";
@@ -35,29 +34,32 @@ const openPanelAtom = Atom.make<(PanelTarget & { readonly url: string }) | null>
   Atom.keepAlive,
 );
 
-/**
- * A frame cannot send DPoP, so the address carries a media ticket, as the device hub's streams
- * do: it lasts minutes, and the gateway strips it before the sidecar.
- */
-const openPanel = createRuntimeCommand(connectionAtomRuntime, {
-  label: "ade:open-extension-panel",
-  execute: Effect.fn("ade.extensions.openPanel")(function* (
-    target: PanelTarget,
-    registry: AtomRegistry.AtomRegistry,
-  ) {
-    const prepared = Option.getOrNull(
-      registry.get(environmentSession.preparedConnectionValueAtom(target.environmentId)),
-    );
-    if (prepared === null) return;
-    const access = yield* resolveDeviceHubAccess({
-      prepared,
-      hubBasePath: `/api/fork/ext/${target.id}`,
-    });
-    const query = new URLSearchParams(access.query).toString();
-    const url = `${access.httpBase}${target.panelPath}${query === "" ? "" : `?${query}`}`;
-    registry.set(openPanelAtom, { ...target, url });
-  }),
+const panelTicket = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-gateway:panel-ticket",
+  tag: WS_METHODS.forkGatewayPanelTicket,
 });
+
+/**
+ * A frame cannot send DPoP, so its address carries a ticket the gateway takes for this extension
+ * alone, for minutes, and strips before the sidecar.
+ */
+async function openPanel(registry: AtomRegistry.AtomRegistry, target: PanelTarget) {
+  const prepared = Option.getOrNull(
+    registry.get(environmentSession.preparedConnectionValueAtom(target.environmentId)),
+  );
+  if (prepared === null) return;
+  const result = await runAtomCommand(registry, panelTicket, {
+    environmentId: target.environmentId,
+    input: { id: target.id },
+  });
+  if (!AsyncResult.isSuccess(result)) return;
+  const path = `/api/fork/ext/${target.id}${target.panelPath}`;
+  const ticket = encodeURIComponent(result.value.ticket);
+  registry.set(openPanelAtom, {
+    ...target,
+    url: `${environmentEndpointUrl(prepared.httpBaseUrl, path)}?wsTicket=${ticket}`,
+  });
+}
 
 function ExtensionList(props: { environmentId: EnvironmentId }) {
   const registry = useContext(RegistryContext);
@@ -82,7 +84,7 @@ function ExtensionList(props: { environmentId: EnvironmentId }) {
               type="button"
               className="ade-button-quiet"
               onClick={() =>
-                void runAtomCommand(registry, openPanel, {
+                void openPanel(registry, {
                   environmentId: props.environmentId,
                   id,
                   title: title ?? id,
@@ -118,7 +120,7 @@ export function ExtensionPanel() {
         <button
           type="button"
           className="ade-button-quiet"
-          onClick={() => void runAtomCommand(registry, openPanel, panel)}
+          onClick={() => void openPanel(registry, panel)}
         >
           Recargar
         </button>

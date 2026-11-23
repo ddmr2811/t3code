@@ -29,6 +29,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkActivityFeed]: AuthDiagnosticsReadScope,
   // Listing the sidecars is for whoever may reach them, and only them.
   [WS_METHODS.forkGatewayList]: AuthForkGatewayScope,
+  [WS_METHODS.forkGatewayPanelTicket]: AuthForkGatewayScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

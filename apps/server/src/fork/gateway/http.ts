@@ -6,6 +6,7 @@ import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   FetchHttpClient,
   HttpClient,
@@ -18,7 +19,13 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
-import { authenticateMediaRequest } from "../../auth/http.ts";
+import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import {
+  failEnvironmentAuthInvalid,
+  failEnvironmentInternal,
+  failEnvironmentScopeRequired,
+} from "../../auth/http.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import { requestUrl } from "../../requestUrl.ts";
 import * as ForkGateway from "./ForkGateway.ts";
 
@@ -43,7 +50,6 @@ const FORWARDED_REQUEST_HEADERS = [
 // No set-cookie, no CORS, no policy of the sidecar's own: the gateway sets those below.
 const FORWARDED_RESPONSE_HEADERS = [
   "accept-ranges",
-  "cache-control",
   "content-disposition",
   "content-language",
   "content-range",
@@ -56,6 +62,8 @@ const FORWARDED_RESPONSE_HEADERS = [
 // An opaque origin: a sidecar's page keeps its scripts and forms but cannot use T3's cookies or
 // storage. `no-referrer` keeps a media ticket in the address out of the requests it makes.
 const GATEWAY_HEADERS = {
+  // Answers depend on who asked, so no shared cache may keep one.
+  "cache-control": "no-store",
   "content-security-policy": "sandbox allow-scripts allow-forms",
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
@@ -74,13 +82,65 @@ const pick = (
     }),
   );
 
+/**
+ * The credentials other authenticated routes take, or, for a frame that cannot send them, a
+ * ticket issued for this extension alone (`forkGateway.panelTicket`). Media tickets are refused.
+ */
+const authenticate =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* (
+    request: HttpServerRequest.HttpServerRequest,
+    url: URL,
+    id: string | undefined,
+  ) {
+    const ticket = url.searchParams.get("wsTicket");
+    const session =
+      ticket === null
+        ? yield* (yield* EnvironmentAuth.EnvironmentAuth).authenticateHttpRequest(request).pipe(
+            Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+              failEnvironmentAuthInvalid(
+                EnvironmentAuth.serverAuthCredentialReason(error),
+                EnvironmentAuth.serverAuthDpopFailureReason(error),
+              ),
+            ),
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+              failEnvironmentInternal("internal_error", error),
+            ),
+          )
+        : yield* (yield* SessionStore.SessionStore).verifyWebSocketToken(ticket).pipe(
+            Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () =>
+              failEnvironmentAuthInvalid("invalid_credential"),
+            ),
+            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+            Effect.filterOrElse(
+              (verified) => id !== undefined && verified.audience === `fork-gateway:${id}`,
+              () => failEnvironmentAuthInvalid("invalid_credential"),
+            ),
+          );
+    if (!session.scopes.includes(AuthForkGatewayScope)) {
+      return yield* failEnvironmentScopeRequired(AuthForkGatewayScope);
+    }
+    return session;
+  });
+
+/** A sidecar's redirect to one of its own paths, kept below its prefix once resolved. */
+const rewriteLocation = (id: string, location: string | undefined) => {
+  if (location === undefined || !location.startsWith("/")) return undefined;
+  const prefix = `${FORK_GATEWAY_PREFIX}/${id}`;
+  const target = new URL(`${prefix}${location}`, "http://gateway.invalid");
+  if (target.origin !== "http://gateway.invalid" || !target.pathname.startsWith(`${prefix}/`)) {
+    return undefined;
+  }
+  return `${target.pathname}${target.search}${target.hash}`;
+};
+
 const proxy = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = requestUrl(request);
   if (Option.isNone(url)) return text("Bad Request", 400);
-  // Before the manifest, so whoever lacks the grant cannot learn which ids exist.
-  yield* authenticateMediaRequest(AuthForkGatewayScope);
   const [, id, rest = "/"] = ROUTE.exec(url.value.pathname) ?? [];
+  // Before the manifest, so whoever lacks the grant cannot learn which ids exist.
+  const session = yield* authenticate(request, url.value, id);
   const method = request.method;
   if (id === undefined) return text("Not Found", 404);
   if (request.headers.upgrade !== undefined) return text("WebSockets are not proxied", 501);
@@ -107,7 +167,7 @@ const proxy = Effect.gen(function* () {
     body = new Uint8Array(read.value);
   }
 
-  // The media ticket authenticated this request; the sidecar never sees it.
+  // The ticket authenticated this request; the sidecar never sees it.
   const search = new URLSearchParams(url.value.search);
   search.delete("wsTicket");
   const query = search.size > 0 ? `?${search.toString()}` : "";
@@ -118,22 +178,29 @@ const proxy = Effect.gen(function* () {
     HttpClientRequest.setHeaders(pick(request.headers, FORWARDED_REQUEST_HEADERS)),
     body === undefined ? (self) => self : HttpClientRequest.bodyUint8Array(body, contentType),
   );
+  // Revoking the session ends the wait and any stream already flowing.
+  const invalidated = (yield* SessionStore.SessionStore)
+    .awaitInvalidation(session.sessionId)
+    .pipe(
+      Effect.catch((error) => failEnvironmentInternal("internal_error", error).pipe(Effect.ignore)),
+    );
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
-  const response = yield* client.execute(upstream).pipe(
-    // fetch follows redirects by default; a sidecar's redirect goes back to the browser instead.
-    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-    Effect.timeout(RESPONSE_HEADERS_TIMEOUT),
-    Effect.option,
+  const response = yield* Effect.raceFirst(
+    client.execute(upstream).pipe(
+      // fetch follows redirects by default; a sidecar's redirect goes back to the browser instead.
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+      Effect.timeout(RESPONSE_HEADERS_TIMEOUT),
+      Effect.option,
+    ),
+    invalidated.pipe(Effect.andThen(failEnvironmentAuthInvalid("invalid_credential"))),
   );
   if (Option.isNone(response)) return text("The extension did not answer", 502);
 
   const headers = pick(response.value.headers, FORWARDED_RESPONSE_HEADERS);
-  // A path on the sidecar stays a path below its prefix; any other target is dropped.
-  const location = response.value.headers.location;
-  if (location?.startsWith("/") && !location.startsWith("//")) {
-    headers.location = `${FORK_GATEWAY_PREFIX}/${id}${location}`;
-  }
-  return HttpServerResponse.stream(response.value.stream, {
+  // Limitation: a redirect keeps no ticket, so a panel is one self-contained HTML document.
+  const location = rewriteLocation(id, response.value.headers.location);
+  if (location !== undefined) headers.location = location;
+  return HttpServerResponse.stream(response.value.stream.pipe(Stream.interruptWhen(invalidated)), {
     status: response.value.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),

@@ -47,6 +47,7 @@ export const FORK_WS_METHODS = {
   forkActivityFeed: "forkActivity.feed",
   // Fork: the sidecars declared in the extension gateway's manifest.
   forkGatewayList: "forkGateway.list",
+  forkGatewayPanelTicket: "forkGateway.panelTicket",
 } as const;
 
 // Fork: Extensions settings page.
@@ -166,6 +167,19 @@ const WsForkGatewayListRpc = Rpc.make(FORK_WS_METHODS.forkGatewayList, {
   error: EnvironmentAuthorizationError,
 });
 
+/**
+ * The audience of a ticket for one extension's panel. Every other route that takes tickets wants
+ * its own audience, so this one opens nothing else, and the gateway takes it only for `<id>`.
+ */
+export const ForkGatewayTicketAudience = Schema.TemplateLiteral(["fork-gateway:", Schema.String]);
+export type ForkGatewayTicketAudience = typeof ForkGatewayTicketAudience.Type;
+
+const WsForkGatewayPanelTicketRpc = Rpc.make(FORK_WS_METHODS.forkGatewayPanelTicket, {
+  payload: Schema.Struct({ id: Schema.String }),
+  success: Schema.Struct({ ticket: Schema.String }),
+  error: EnvironmentAuthorizationError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -182,6 +196,7 @@ export const FORK_RPCS = [
   WsForkInsightsActivityRpc,
   WsForkActivityFeedRpc,
   WsForkGatewayListRpc,
+  WsForkGatewayPanelTicketRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
