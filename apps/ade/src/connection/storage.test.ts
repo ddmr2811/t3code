@@ -83,6 +83,23 @@ describe("a tab on an older pairing", () => {
     expect(setRoutesOfPairing(first, environmentId, first.targets, tabPairing)).toEqual(first);
   });
 
+  it("does not store again a route of an earlier pairing the registry is still dropping", () => {
+    const second = pairedAs("second");
+    const leftOver = new BearerConnectionTarget({
+      connectionId: "first",
+      environmentId,
+      label: "M",
+    });
+    expect(
+      setRoutesOfPairing(
+        second,
+        environmentId,
+        [...second.targets, leftOver],
+        storedPairing(second, environmentId),
+      ),
+    ).toEqual(second);
+  });
+
   it.each([
     ["removed", removeConnectionFromCatalog(first, environmentId)],
     ["paired again", pairedAs("second")],

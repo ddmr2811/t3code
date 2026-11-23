@@ -6,7 +6,10 @@ const ENTRY = /^(https?):\/\/((?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d+|\*))
 // literal from a CSP source list, and `localhost` reaches it anyway.
 const LOOPBACK = new Set(["127.0.0.1", "localhost"]);
 // 100.64.0.0/10, the range Tailscale gives its machines.
-const TAILSCALE_IP = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.(25[0-5]|2[0-4]\d|1?\d?\d)){2}$/;
+const TAILSCALE_IP =
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){2}$/;
+// `*.ts.net` would reach every tailnet in the world, and `*.net` far more: a wildcard names one.
+const TOO_WIDE = /^\*\.(ts\.net|[a-z0-9-]+)$/i;
 
 /** Whether plain HTTP may go to this host: a literal one, or a wildcard's suffix. */
 function plainHttpAllowed(host: string): boolean {
@@ -20,6 +23,11 @@ export function parseConnectOrigins(raw: string | undefined): ReadonlyArray<stri
     const [, scheme, host] = ENTRY.exec(entry) ?? [];
     if (scheme === undefined || host === undefined) {
       throw new Error(`ADE_CONNECT_ORIGINS: origen no válido «${entry}»`);
+    }
+    if (TOO_WIDE.test(host)) {
+      throw new Error(
+        `ADE_CONNECT_ORIGINS: «${entry}» abre demasiado; usa el nombre de cada máquina o el de tu tailnet (*.<tailnet>.ts.net)`,
+      );
     }
     if (scheme.toLowerCase() === "http" && !plainHttpAllowed(host)) {
       throw new Error(

@@ -11,10 +11,10 @@ export const machinesChanged = (environmentId: EnvironmentId) =>
   channel?.postMessage(environmentId);
 
 /** Runs `listener` when another tab changed a stored machine; returns how to stop. */
-export function onMachinesChanged(listener: (environmentId: EnvironmentId) => void) {
-  const onMessage = (event: MessageEvent) => {
-    if (typeof event.data === "string") listener(EnvironmentId.make(event.data));
-  };
+export function onMachinesChanged(listener: (environmentId: EnvironmentId | null) => void) {
+  // A tab still on the previous build names no machine: every stored one may have changed.
+  const onMessage = (event: MessageEvent) =>
+    listener(typeof event.data === "string" ? EnvironmentId.make(event.data) : null);
   channel?.addEventListener("message", onMessage);
   return () => channel?.removeEventListener("message", onMessage);
 }

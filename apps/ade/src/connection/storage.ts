@@ -152,7 +152,14 @@ export function setRoutesOfPairing(
   pairing: string | undefined,
 ): Catalog {
   if (storedPairing(document, environmentId) !== pairing) throw stalePairing();
-  return setRoutesInCatalog(document, environmentId, routes);
+  // The registry drops an earlier pairing's routes one at a time and stores the rest each time; a
+  // route with no credential is one of those, and storing it would outlive a tab closed midway.
+  const paired = new Set(document.credentials.map((entry) => entry.connectionId));
+  return setRoutesInCatalog(
+    document,
+    environmentId,
+    routes.filter((route) => paired.has(connectionRouteId(route))),
+  );
 }
 
 /** A tab on an older `pairing` only lets go of its own connections: the stored one stays. */

@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { gradientFillStyle } from "../../web/src/fork/dither/style.ts";
 import "./ade.css";
 import { followMachine } from "./connection/pairing.ts";
+import { connectionAtomRuntime } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
 import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
@@ -40,8 +41,10 @@ function Shell() {
   const registry = useContext(RegistryContext);
   useEffect(
     () =>
-      onMachinesChanged(
-        (environmentId) => void runAtomCommand(registry, followMachine, environmentId),
+      onMachinesChanged((environmentId) =>
+        environmentId === null
+          ? registry.refresh(connectionAtomRuntime)
+          : void runAtomCommand(registry, followMachine, environmentId),
       ),
     [registry],
   );

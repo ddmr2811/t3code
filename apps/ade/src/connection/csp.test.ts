@@ -15,6 +15,10 @@ describe("parseConnectOrigins", () => {
     ["plain http just below Tailscale's range", "http://100.63.255.255:3773"],
     ["plain http just above Tailscale's range", "http://100.128.0.0:3773"],
     ["plain http to a name that only starts like a tailnet's", "http://ts.net.evil.com:3773"],
+    ["a wildcard over every tailnet", "http://*.ts.net:3773"],
+    ["a wildcard over every tailnet, over https too", "https://*.ts.net"],
+    ["a wildcard over a whole top-level domain", "https://*.net"],
+    ["an address the browser rewrites, so it would never match", "http://100.64.01.2:3773"],
   ])("rejects %s", (_name, raw) => {
     expect(() => parseConnectOrigins(raw)).toThrow();
   });
