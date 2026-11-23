@@ -1,5 +1,8 @@
 import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2TurnItem } from "@t3tools/contracts";
 
+/** Line and file counts the Spanish way, whatever the browser's language. */
+export const formatCount = new Intl.NumberFormat("es").format;
+
 export type TimelineRowKind = "user" | "assistant" | "reasoning" | "tool" | "notice" | "error";
 
 const TOOL_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -23,6 +26,7 @@ export function rowKind(item: OrchestrationV2TurnItem): TimelineRowKind | null {
 
 export interface TimelineTurn {
   readonly key: string;
+  readonly runId: string | null;
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
 }
 

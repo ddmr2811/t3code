@@ -1,8 +1,10 @@
-// Smoke test of the built ADE against a real T3 dev server, on Replay (dev) turns only. Needs:
-// a newest thread with a finished Replay `command-output` turn and nothing else pending; T3_URL (T3CODE_DEV_ALLOWED_ORIGINS=
-// <ADE_URL>); ADE_URL (built with ADE_CONNECT_ORIGINS=<T3_URL>); T3_PAIRING_TOKEN and, from
-// `t3 pair --scope orchestration:read`, T3_READONLY_PAIRING_TOKEN. ADE_SMOKE_SHOT(S) save captures.
+// Smoke test of the built ADE against a real T3 dev server, Replay (dev) turns only. Newest thread:
+// a finished Replay `command-output` turn, nothing pending, its project a Git repo (ADE_SMOKE_REPO).
+// T3_URL allows ADE_URL (T3CODE_DEV_ALLOWED_ORIGINS); the ADE is built with ADE_CONNECT_ORIGINS=T3_URL.
+// T3_PAIRING_TOKEN, T3_READONLY_PAIRING_TOKEN (`t3 pair --scope orchestration:read`); ADE_SMOKE_SHOTS.
 import * as NodeAssert from "node:assert/strict";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { chromium } from "playwright";
 
@@ -15,6 +17,7 @@ const adeUrl = env("ADE_URL");
 const t3Url = env("T3_URL");
 const pairingToken = env("T3_PAIRING_TOKEN");
 const readOnlyPairingToken = env("T3_READONLY_PAIRING_TOKEN");
+const repo = env("ADE_SMOKE_REPO");
 const shots = process.env.ADE_SMOKE_SHOTS;
 
 const browser = await chromium.launch();
@@ -153,6 +156,9 @@ try {
     "an agent that offers allow_always gets no session or always button",
   );
   await shot("aprobacion-en-el-hilo");
+  // Replay only plays the edit back, so the test makes it: the turn's checkpoint takes it in.
+  const written = `escrito por el turno ${run}`;
+  NodeFS.writeFileSync(NodePath.join(repo, ".codex-probe-write-action.txt"), `${written}\n`);
   const repliesBeforeApproval = await conversation.locator(".ade-msg-agent").count();
   await approval.getByRole("button", { name: "Aprobar esta vez" }).click();
   await approval.waitFor({ state: "detached" });
@@ -161,6 +167,24 @@ try {
     repliesBeforeApproval,
   );
   await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
+  // The turn ends in a checkpoint: its summary opens that turn's diff, with the line it wrote.
+  const changes = page.getByRole("region", { name: "Cambios", exact: true });
+  await conversation
+    .getByRole("listitem")
+    .filter({ hasText: `Pide permiso ${run}` })
+    .getByRole("button", { name: /^1 fichero · \+1 −\d+$/ })
+    .click();
+  await changes
+    .getByRole("article", { name: ".codex-probe-write-action.txt" })
+    .getByText(written)
+    .waitFor();
+  await shot("diff-del-turno");
+  await changes.getByRole("button", { name: "Volver a la conversación" }).click();
+  await page.getByRole("button", { name: "Cambios del hilo", exact: true }).click();
+  await changes.getByText(written).waitFor();
+  await changes.getByRole("button", { name: "Volver a la conversación" }).click();
+  await conversation.waitFor();
 
   await sendWith("Question", `Pregunta ${run}`);
   const question = requests.getByRole("form", { name: "Pregunta del agente" });

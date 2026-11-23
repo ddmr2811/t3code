@@ -10,9 +10,11 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { memo } from "react";
+import { lazy, memo, Suspense, useState } from "react";
 
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import {
@@ -23,9 +25,11 @@ import {
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { ThreadRequests } from "../decisions/Requests.tsx";
+import type { DiffRange } from "../diff/DiffView.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
   environmentProjects,
+  environmentThreadDetails,
   environmentThreadShells,
   operableEnvironmentIdsAtom,
 } from "../state.ts";
@@ -221,11 +225,48 @@ export function ThreadTree() {
 }
 
 const NO_THREAD = Atom.make(null);
+// The diff renderer loads with the first diff opened, not with the app.
+const DiffView = lazy(() => import("../diff/DiffView.tsx"));
+
+const turnRange = (checkpoint: ThreadCheckpointSummary): DiffRange => ({
+  fromTurnCount: checkpoint.checkpointTurnCount - 1,
+  toTurnCount: checkpoint.checkpointTurnCount,
+  title: `Cambios del turno ${checkpoint.checkpointTurnCount}`,
+});
+
+function ThreadChangesButton(props: {
+  threadRef: ScopedThreadRef;
+  onOpen: (range: DiffRange) => void;
+}) {
+  const checkpoints = useAtomValue(
+    environmentThreadDetails.checkpointSummariesAtom(props.threadRef),
+  );
+  const last = checkpoints.at(-1);
+  if (last === undefined || !checkpoints.some(turnHasChanges)) return null;
+  return (
+    <button
+      type="button"
+      className="ade-button-quiet"
+      onClick={() =>
+        props.onOpen({
+          fromTurnCount: 0,
+          toTurnCount: last.checkpointTurnCount,
+          title: "Cambios de todo el hilo",
+        })
+      }
+    >
+      Cambios del hilo
+    </button>
+  );
+}
 
 /** The selected thread: its header and its timeline; null with nothing selected. */
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
+  const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
   const ref = key === null ? null : parseScopedThreadKey(key);
+  const openDiff = (range: DiffRange) => key !== null && setDiff({ key, range });
+  const openRange = diff !== null && diff.key === key ? diff.range : null;
   const thread = useAtomValue(
     ref === null ? NO_THREAD : environmentThreadShells.quietThreadShellAtom(ref),
   );
@@ -252,11 +293,24 @@ export function SelectedThread() {
             </p>
           </div>
         )}
-        <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
-          Volver al resumen
-        </button>
+        <div className="ade-thread-view-actions">
+          {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
+          <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
+            Volver al resumen
+          </button>
+        </div>
       </header>
-      {machine === null ? null : <ThreadTimeline key={key} threadRef={ref} />}
+      {machine === null ? null : openRange !== null ? (
+        <Suspense fallback={<p className="ade-diff-note">Cargando el diff…</p>}>
+          <DiffView threadRef={ref} range={openRange} onClose={() => setDiff(null)} />
+        </Suspense>
+      ) : (
+        <ThreadTimeline
+          key={key}
+          threadRef={ref}
+          onOpenChanges={(checkpoint) => openDiff(turnRange(checkpoint))}
+        />
+      )}
       {machine === null || thread === null ? null : (
         <>
           <ThreadRequests key={`requests:${key}`} threadRef={ref} onOpenThread={setKey} />

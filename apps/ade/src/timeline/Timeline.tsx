@@ -1,6 +1,8 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { shouldShowLoadEarlierControl } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import {
@@ -20,7 +22,7 @@ import { memo, type ReactNode, useContext, useState } from "react";
 
 import { environmentThreadDetails, orchestrationEnvironment, threadEnvironment } from "../state.ts";
 import { AgentMarkdown } from "./AgentMarkdown.tsx";
-import { groupTurns, rowKind } from "./timeline.logic.ts";
+import { formatCount, groupTurns, rowKind } from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
   OrchestrationV2TurnItem,
@@ -283,10 +285,38 @@ function EarlierHistory(props: RowTarget) {
   );
 }
 
+/** What a turn changed, from its checkpoint; the diff itself is asked for once this is opened. */
+function TurnChanges(props: {
+  checkpoint: ThreadCheckpointSummary;
+  onOpen: (checkpoint: ThreadCheckpointSummary) => void;
+}) {
+  const { count, additions, deletions } = turnChanges(props.checkpoint).totals;
+  return (
+    <button
+      type="button"
+      className="ade-turn-changes"
+      onClick={() => props.onOpen(props.checkpoint)}
+    >
+      {count} {count === 1 ? "fichero" : "ficheros"} ·{" "}
+      <span data-sign="+">+{formatCount(additions)}</span>{" "}
+      <span data-sign="−">−{formatCount(deletions)}</span>
+    </button>
+  );
+}
+
 /** The thread's turns, read only. Streamed text renders inside its own row. */
-export function ThreadTimeline(props: { threadRef: ScopedThreadRef }) {
+export function ThreadTimeline(props: {
+  threadRef: ScopedThreadRef;
+  onOpenChanges: (checkpoint: ThreadCheckpointSummary) => void;
+}) {
   const { environmentId, threadId } = props.threadRef;
   const rows = useAtomValue(environmentThreadDetails.timelineVisibleTurnItemsAtom(props.threadRef));
+  const checkpoints = useAtomValue(
+    environmentThreadDetails.checkpointSummariesAtom(props.threadRef),
+  );
+  const checkpointByRun = new Map<string, ThreadCheckpointSummary>(
+    checkpoints.filter(turnHasChanges).map((checkpoint) => [checkpoint.runId, checkpoint]),
+  );
   const status = useAtomValue(environmentThreadDetails.statusAtom(props.threadRef));
   const error = useAtomValue(environmentThreadDetails.errorAtom(props.threadRef));
   const turns = groupTurns(rows);
@@ -305,18 +335,24 @@ export function ThreadTimeline(props: { threadRef: ScopedThreadRef }) {
     <div className="ade-timeline-scroll">
       <ol className="ade-timeline" aria-label="Conversación">
         <EarlierHistory environmentId={environmentId} threadId={threadId} />
-        {turns.map((turn) => (
-          <li key={turn.key} className="ade-turn">
-            {turn.rows.map((row) => (
-              <TimelineRow
-                key={row.item.id}
-                environmentId={environmentId}
-                threadId={threadId}
-                row={row}
-              />
-            ))}
-          </li>
-        ))}
+        {turns.map((turn) => {
+          const checkpoint = turn.runId === null ? undefined : checkpointByRun.get(turn.runId);
+          return (
+            <li key={turn.key} className="ade-turn">
+              {turn.rows.map((row) => (
+                <TimelineRow
+                  key={row.item.id}
+                  environmentId={environmentId}
+                  threadId={threadId}
+                  row={row}
+                />
+              ))}
+              {checkpoint === undefined ? null : (
+                <TurnChanges checkpoint={checkpoint} onOpen={props.onOpenChanges} />
+              )}
+            </li>
+          );
+        })}
       </ol>
     </div>
   );

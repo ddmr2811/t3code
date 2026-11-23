@@ -1184,3 +1184,136 @@ body {
   font: inherit;
   resize: vertical;
 }
+
+.ade-thread-view-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.ade-turn-changes {
+  justify-self: start;
+  padding: 4px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text-muted);
+  font: 12.5px var(--ade-font-mono);
+  cursor: pointer;
+}
+
+.ade-turn-changes:hover,
+.ade-turn-changes:focus-visible {
+  color: var(--ade-text);
+}
+
+[data-sign="+"] {
+  color: #4cc38a;
+}
+
+[data-sign="−"] {
+  color: #ff8589;
+}
+
+.ade-diff {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--ade-bg);
+}
+
+.ade-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px 32px 8px;
+}
+
+.ade-diff-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ade-diff-header .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-diff-body,
+.ade-diff > .ade-diff-note,
+.ade-diff > .ade-error {
+  display: grid;
+  gap: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 8px 32px 48px;
+  box-sizing: border-box;
+}
+
+.ade-diff-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-diff-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 0;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  list-style: none;
+  font: 12.5px var(--ade-font-mono);
+}
+
+.ade-diff-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 12px;
+}
+
+.ade-diff-list button {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ade-diff-counts {
+  flex: none;
+}
+
+.ade-diff-file {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+}
+
+.ade-diff-file > h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ade-border);
+  background: var(--ade-surface);
+  font: 500 12.5px var(--ade-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.ade-diff-file > .ade-diff-note {
+  padding: 12px;
+}
