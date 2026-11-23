@@ -1225,7 +1225,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
+  // Untraced: `executeAsAsked` already opens the command's span.
+  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
+    function* (asked) {
+      return yield* executeAsAsked(
+        (yield* GitVcsDriver.UnattendedGit)
+          ? { ...asked, args: ["-c", "core.hooksPath=/dev/null", ...asked.args] }
+          : asked,
+      );
+    },
+  );
+
+  const executeAsAsked: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
     executeRaw(input).pipe(
       withMetrics({
         counter: gitCommandsTotal,
@@ -6443,7 +6454,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const { remoteName, branchName } = target;
       const remoteRefName = `${remoteName}/${branchName}`;
       // A missing remote branch can leave a stale tracking ref; never resolve it.
-      if (!(yield* fetchRemote({ cwd: input.cwd, remoteName, refName: remoteRefName }))) {
+      // A new thread's base is fetched by schedules and agents too, so this fetch runs no hook.
+      const fetched = yield* fetchRemote({
+        cwd: input.cwd,
+        remoteName,
+        refName: remoteRefName,
+      }).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+      if (!fetched) {
         return null;
       }
       const resolved = yield* executeGit(

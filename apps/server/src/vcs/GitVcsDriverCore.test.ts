@@ -5988,9 +5988,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { fetch: "statusDetailsRemote" },
-      { fetch: "fetchRemoteTrackingBranch" },
-    ] as const)("runs none of the repository's hooks in background $fetch fetches", ({ fetch }) =>
+      { unasked: "statusDetailsRemote" },
+      { unasked: "fetchRemoteTrackingBranch" },
+      { unasked: "fetchWorktreeBaseCommit" },
+      { unasked: "pullCurrentBranch" },
+      { unasked: "createWorktree" },
+    ] as const)("runs none of the repository's hooks in an unasked $unasked", ({ unasked }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -6004,39 +6007,51 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(updater, ["clone", remote, "."]);
         yield* git(updater, ["config", "user.email", "test@test.com"]);
         yield* git(updater, ["config", "user.name", "Test"]);
-        yield* writeTextFile(updater, "remote.txt", "remote\n");
-        yield* git(updater, ["add", "remote.txt"]);
-        yield* git(updater, ["commit", "-m", "remote commit"]);
-        yield* git(updater, ["push", "origin", initialBranch]);
-        // A hook an agent could write in the checkout; moving any ref fires it.
+        const pushRemoteCommit = Effect.fn(function* (file: string) {
+          yield* writeTextFile(updater, file, "remote\n");
+          yield* git(updater, ["add", file]);
+          yield* git(updater, ["commit", "-m", file]);
+          yield* git(updater, ["push", "origin", initialBranch]);
+        });
+        yield* pushRemoteCommit("remote.txt");
+        // Hooks an agent could write in the checkout: a ref move, a merge and a checkout each fire one.
         const ran = path.join(yield* makeTmpDir("git-vcs-driver-hook-ran-"), "ran");
-        yield* writeTextFile(
-          cwd,
-          ".git/hooks/reference-transaction",
-          `#!/bin/sh\necho ran >> '${ran}'\n`,
-        );
-        yield* fs.chmod(path.join(cwd, ".git/hooks/reference-transaction"), 0o755);
-        const remoteRef = `refs/remotes/origin/${initialBranch}`;
-        const before = yield* git(cwd, ["rev-parse", remoteRef]);
+        for (const hook of ["reference-transaction", "post-merge", "post-checkout"]) {
+          yield* writeTextFile(cwd, `.git/hooks/${hook}`, `#!/bin/sh\necho ran >> '${ran}'\n`);
+          yield* fs.chmod(path.join(cwd, `.git/hooks/${hook}`), 0o755);
+        }
+        const refs = git(cwd, ["for-each-ref"]);
+        const before = yield* refs;
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        if (fetch === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
-        else
+        const unattended = Effect.provideService(GitVcsDriver.UnattendedGit, true);
+        if (unasked === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
+        else if (unasked === "fetchRemoteTrackingBranch")
           yield* driver.fetchRemoteTrackingBranch({
             cwd,
             remoteName: "origin",
             remoteBranch: initialBranch,
           });
+        else if (unasked === "fetchWorktreeBaseCommit")
+          yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch });
+        else if (unasked === "pullCurrentBranch")
+          yield* driver.pullCurrentBranch(cwd).pipe(unattended);
+        else
+          yield* driver
+            .createWorktree({
+              cwd,
+              path: path.join(yield* makeTmpDir("git-worktrees-"), "unasked"),
+              refName: initialBranch,
+              newRefName: "unasked",
+            })
+            .pipe(unattended);
 
-        assert.notEqual(yield* git(cwd, ["rev-parse", remoteRef]), before);
-        assert.isFalse(yield* fs.exists(ran), "a background fetch ran the repository's hook");
+        assert.notEqual(yield* refs, before);
+        assert.isFalse(yield* fs.exists(ran), "Git nobody asked for ran the repository's hook");
 
-        // What a caller asks for through `execute` still runs it.
-        yield* driver.execute({
-          operation: "test.updateRef",
-          cwd,
-          args: ["update-ref", "refs/heads/asked", "HEAD"],
-        });
+        // The same pull, asked for, still runs them.
+        yield* pushRemoteCommit("asked.txt");
+        yield* driver.pullCurrentBranch(cwd);
         assert.isTrue(yield* fs.exists(ran));
       }),
     );

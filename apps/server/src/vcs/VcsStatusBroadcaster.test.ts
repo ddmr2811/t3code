@@ -31,6 +31,7 @@ import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import * as VcsAutomaticFetchInterval from "./VcsAutomaticFetchInterval.ts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -973,8 +974,9 @@ describe("VcsStatusBroadcaster", () => {
             invalidateRemoteStatus: () => Effect.void,
             invalidateStatus: () => Effect.void,
             pullCurrentBranch: () =>
-              Effect.sync(() => {
-                pullCalls += 1;
+              Effect.gen(function* () {
+                // Nobody asked for this pull, so it must not run the repository's hooks.
+                if (yield* GitVcsDriver.UnattendedGit) pullCalls += 1;
                 remoteStatus = { ...remoteStatus, behindCount: 0 };
                 return {
                   status: "pulled" as const,

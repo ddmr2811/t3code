@@ -315,8 +315,9 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
           behindCount: cwd === "/current" ? 0 : 1,
         } as never),
       pullCurrentBranch: (cwd: string) =>
-        Effect.sync(() => {
-          pulled.push(cwd);
+        Effect.gen(function* () {
+          // Nobody asked for this pull, so it must not run the repository's hooks.
+          if (yield* GitVcsDriver.UnattendedGit) pulled.push(cwd);
           return {
             status: "pulled" as const,
             refName: "main",

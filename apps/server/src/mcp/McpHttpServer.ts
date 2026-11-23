@@ -49,6 +49,7 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
@@ -350,6 +351,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const linkExpiresAt = admitted.client?.linkExpiresAt;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
+      // An agent's tool call is not the user asking: the Git it starts runs no repository hook.
+      Effect.provideService(GitVcsDriver.UnattendedGit, true),
       Effect.map(normalizeMcpHttpResponse),
       Effect.map((response) =>
         linkExpiresAt === undefined

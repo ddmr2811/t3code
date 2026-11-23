@@ -49,7 +49,7 @@ import {
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -925,6 +925,8 @@ const make = Effect.gen(function* () {
                       ...(exactName ? { exactName: true } : {}),
                     }),
             ).pipe(
+              // The server picked this name and renames by itself, so no repository hook runs.
+              Effect.provideService(GitVcsDriver.UnattendedGit, true),
               // A cancel must see the renamed branch, or its cleanup deletes the old name.
               Effect.tap((renamed) =>
                 Effect.sync(() => {

@@ -50,6 +50,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -1130,6 +1131,8 @@ export const layer = Layer.effect(
                     creationSource: active.creationSource,
                   })
                   .pipe(
+                    // The worktree it prepares, forked from here, runs no repository hook.
+                    Effect.provideService(GitVcsDriver.UnattendedGit, true),
                     Effect.map((launched) => launched.threadId),
                     Effect.tap((threadId) =>
                       threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),

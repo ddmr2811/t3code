@@ -355,6 +355,14 @@ export const BackgroundGitWork = Context.Reference<boolean>("t3/vcs/BackgroundGi
   defaultValue: () => false,
 });
 
+/**
+ * Set around Git that nobody asked for: scheduled work, automatic pulls, an agent's tool call.
+ * An agent can write the repository's hooks, and they would run as the server, outside its sandbox.
+ */
+export const UnattendedGit = Context.Reference<boolean>("t3/vcs/UnattendedGit", {
+  defaultValue: () => false,
+});
+
 export class GitVcsDriver extends Context.Service<
   GitVcsDriver,
   {

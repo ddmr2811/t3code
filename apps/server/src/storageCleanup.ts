@@ -2061,6 +2061,8 @@ const make = Effect.gen(function* () {
     (completion: Deferred.Deferred<StorageCleanupReport, ServerSettingsError> | undefined) =>
       (completion === undefined ? Ref.set(automaticSweepQueued, false) : Effect.void).pipe(
         Effect.andThen(sweep(completion === undefined ? "automatic" : "manual")),
+        // Cleanup deletes refs and worktrees by itself; no repository hook has a say in it.
+        Effect.provideService(GitVcsDriver.UnattendedGit, true),
         Effect.exit,
         Effect.flatMap((exit) =>
           completion === undefined

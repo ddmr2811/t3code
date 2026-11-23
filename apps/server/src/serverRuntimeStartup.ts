@@ -221,7 +221,9 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
 
         if (status.behindCount <= 0) return;
 
-        const result = yield* git.pullCurrentBranch(cwd);
+        const result = yield* git
+          .pullCurrentBranch(cwd)
+          .pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
         yield* Effect.logDebug("Automatic project pull completed", {
           cwd,
           status: result.status,

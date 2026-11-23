@@ -494,6 +494,8 @@ const make = Effect.gen(function* () {
       });
     const runId = `${runCounter++}`;
     yield* write(input, key, workspaceRoot, locator, detail, currentHeadSha, runId, owns).pipe(
+      // Its fetch, scratch checkout and ref cleanup run none of the repository's hooks.
+      Effect.provideService(GitVcsDriver.UnattendedGit, true),
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

@@ -78,7 +78,9 @@ const make = Effect.gen(function* () {
   const serverVersion = packageJson.version;
 
   const runGit = (operation: string, cwd: string, args: ReadonlyArray<string>, timeoutMs: number) =>
-    git.execute({ operation: `TriageService.${operation}`, cwd, args, timeoutMs, env: GIT_ENV });
+    git
+      .execute({ operation: `TriageService.${operation}`, cwd, args, timeoutMs, env: GIT_ENV })
+      .pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
 
   // Clones outlive the request that started them: a fresh clone takes tens of
   // seconds, and the user is writing their description meanwhile.
