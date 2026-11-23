@@ -416,20 +416,22 @@ export const make = Effect.gen(function* () {
         }),
     );
 
-  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(function* (
-    cwd: string,
-  ) {
-    const includeBranchChanges = wantsBranchChanges(cwd);
-    const local = yield* workflow.localStatus({ cwd }, { includeBranchChanges });
-    // A subscriber that shows totals arrived during the read and must not receive it without them.
-    if (!includeBranchChanges && wantsBranchChanges(cwd)) {
-      return {
-        local: yield* workflow.localStatus({ cwd }, { includeBranchChanges: true }),
-        includesBranchChanges: true,
-      };
-    }
-    return { local, includesBranchChanges: includeBranchChanges };
-  });
+  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(
+    function* (cwd: string) {
+      const includeBranchChanges = wantsBranchChanges(cwd);
+      const local = yield* workflow.localStatus({ cwd }, { includeBranchChanges });
+      // A subscriber that shows totals arrived during the read and must not receive it without them.
+      if (!includeBranchChanges && wantsBranchChanges(cwd)) {
+        return {
+          local: yield* workflow.localStatus({ cwd }, { includeBranchChanges: true }),
+          includesBranchChanges: true,
+        };
+      }
+      return { local, includesBranchChanges: includeBranchChanges };
+      // A refresh runs by itself, and an agent can write the repository's fsmonitor command.
+    },
+    Effect.provideService(GitVcsDriver.UnattendedGit, true),
+  );
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (
@@ -667,7 +669,9 @@ export const make = Effect.gen(function* () {
         }),
       );
       yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
+      const local = yield* workflow
+        .localStatus({ cwd })
+        .pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
       if (
         !local.isRepo ||
         !isForkAutoPullBranch({

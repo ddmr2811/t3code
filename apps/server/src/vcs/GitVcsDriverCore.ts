@@ -49,6 +49,7 @@ import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEm
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
   explicitBareRepositoryEnv,
+  UNATTENDED_GIT_CONFIG,
   gitConfigEnv,
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
@@ -1062,8 +1063,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   >();
   const statusFetchProcesses = yield* Semaphore.make(4);
 
+  // An agent can write the repository's `core.sshCommand`, which Git would run for a fetch nobody
+  // asked for. The command set outside the repository still applies, conditional includes too.
+  const sshCommandsOutsideRepository: Cache.Cache<string, string | null> = yield* Cache.makeWith(
+    (cwd: string) =>
+      executeRaw({
+        operation: "GitVcsDriver.sshCommandOutsideRepository",
+        cwd,
+        args: ["config", "--show-scope", "-z", "--get-all", "core.sshCommand"],
+        allowNonZeroExit: true,
+      }).pipe(
+        Effect.provideService(GitVcsDriver.UnattendedGit, false),
+        Effect.map(({ stdout }) => {
+          const fields = stdout.split("\0");
+          let command: string | null = null;
+          for (let index = 0; index + 1 < fields.length; index += 2) {
+            if (fields[index] !== "local" && fields[index] !== "worktree") {
+              command = fields[index + 1]!;
+            }
+          }
+          return command;
+        }),
+        Effect.orElseSucceed(() => null),
+      ),
+    { capacity: REPOSITORY_PATHS_CACHE_CAPACITY, timeToLive: () => BASE_BRANCH_CACHE_TTL },
+  );
+  const unattendedSshCommand = Effect.fnUntraced(function* (cwd: string, env: NodeJS.ProcessEnv) {
+    if (env.GIT_SSH_COMMAND !== undefined) return env.GIT_SSH_COMMAND;
+    const configured = yield* Cache.get(sshCommandsOutsideRepository, cwd);
+    if (configured !== null) return configured;
+    // Git runs this through a shell, on Windows too.
+    return env.GIT_SSH ? `'${env.GIT_SSH.replaceAll("'", "'\\''")}'` : "ssh";
+  });
+
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
+      const unattended = yield* GitVcsDriver.UnattendedGit;
       const commandInput = {
         ...input,
         args: [...input.args],
@@ -1071,6 +1106,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;
       const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const appendTruncationMarker = input.appendTruncationMarker ?? false;
+      // As arguments, not environment: Git before 2.31 ignores `GIT_CONFIG_COUNT` without a word.
+      const unattendedArgs = unattended
+        ? UNATTENDED_GIT_CONFIG.flatMap((setting) => ["-c", setting])
+        : [];
+      const sshCommand = unattended
+        ? yield* unattendedSshCommand(input.cwd, {
+            ...(yield* HostProcess.Environment),
+            ...input.env,
+          })
+        : null;
 
       const runGitCommand = Effect.fn("runGitCommand")(function* () {
         const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
@@ -1095,7 +1140,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...trace2Monitor.env,
         };
         const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
-        const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
+        const spawnEnv = {
+          ...env,
+          ...windowsLongPathConfigEnv(hostPlatform, env),
+          ...(sshCommand === null ? {} : { GIT_SSH_COMMAND: sshCommand }),
+        };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>
           new GitCommandError({
@@ -1107,7 +1156,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner
           .spawn(
-            ChildProcess.make(executable, commandInput.args, {
+            ChildProcess.make(executable, [...unattendedArgs, ...commandInput.args], {
               cwd: commandInput.cwd,
               env: spawnEnv,
               // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
@@ -1225,18 +1274,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  // Untraced: `executeAsAsked` already opens the command's span.
-  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
-    function* (asked) {
-      return yield* executeAsAsked(
-        (yield* GitVcsDriver.UnattendedGit)
-          ? { ...asked, args: ["-c", "core.hooksPath=/dev/null", ...asked.args] }
-          : asked,
-      );
-    },
-  );
-
-  const executeAsAsked: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
+  const execute: GitVcsDriver.GitVcsDriver["Service"]["execute"] = (input) =>
     executeRaw(input).pipe(
       withMetrics({
         counter: gitCommandsTotal,
@@ -1529,9 +1567,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
     const fetchArgs = (mode: "--dry-run" | "--quiet") => [
-      // Nobody asked for this fetch, and an agent can write the repository's hooks: none runs.
-      "-c",
-      "core.hooksPath=/dev/null",
       "--git-dir",
       gitCommonDir,
       "fetch",
@@ -1959,6 +1994,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
+      // Nobody asked for this fetch.
+      Effect.provideService(GitVcsDriver.UnattendedGit, true),
       Effect.as(true as const),
     );
   });
@@ -6505,10 +6542,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
       // Storage cleanup runs this every sweep: like the status fetch, a killed fetch strands a
       // `tmp_pack_*` and a failing `gc --auto` repeats each time, so allow time and skip gc.
-      // It moves a ref by itself, so like the status fetch it runs none of the repository's hooks.
       const args = [
-        "-c",
-        "core.hooksPath=/dev/null",
         "fetch",
         "--quiet",
         "--no-tags",
@@ -6522,7 +6556,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         args,
         { timeoutMs: FETCH_REMOTE_TIMEOUT_MS, allowNonZeroExit: true },
-      );
+        // It moves a ref by itself, like the status fetch.
+      ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
       if (result.exitCode === 0) return;
       const reason = classifyGitFailure(result.stderr);
       return yield* new GitCommandError({

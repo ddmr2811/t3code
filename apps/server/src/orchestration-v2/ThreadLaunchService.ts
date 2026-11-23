@@ -1177,6 +1177,8 @@ const make = Effect.gen(function* () {
                       ),
                     ),
             ).pipe(
+              // Nobody asked for the rollback, whoever asked for the thread.
+              Effect.provideService(GitVcsDriver.UnattendedGit, true),
               Effect.andThen(
                 threads
                   .dispatch({

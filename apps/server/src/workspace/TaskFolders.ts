@@ -302,8 +302,8 @@ const make = Effect.gen(function* () {
   ) =>
     layoutLocks.withLock(
       taskFolder.projectRoot,
-      processes
-        .run({
+      Effect.flatMap(GitVcsDriver.UnattendedGit, (unattended) =>
+        processes.run({
           operation: "TaskFolders.worktreeLayout",
           command: onWindows ? "cmd.exe" : "sh",
           args: onWindows ? ["/d", "/s", "/c", command] : ["-c", command],
@@ -318,10 +318,12 @@ const make = Effect.gen(function* () {
             T3_WORKTREE_BRANCH: branch,
             T3_WORKTREE_BASE: baseBranch ?? "",
             T3_WORKTREE_REPOSITORIES: repositories.join("\n"),
+            // The command's own Git runs no repository hook when nobody asked for this folder.
+            ...(unattended ? VcsProcess.unattendedGitEnv(hostEnvironment, hostPlatform) : {}),
           },
           timeoutMs: LAYOUT_COMMAND_TIMEOUT_MS,
-        })
-        .pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed"))),
+        }),
+      ).pipe(Effect.mapError(fail(operation, "The project's worktree layout command failed"))),
     );
 
   /** Where a folder's `.git` file points, or null when `.git` is a directory or absent. */
@@ -1115,6 +1117,8 @@ const make = Effect.gen(function* () {
                 { concurrency: REPOSITORY_CONCURRENCY, discard: true },
               ),
             ),
+            // Nobody asked for the rollback, whoever asked for the folder.
+            Effect.provideService(GitVcsDriver.UnattendedGit, true),
           ),
         ),
         Effect.mapError((cause) =>

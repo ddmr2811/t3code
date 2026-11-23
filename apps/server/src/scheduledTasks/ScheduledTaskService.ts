@@ -1093,6 +1093,8 @@ export const layer = Layer.effect(
               creationSource: active.creationSource,
             })
             .pipe(
+              // The send restores a missing worktree, which runs no repository hook from here.
+              Effect.provideService(GitVcsDriver.UnattendedGit, true),
               Effect.catchTags({
                 ThreadManagementThreadNotFoundError: (error) =>
                   retries === 0

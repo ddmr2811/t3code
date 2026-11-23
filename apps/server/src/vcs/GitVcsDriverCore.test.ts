@@ -6056,6 +6056,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // An agent can write both settings in the checkout's config; each names a command Git runs.
+    it.effect.each([{ setting: "core.fsmonitor" }, { setting: "core.sshCommand" }] as const)(
+      "runs the repository's $setting only in Git somebody asked for",
+      ({ setting }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          // Nothing listens there, so a real ssh is refused at once.
+          yield* git(cwd, ["remote", "add", "origin", "ssh://127.0.0.1:1/repository"]);
+          const scripts = yield* makeTmpDir("git-vcs-driver-config-command-");
+          const ran = path.join(scripts, "ran");
+          yield* writeTextFile(scripts, "command", `#!/bin/sh\necho ran >> '${ran}'\nexit 1\n`);
+          yield* fs.chmod(path.join(scripts, "command"), 0o755);
+          yield* git(cwd, ["config", setting, path.join(scripts, "command")]);
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const run =
+            setting === "core.fsmonitor"
+              ? Effect.asVoid(driver.statusDetailsLocal(cwd))
+              : Effect.asVoid(
+                  driver.execute({
+                    operation: "test.fetch",
+                    cwd,
+                    args: ["fetch", "origin"],
+                    allowNonZeroExit: true,
+                  }),
+                );
+
+          yield* run.pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+          assert.isFalse(yield* fs.exists(ran), `Git nobody asked for ran ${setting}`);
+
+          yield* run;
+          assert.isTrue(yield* fs.exists(ran));
+        }),
+    );
+
     it.effect("leaves FETCH_HEAD to the user's own pulls in background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

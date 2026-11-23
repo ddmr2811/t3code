@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -438,7 +439,11 @@ it.effect.each([
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
+            // The send restores a missing worktree, which must not run the repository's hooks.
+            sendToThread: (input) =>
+              Effect.flatMap(GitVcsDriver.UnattendedGit, (unattended) =>
+                unattended ? Ref.set(sent, input.messageId) : Effect.die("an attended send"),
+              ).pipe(Effect.as({} as never)),
             getThreadShell: () => Effect.succeed(threadShell(projectId)),
             getProjectThreadRecords: () =>
               Effect.map(

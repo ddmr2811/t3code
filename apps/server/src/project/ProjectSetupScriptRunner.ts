@@ -7,6 +7,7 @@ import {
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -19,6 +20,8 @@ import * as Schema from "effect/Schema";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -264,6 +267,8 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
   const serviceScope = yield* Effect.scope;
+  const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
 
   const observeTerminalCompletion = Effect.fn("ProjectSetupScriptRunner.observeTerminalCompletion")(
     function* (input: {
@@ -505,6 +510,10 @@ export const make = Effect.gen(function* () {
       COLORTERM: "",
       // Project scripts keep the default shell; the preference is for interactive terminals only.
       T3CODE_TERMINAL_SHELL: "",
+      // Git a script runs when nobody asked for the thread runs no repository hook.
+      ...((yield* GitVcsDriver.UnattendedGit)
+        ? VcsProcess.unattendedGitEnv(hostEnvironment, hostPlatform)
+        : {}),
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;

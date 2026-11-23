@@ -63,6 +63,7 @@ import {
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
@@ -807,7 +808,12 @@ export const layer: Layer.Layer<
           return;
         }
       }
-      const recreateResult = yield* Effect.result(restoreMissingWorktree(projection.thread));
+      // A queued turn starts by itself, after a restart too: its checkout runs no repository hook.
+      const recreateResult = yield* Effect.result(
+        restoreMissingWorktree(projection.thread).pipe(
+          Effect.provideService(GitVcsDriver.UnattendedGit, true),
+        ),
+      );
       if (recreateResult._tag === "Failure") {
         if (input.willRetry === true) return yield* recreateResult.failure;
         yield* settleStartFailure({

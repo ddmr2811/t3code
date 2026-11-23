@@ -697,6 +697,38 @@ it.live("gives every repository one branch name when one of them already has it"
   ),
 );
 
+it.live.each([{ unattended: true }, { unattended: false }])(
+  "runs the repository's hooks in a layout command only when somebody asked, unattended=$unattended",
+  ({ unattended }) =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository } = yield* fixture;
+        const mono = yield* repository("mono");
+        yield* fileSystem.writeFileString(
+          path.join(mono, "t3.json"),
+          JSON.stringify({
+            worktreeLayout: {
+              create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
+            },
+          }),
+        );
+        // A hook an agent could write in the checkout; the command's checkout fires it.
+        const hook = path.join(mono, ".git", "hooks", "post-checkout");
+        const hookRan = path.join(tmp, "layout-hook-ran");
+        yield* fileSystem.writeFileString(hook, `#!/bin/sh\necho ran > '${hookRan}'\n`);
+        yield* fileSystem.chmod(hook, 0o755);
+        state.workspaceRoot = mono;
+        state.trackedFolders = [];
+
+        yield* create("feature").pipe(
+          Effect.provideService(GitVcsDriver.UnattendedGit, unattended),
+        );
+
+        assert.equal(yield* fileSystem.exists(hookRan), !unattended);
+      }),
+    ),
+);
+
 it.live("removes what it created when one repository fails", () =>
   withState((state) =>
     Effect.gen(function* () {
@@ -709,10 +741,19 @@ it.live("removes what it created when one repository fails", () =>
       state.workspaceRoot = path.join(tmp, "shop");
       state.trackedFolders = tracked(api, broken);
       const config = yield* ServerConfig.ServerConfig;
+      // Nobody asked for the rollback, so deleting the branch runs no hook of the repository.
+      const hook = path.join(api, ".git", "hooks", "reference-transaction");
+      const hookRan = path.join(tmp, "rollback-hook-ran");
+      yield* fileSystem.writeFileString(
+        hook,
+        `#!/bin/sh\ngrep -q ' 0\\{40\\} refs/heads/feature' && echo ran > '${hookRan}'\nexit 0\n`,
+      );
+      yield* fileSystem.chmod(hook, 0o755);
 
       const error = yield* create("feature").pipe(Effect.flip);
 
       assert.include(String((error as { readonly detail?: string }).detail), "broken worktree");
+      assert.isFalse(yield* fileSystem.exists(hookRan));
       assert.equal(yield* worktreeCount(api), 1);
       assert.equal(yield* run(api, "branch", "--format=%(refname:short)"), "main");
       assert.deepEqual(yield* fileSystem.readDirectory(path.join(config.worktreesDir, "shop")), []);

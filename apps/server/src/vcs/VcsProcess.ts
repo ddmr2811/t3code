@@ -140,6 +140,20 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
+/**
+ * For processes that run Git nobody asked for and that the driver does not start, such as a
+ * project's layout command: an agent can write the repository's hooks and its fsmonitor command.
+ */
+export const UNATTENDED_GIT_CONFIG = ["core.hooksPath=/dev/null", "core.fsmonitor=false"] as const;
+export const unattendedGitEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => {
+  const added: NodeJS.ProcessEnv = {};
+  for (const setting of UNATTENDED_GIT_CONFIG) {
+    const [key, value] = setting.split("=") as [string, string];
+    Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
+  }
+  return added;
+};
+
 const REPOSITORY_SELECTORS = new Set([
   "GIT_DIR",
   "GIT_WORK_TREE",

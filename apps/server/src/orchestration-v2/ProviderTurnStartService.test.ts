@@ -163,6 +163,11 @@ function startWithMissingWorktree(
   const startRootRun = vi.fn(() => Effect.void);
   const pruneWorktrees = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  // A turn starts by itself, so its checkout must not run the repository's hooks.
+  const createUnattendedWorktree = () =>
+    Effect.flatMap(GitVcsDriver.UnattendedGit, (unattended) =>
+      unattended ? createWorktree() : Effect.succeed({} as never),
+    );
   const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
@@ -189,7 +194,7 @@ function startWithMissingWorktree(
         layerNoTaskFolders,
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
-          createWorktree,
+          createWorktree: createUnattendedWorktree,
           listLocalBranchNames,
         }),
         Layer.mock(ProjectService.ProjectService)({
