@@ -1074,10 +1074,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const appendTruncationMarker = input.appendTruncationMarker ?? false;
       // As arguments, not environment: Git before 2.31 ignores `GIT_CONFIG_COUNT` without a word.
-      // An agent can write the repository's `core.sshCommand` too; the server's `GIT_SSH_COMMAND`
-      // still beats this one.
       const unattendedArgs = unattended
-        ? [...UNATTENDED_GIT_CONFIG, "core.sshCommand=ssh"].flatMap((setting) => ["-c", setting])
+        ? UNATTENDED_GIT_CONFIG.flatMap((setting) => ["-c", setting])
         : [];
 
       const runGitCommand = Effect.fn("runGitCommand")(function* () {

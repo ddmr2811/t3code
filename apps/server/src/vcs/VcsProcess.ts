@@ -142,9 +142,14 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
 
 /**
  * For processes that run Git nobody asked for and that the driver does not start, such as a
- * project's layout command: an agent can write the repository's hooks and its fsmonitor command.
+ * project's layout command: an agent can write the repository's hooks, fsmonitor and SSH commands.
+ * The server's own `GIT_SSH_COMMAND` still beats `core.sshCommand`.
  */
-export const UNATTENDED_GIT_CONFIG = ["core.hooksPath=/dev/null", "core.fsmonitor=false"] as const;
+export const UNATTENDED_GIT_CONFIG = [
+  "core.hooksPath=/dev/null",
+  "core.fsmonitor=false",
+  "core.sshCommand=ssh",
+] as const;
 /** In `GIT_CONFIG_PARAMETERS` syntax: appended there it beats inherited entries, which beat `GIT_CONFIG_COUNT`. */
 export const UNATTENDED_GIT_CONFIG_PARAMETERS = UNATTENDED_GIT_CONFIG.map(
   (setting) => `'${setting}'`,

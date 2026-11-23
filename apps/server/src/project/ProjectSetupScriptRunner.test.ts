@@ -48,6 +48,7 @@ const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
   readonly shell?: string | null;
+  readonly observe?: boolean;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const opens: TerminalOpenInput[] = [];
@@ -92,7 +93,9 @@ const makeHarness = Effect.fn(function* (options: {
   const start = runner.runForThread({
     threadId,
     worktreePath: "/repo/.t3/worktrees/feature",
-    observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) },
+    ...(options.observe === false
+      ? {}
+      : { observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) } }),
     project: {
       id: ProjectId.make("project-1"),
       workspaceRoot: "/repo",
@@ -131,6 +134,21 @@ describe("ProjectSetupScriptRunner", () => {
     Effect.gen(function* () {
       const { opens } = yield* setup();
       expect(opens[0]?.env?.T3CODE_TERMINAL_SHELL).toBe("");
+    }),
+  );
+
+  it.effect("refuses an unasked script in cmd.exe, which cannot scope the Git policy", () =>
+    Effect.gen(function* () {
+      const { start, writes } = yield* makeHarness({
+        shell: "C:\\Windows\\System32\\cmd.exe",
+        observe: false,
+      });
+      const error = yield* start.pipe(
+        Effect.provideService(GitVcsDriver.UnattendedGit, true),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("ProjectSetupScriptUnsupportedShellError");
+      expect(yield* Queue.size(writes)).toBe(0);
     }),
   );
 
@@ -328,7 +346,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
       const result = yield* runObservedSetup(
         "printenv GIT_CONFIG_PARAMETERS\nexit 3 # trailing comment",
       ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
-      assert.deepEqual(result.lines, ["'core.hooksPath=/dev/null' 'core.fsmonitor=false'"]);
+      assert.deepEqual(result.lines, [
+        "'core.hooksPath=/dev/null' 'core.fsmonitor=false' 'core.sshCommand=ssh'",
+      ]);
       assert.equal(result.exitCode, 3);
       assert.deepEqual(
         Object.keys(result.opens[0]?.env ?? {}).filter((name) => name.startsWith("GIT_")),

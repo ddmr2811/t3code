@@ -581,15 +581,16 @@ export const make = Effect.gen(function* () {
         return { completionShell: null, commandLine: null };
       }
       const completionShell = resolveCompletionShell(shell);
+      if (completionShell === null && (unattendedGit || (observe && completionToken))) {
+        // cmd.exe has no block to scope the unattended Git policy to, nor a completion wrapper.
+        yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
+        return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
+      }
       const command = unattendedGit
         ? scopeUnattendedGit(script.command, completionShell)
         : script.command;
       let commandLine = command;
-      if (observe && completionToken) {
-        if (completionShell === null) {
-          yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
-          return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
-        }
+      if (observe && completionToken && completionShell !== null) {
         commandLine = wrapCommandForCompletion(
           command,
           completionShell,
