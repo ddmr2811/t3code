@@ -207,7 +207,7 @@ it.live("takes a ticket only from the gateway, for its own extension, and nowher
     });
     const media = yield* auth.issueWebSocketTicket(session, { use: "media" });
     const forSecond = yield* panelTicket(session.sessionId, "second");
-    for (const ticket of [Redacted.value(media.ticket), forSecond]) {
+    for (const ticket of [Redacted.value(media.ticket), forSecond, "not-a-ticket"]) {
       const response = yield* fetch(`/api/fork/ext/panel/?wsTicket=${encodeURIComponent(ticket)}`);
       expect(response.status).toBe(401);
     }
