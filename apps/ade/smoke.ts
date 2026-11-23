@@ -1,73 +1,122 @@
-// Smoke test of the built ADE against a real T3 dev server, Replay (dev) turns only. T3_URL is a
-// loopback dev server on the throwaway data directory T3_HOME, allowing ADE_URL
-// (T3CODE_DEV_ALLOWED_ORIGINS). ADE_CONNECT_ORIGINS holds T3_URL as 127.0.0.1 and as localhost:
-// two addresses of one machine. Repository, project, thread and pairing codes are the smoke's own.
+// Smoke test of the built ADE, Replay (dev) turns only. ADE_URL is the built ADE (`vp preview`),
+// whose ADE_CONNECT_ORIGINS names one port as http://127.0.0.1 and as http://localhost: two
+// addresses of one machine. The T3 server on that port, its data directory, repository, project,
+// thread and pairing codes are the smoke's own: made here, and gone when it ends.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { chromium } from "playwright";
 
-const env = (name: string) => {
-  const value = process.env[name];
-  NodeAssert.ok(value, `${name} is required`);
-  return value;
-};
-const adeUrl = env("ADE_URL");
-const t3Url = env("T3_URL");
-const home = NodeFS.realpathSync(env("T3_HOME"));
-const t3Host = new URL(t3Url).hostname;
-NodeAssert.ok(["127.0.0.1", "localhost"].includes(t3Host), "T3_URL must be a loopback server");
-NodeAssert.notEqual(
-  home,
-  NodeFS.realpathSync(NodePath.join(NodeOS.homedir(), ".t3")),
-  "T3_HOME must not be the live T3 Code install",
+const adeUrl = process.env.ADE_URL;
+NodeAssert.ok(adeUrl, "ADE_URL is required");
+const allowed = await (await fetch(adeUrl)).text();
+const port = /connect-src[^"]* http:\/\/127\.0\.0\.1:(\d+)/.exec(allowed)?.[1];
+NodeAssert.ok(
+  port !== undefined && allowed.includes(` http://localhost:${port}`),
+  "the ADE must be built with ADE_CONNECT_ORIGINS='http://127.0.0.1:<port> http://localhost:<port>'",
 );
+const t3Url = `http://127.0.0.1:${port}`;
 // The same server under its other loopback name.
-const otherT3Url = t3Url.replace(t3Host, t3Host === "localhost" ? "127.0.0.1" : "localhost");
+const otherT3Url = `http://localhost:${port}`;
 
 // Each run's messages are its own, so an earlier run's rows never satisfy a wait.
 const run = Math.random().toString(36).slice(2, 8);
 // Everything the smoke writes goes into a directory it has just created.
 const sandbox = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ade-smoke-"));
+const home = NodePath.join(sandbox, "home");
 const repo = NodePath.join(sandbox, "repo");
 NodeFS.mkdirSync(repo);
+// A hook exports GIT_DIR and GIT_INDEX_FILE, and user or system config can sign or ignore: no
+// git here, the server's included, sees the repository or the config of whoever runs the smoke.
+const gitConfig = NodePath.join(sandbox, "gitconfig");
+NodeFS.writeFileSync(gitConfig, "[user]\n\tname = ADE smoke\n\temail = smoke@ade.invalid\n");
+const childEnv = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: gitConfig,
+  GIT_CONFIG_NOSYSTEM: "1",
+};
 const git = (...args: ReadonlyArray<string>) =>
-  NodeChildProcess.execFileSync(
-    "git",
-    ["-C", repo, "-c", "user.name=ADE smoke", "-c", "user.email=smoke@ade.invalid", ...args],
-    { stdio: "ignore" },
-  );
+  NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore", env: childEnv });
 git("init", "--quiet");
 git("commit", "--quiet", "--allow-empty", "-m", "init");
+
+const serverBin = NodePath.join(import.meta.dirname, "../server/src/bin.ts");
+const serverLog = NodePath.join(sandbox, "server.log");
+const logFile = NodeFS.openSync(serverLog, "a");
+// `--dev-url` is what makes the server offer Replay (dev); it also lets the ADE's origin in.
+const server = NodeChildProcess.spawn(
+  process.execPath,
+  [
+    serverBin,
+    "serve",
+    "--base-dir",
+    home,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    port,
+    "--dev-url",
+    adeUrl,
+  ],
+  { env: childEnv, stdio: ["ignore", logFile, logFile] },
+);
+process.once("exit", () => {
+  server.kill();
+  NodeFS.rmSync(sandbox, { recursive: true, force: true, maxRetries: 5 });
+});
+const environmentIdAt = async (origin: string) =>
+  (await (await fetch(`${origin}/.well-known/t3/environment`)).json()).environmentId;
+for (let attempt = 0; ; attempt += 1) {
+  NodeAssert.ok(
+    server.exitCode === null && attempt < 300,
+    `the smoke's own T3 server did not start on port ${port}:\n${NodeFS.readFileSync(serverLog, "utf8").slice(-2000)}`,
+  );
+  if (await environmentIdAt(t3Url).catch(() => undefined)) break;
+  await NodeTimersPromises.setTimeout(200);
+}
+// Before any code is minted or anything is written: both addresses must be this server, the one
+// on the directory made above, and not another T3 that happened to hold the port.
+const ownEnvironmentId = NodeFS.readFileSync(
+  NodePath.join(home, "userdata", "environment-id"),
+  "utf8",
+).trim();
+for (const origin of [t3Url, otherT3Url]) {
+  NodeAssert.equal(
+    await environmentIdAt(origin),
+    ownEnvironmentId,
+    `${origin} is not the smoke's own T3 server`,
+  );
+}
+
 const t3 = (command: ReadonlyArray<string>, ...args: ReadonlyArray<string>) =>
   NodeChildProcess.execFileSync(
     process.execPath,
-    [
-      NodePath.join(import.meta.dirname, "../server/src/bin.ts"),
-      ...command,
-      "--base-dir",
-      home,
-      ...args,
-    ],
-    { encoding: "utf8" },
+    [serverBin, ...command, "--base-dir", home, ...args],
+    { encoding: "utf8", env: childEnv },
   );
 t3(["project", "add"], repo);
 const title = `Humo ${run}`;
-t3(
-  ["thread", "start"],
-  "--provider",
-  "devReplay",
-  "--model",
-  "command-output",
-  "--title",
-  title,
-  "--wait",
-  repo,
-  `Hola ${run}`,
+const { threadId } = JSON.parse(
+  t3(
+    ["thread", "start"],
+    "--provider",
+    "devReplay",
+    "--model",
+    "command-output",
+    "--title",
+    title,
+    "--wait",
+    "--json",
+    repo,
+    `Hola ${run}`,
+  ),
 );
+NodeAssert.equal(typeof threadId, "string", "thread start returned the thread's id");
 // A code lasts five minutes, so each is made when it is used.
 const pairingTokens: Array<string> = [];
 const mintToken = (...scopes: ReadonlyArray<string>) => {
@@ -180,7 +229,10 @@ try {
       .locator(".ade-thread-title")
       .getByText(title, { exact: true });
   await ownThread().click();
-  NodeAssert.match(page.url(), /[?&]hilo=/, "the selected thread is in the address");
+  NodeAssert.ok(
+    new URL(page.url()).searchParams.get("hilo")?.includes(threadId),
+    "the thread in the address is the one the smoke started",
+  );
   await page.getByRole("heading", { level: 1, name: title, exact: true }).waitFor();
   // The thread's own snapshot and stream arrive over this session: its turn shows both sides.
   const conversation = page.getByRole("list", { name: "Conversación" });
@@ -401,8 +453,11 @@ try {
   // Pairing again with «Permitir terminal» is what turns it on, for a link that carries it. This
   // one names the machine by its other address.
   const pairAgain = async (link: string, withTerminal: boolean) => {
-    await page.getByRole("button", { name: "Añadir máquina" }).click();
-    await page.getByLabel("Enlace de emparejamiento o dirección").fill(link);
+    const linkField = page.getByLabel("Enlace de emparejamiento o dirección");
+    if (!(await linkField.isVisible())) {
+      await page.getByRole("button", { name: "Añadir máquina" }).click();
+    }
+    await linkField.fill(link);
     await page.getByLabel(/^Permitir terminal/).setChecked(withTerminal);
     await pair();
   };
@@ -414,6 +469,34 @@ try {
         ),
       state === "off",
     );
+  // A pairing this browser cannot store changes nothing: the machine stays as it was stored and
+  // its session goes on answering.
+  const storedBefore = await readCatalog();
+  await page.evaluate(
+    (kept) => {
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value, key) {
+        if (typeof value === "string" && value.includes("accessToken") && !value.includes(kept)) {
+          throw new DOMException("The smoke refuses this write.", "QuotaExceededError");
+        }
+        return put.call(this, value, key);
+      };
+      Object.assign(window, { restorePut: () => (IDBObjectStore.prototype.put = put) });
+    },
+    /"accessToken":"([^"]+)"/.exec(storedBefore)?.[1] ?? "",
+  );
+  await pairAgain(linkFor(mintToken(), otherT3Url), true);
+  await page.getByRole("alert").filter({ hasText: "No se pudo guardar la máquina" }).waitFor();
+  // Not `equal`: a failure would print the catalog, and the catalog holds the session's token.
+  NodeAssert.ok(
+    (await readCatalog()) === storedBefore,
+    "a pairing that could not be stored leaves the machine as it was",
+  );
+  await page.evaluate("restorePut()");
+  await forceTerminalOpen();
+  await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
+  await conversation.waitFor();
+
   await pairAgain(linkFor(mintToken(), otherT3Url), true);
   await terminalButtonIs(page, "on");
   NodeAssert.equal(
@@ -478,9 +561,17 @@ try {
   const tab = await page.context().newPage();
   await tab.goto(page.url());
   await terminalButtonIs(tab, "on");
+  // The other tab takes the change in where it stands: a reload would lose both of these.
+  const tabDraft = tab
+    .getByRole("region", { name: "Compositor" })
+    .getByRole("textbox", { name: "Mensaje" });
+  await tabDraft.fill(`Borrador ${run}`);
+  await tab.evaluate(() => Object.assign(window, { smokeMark: true }));
   await pairAgain(linkFor(mintToken()), false);
   await page.getByText("Conectada", { exact: true }).first().waitFor();
   await terminalButtonIs(tab, "off");
+  NodeAssert.ok(await tab.evaluate("window.smokeMark"), "the other tab did not reload");
+  NodeAssert.equal(await tabDraft.inputValue(), `Borrador ${run}`, "the other tab kept its draft");
   await tab.close();
   await conversation.waitFor();
   await forceTerminalOpen();
@@ -573,5 +664,7 @@ try {
   throw error;
 } finally {
   await browser.close();
-  NodeFS.rmSync(sandbox, { recursive: true, force: true });
+  // By the child it started: the directory goes once the server has let go of it.
+  server.kill();
+  if (server.exitCode === null) await NodeEvents.once(server, "exit");
 }
