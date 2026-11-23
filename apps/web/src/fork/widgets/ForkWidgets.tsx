@@ -7,7 +7,10 @@ import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
 import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
 import { T, useGT, useMessages } from "gt-react";
-import { ActivityIcon, ChartColumnBigIcon, ChartSplineIcon, GaugeIcon } from "lucide-react";
+import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
+import { ChartBarIcon } from "@phosphor-icons/react/dist/csr/ChartBar";
+import { ChartLineIcon } from "@phosphor-icons/react/dist/csr/ChartLine";
+import { GaugeIcon } from "@phosphor-icons/react/dist/csr/Gauge";
 import { type ReactNode, useState } from "react";
 
 import { observeResize } from "../../lib/observeResize";
@@ -145,7 +148,7 @@ function SpendCard(props: { readonly data: WidgetUsage; readonly nowMs: number }
   const readAt = spendReadAt(usage.environments);
   return (
     <WidgetCard
-      icon={<ChartColumnBigIcon />}
+      icon={<ChartBarIcon />}
       title={gt("Spend")}
       meta={gt("Est. USD")}
       footer={
@@ -340,7 +343,7 @@ function UsageCard(props: { readonly data: WidgetUsage }) {
   const middle = days[Math.floor((days.length - 1) / 2)];
   return (
     <WidgetCard
-      icon={<ChartSplineIcon />}
+      icon={<ChartLineIcon />}
       title={gt("Usage")}
       meta={loading ? null : gt("{tokens} this month", { tokens: formatTokens(total) })}
     >
@@ -390,7 +393,7 @@ function ActivityCard(props: { readonly today: string; readonly timeZone: string
   const grid = heatGrid(sumActivity(readings, props.timeZone), props.today, weeks);
   return (
     <WidgetCard
-      icon={<ActivityIcon />}
+      icon={<PulseIcon />}
       title={gt("Activity")}
       meta={
         readings.length > 0

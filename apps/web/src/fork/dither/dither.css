@@ -1,0 +1,5 @@
+/* Fork: the dithercn tokens the fork reads, pointed at the theme accent. */
+:root {
+  --dither-ink: var(--app-theme-accent, var(--primary));
+  --dither-cell: 3px;
+}

@@ -9,14 +9,12 @@ import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import {
-  BugIcon,
-  GitCompareIcon,
-  PlayIcon,
-  PlusIcon,
-  ShieldCheckIcon,
-  SquarePenIcon,
-} from "lucide-react";
+import { BugIcon } from "@phosphor-icons/react/dist/csr/Bug";
+import { GitDiffIcon } from "@phosphor-icons/react/dist/csr/GitDiff";
+import { PlayIcon } from "@phosphor-icons/react/dist/csr/Play";
+import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+import { ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
+import { NotePencilIcon } from "@phosphor-icons/react/dist/csr/NotePencil";
 import { type ReactNode, useState } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -62,7 +60,7 @@ const QUICK_ACTIONS: ReadonlyArray<{
   {
     label: msg("Review recent changes"),
     prompt: "Review the recent changes in this repository and report anything that looks wrong.",
-    icon: <GitCompareIcon className="size-4" />,
+    icon: <GitDiffIcon className="size-4" />,
   },
   {
     label: msg("Run tests"),
@@ -338,7 +336,7 @@ export function ForkHome() {
                     onClick={() => startThread(selectedProject)}
                     className="flex cursor-pointer items-center gap-2 rounded-lg border border-primary/60 px-3 py-2 text-left font-medium text-sm hover:bg-accent"
                   >
-                    <SquarePenIcon className="size-4" />
+                    <NotePencilIcon className="size-4" />
                     <T>New thread</T>
                   </button>
                   {QUICK_ACTIONS.map((action) => (

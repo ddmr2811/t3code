@@ -1,13 +1,11 @@
 // Fork-only: one "What the AI did" row per entry. Wide screens put everything on one line; a
 // phone gets two: time, status and machine, then the summary cut with an ellipsis.
 import type { ForkActivityStatus } from "@t3tools/contracts";
-import {
-  CircleCheckIcon,
-  CircleDotIcon,
-  CircleXIcon,
-  type LucideIcon,
-  MessageCircleQuestionIcon,
-} from "lucide-react";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { RadioButtonIcon } from "@phosphor-icons/react/dist/csr/RadioButton";
+import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
+import type { Icon as PhosphorIcon } from "@phosphor-icons/react/dist/lib/types";
+import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
 import { useMessages } from "gt-react";
 
 import { Badge } from "../../components/ui/badge";
@@ -18,13 +16,13 @@ import { ACTOR_LABEL, type ActivityRow, STATUS_LABEL } from "./activity.logic";
 const STATUS_LOOK: Readonly<
   Record<
     ForkActivityStatus,
-    { readonly variant: "success" | "error" | "warning" | "info"; readonly icon: LucideIcon }
+    { readonly variant: "success" | "error" | "warning" | "info"; readonly icon: PhosphorIcon }
   >
 > = {
-  ok: { variant: "success", icon: CircleCheckIcon },
-  error: { variant: "error", icon: CircleXIcon },
-  waiting: { variant: "warning", icon: MessageCircleQuestionIcon },
-  running: { variant: "info", icon: CircleDotIcon },
+  ok: { variant: "success", icon: CheckCircleIcon },
+  error: { variant: "error", icon: XCircleIcon },
+  waiting: { variant: "warning", icon: ChatCircleDotsIcon },
+  running: { variant: "info", icon: RadioButtonIcon },
 };
 
 /** Colour, icon and words together, so the state never rests on colour alone. */

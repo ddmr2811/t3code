@@ -1,19 +1,17 @@
 // Fork-only: the icons and colours a Dashboard machine can wear, and the picker for them.
-import {
-  CloudIcon,
-  CpuIcon,
-  DatabaseIcon,
-  Gamepad2Icon,
-  HouseIcon,
-  LaptopIcon,
-  type LucideIcon,
-  MonitorIcon,
-  RouterIcon,
-  ServerIcon,
-  SmartphoneIcon,
-  TabletIcon,
-  TvIcon,
-} from "lucide-react";
+import { CloudIcon } from "@phosphor-icons/react/dist/csr/Cloud";
+import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
+import { DatabaseIcon } from "@phosphor-icons/react/dist/csr/Database";
+import { GameControllerIcon } from "@phosphor-icons/react/dist/csr/GameController";
+import { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
+import { LaptopIcon } from "@phosphor-icons/react/dist/csr/Laptop";
+import type { Icon as PhosphorIcon } from "@phosphor-icons/react/dist/lib/types";
+import { MonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";
+import { WifiHighIcon } from "@phosphor-icons/react/dist/csr/WifiHigh";
+import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
+import { DeviceMobileIcon } from "@phosphor-icons/react/dist/csr/DeviceMobile";
+import { DeviceTabletIcon } from "@phosphor-icons/react/dist/csr/DeviceTablet";
+import { TelevisionIcon } from "@phosphor-icons/react/dist/csr/Television";
 import { msg, T, useGT, useMessages } from "gt-react";
 
 import { Button } from "../../components/ui/button";
@@ -28,18 +26,18 @@ import {
   type MachineKind,
 } from "./dashboardLayout.logic";
 
-const MACHINE_ICON_COMPONENTS: Record<MachineIcon, LucideIcon> = {
+const MACHINE_ICON_COMPONENTS: Record<MachineIcon, PhosphorIcon> = {
   monitor: MonitorIcon,
   laptop: LaptopIcon,
-  server: ServerIcon,
+  server: HardDrivesIcon,
   cloud: CloudIcon,
   database: DatabaseIcon,
   cpu: CpuIcon,
-  router: RouterIcon,
-  smartphone: SmartphoneIcon,
-  tablet: TabletIcon,
-  tv: TvIcon,
-  gamepad: Gamepad2Icon,
+  router: WifiHighIcon,
+  smartphone: DeviceMobileIcon,
+  tablet: DeviceTabletIcon,
+  tv: TelevisionIcon,
+  gamepad: GameControllerIcon,
   house: HouseIcon,
 };
 

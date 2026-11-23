@@ -1104,6 +1104,9 @@ importers:
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0
+      '@phosphor-icons/react':
+        specifier: ^2.1.10
+        version: 2.1.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/diffs':
         specifier: 1.7.0-beta.4
         version: 1.7.0-beta.4(patch_hash=7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -6445,6 +6448,13 @@ packages:
   '@peculiar/webcrypto@1.7.1':
     resolution: {integrity: sha512-ODOov0sGMJMf3jPonOkgGqPknTsu+DdQ7kD++gz8aI+aFMOMHFbWAA2taqXXVTdP+OTOQR/znGvSpmkeI0WTYQ==}
     engines: {node: '>=14.18.0'}
+
+  '@phosphor-icons/react@2.1.10':
+    resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      react: '>= 16.8'
+      react-dom: '>= 16.8'
 
   '@pierre/diffs@1.7.0-beta.4':
     resolution: {integrity: sha512-QtsUN1eO1hfAie0SUBRZ8xfjzybetaOzq3xFPw7UYl/XLkx9KxQ1uRDXHat4B44S2SW8HBt63yWKCSzQ6OQmEQ==}
@@ -16537,6 +16547,11 @@ snapshots:
       '@peculiar/utils': 2.0.3
       tslib: 2.8.1
       webcrypto-core: 1.9.2
+
+  '@phosphor-icons/react@2.1.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
 
   '@pierre/diffs@1.7.0-beta.4(patch_hash=7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:

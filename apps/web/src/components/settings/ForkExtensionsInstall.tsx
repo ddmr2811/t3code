@@ -1,7 +1,9 @@
 import type { EnvironmentId, ForkExtensionAgent, ForkExtensionProblem } from "@t3tools/contracts";
 import { useDebouncer } from "@tanstack/react-pacer";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { CheckIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
+import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { useId, useRef, useState, type ReactNode } from "react";
 
 import type { MessageResolver } from "../../i18n/messages";
@@ -411,7 +413,7 @@ export function ForkExtensionsInstall({
                 onClick={() => void ensureLocalApi().shell.openExternal(CLAUDE_AI_CONNECTORS_URL)}
               >
                 <T>Open claude.ai connectors</T>
-                <ExternalLinkIcon aria-hidden />
+                <ArrowSquareOutIcon aria-hidden />
               </Button>
             </div>
           ) : (

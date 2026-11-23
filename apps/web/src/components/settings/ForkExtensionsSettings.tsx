@@ -1,6 +1,7 @@
 import type { ForkExtensionKind } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { RefreshCwIcon, XIcon } from "lucide-react";
+import { ArrowClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { Fragment, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -305,7 +306,7 @@ ${context.column.key}`;
             disabled={answered.every((machine) => machine.isCheckingHealth)}
             onClick={() => checkHealth()}
           >
-            {anyChecking ? <Spinner className="size-3" /> : <RefreshCwIcon aria-hidden />}
+            {anyChecking ? <Spinner className="size-3" /> : <ArrowClockwiseIcon aria-hidden />}
             <T>Check status</T>
           </Button>
         </div>

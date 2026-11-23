@@ -1,7 +1,7 @@
 // Fork-only: the Dashboard panel with the newest few things the agents did on every machine.
 import { Link } from "@tanstack/react-router";
 import { useGT } from "gt-react";
-import { ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 
 import { Button } from "../../components/ui/button";
 import { countStatuses, mergeFeeds } from "./activity.logic";

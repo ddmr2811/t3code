@@ -1,28 +1,26 @@
-import {
-  ActivityIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDotDashedIcon,
-  CircleXIcon,
-  HourglassIcon,
-  ListChecksIcon,
-  MessageCircleQuestionMarkIcon,
-  UserRoundIcon,
-} from "lucide-react";
+import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { CircleDashedIcon } from "@phosphor-icons/react/dist/csr/CircleDashed";
+import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
+import { HourglassIcon } from "@phosphor-icons/react/dist/csr/Hourglass";
+import { ListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
+import { UserIcon } from "@phosphor-icons/react/dist/csr/User";
 
 import type { ThreadStatusKind } from "~/components/Sidebar.logic";
 import { cn } from "~/lib/utils";
 
 const GLYPHS = {
-  approval: CircleAlertIcon,
-  input: MessageCircleQuestionMarkIcon,
-  guest: UserRoundIcon,
-  working: ActivityIcon,
-  connecting: CircleDotDashedIcon,
+  approval: WarningCircleIcon,
+  input: ChatCircleDotsIcon,
+  guest: UserIcon,
+  working: PulseIcon,
+  connecting: CircleDashedIcon,
   waiting: HourglassIcon,
-  failed: CircleXIcon,
+  failed: XCircleIcon,
   plan: ListChecksIcon,
-  completed: CircleCheckIcon,
+  completed: CheckCircleIcon,
 } satisfies Record<ThreadStatusKind, unknown>;
 
 /** Each thread state has its own shape; colour comes from the parent's `colorClass`. */

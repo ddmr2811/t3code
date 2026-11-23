@@ -1,8 +1,10 @@
 // Fork-only: the one number that leads the screen. Opens and closes the decisions panel.
 import { useGT } from "gt-react";
-import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
+import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 
 import { cn } from "~/lib/utils";
+import { DitherFill } from "../dither/DitherFill";
 import { useDecisionsPanel } from "./decisionsState";
 
 export function NeedsYouBlock() {
@@ -28,10 +30,13 @@ export function NeedsYouBlock() {
       )}
     >
       {waiting ? (
-        // Static ordered dots in the corner; no motion.
-        <span
-          aria-hidden
-          className="-z-10 absolute inset-y-0 right-0 w-2/3 opacity-25 [background-image:radial-gradient(currentColor_1px,transparent_1.5px)] [background-size:6px_6px] [mask-image:linear-gradient(to_left,black,transparent)]"
+        <DitherFill
+          color="currentColor"
+          edge="right"
+          length={36}
+          from={0.75}
+          to={0}
+          className="-z-10 inset-y-0 right-0 w-2/3 opacity-30"
         />
       ) : null}
       <span

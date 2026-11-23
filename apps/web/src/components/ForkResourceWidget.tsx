@@ -20,7 +20,10 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { AppWindowIcon, ChevronDownIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { AppWindowIcon } from "@phosphor-icons/react/dist/csr/AppWindow";
+import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
@@ -752,7 +755,7 @@ function MachineRow(props: {
         onClick={props.onToggleDetails}
         className="flex min-w-0 cursor-pointer items-center gap-1 text-start font-medium"
       >
-        <ChevronRightIcon
+        <CaretRightIcon
           className={cn(
             "size-3 shrink-0 text-muted-foreground transition-transform",
             props.detailsOpen && "rotate-90",
@@ -808,7 +811,7 @@ function MachineRow(props: {
           )}
         >
           {waitingCount}
-          <ChevronDownIcon
+          <CaretDownIcon
             className={cn("size-3 transition-transform", waitingOpen && "rotate-180")}
           />
         </button>

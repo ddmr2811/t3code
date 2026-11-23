@@ -2,7 +2,11 @@
 // arranged as saved in the settings of the server chosen to keep it, and editable in place.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
-import { ArrowDownIcon, ArrowUpIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
+import { ArrowDownIcon } from "@phosphor-icons/react/dist/csr/ArrowDown";
+import { ArrowUpIcon } from "@phosphor-icons/react/dist/csr/ArrowUp";
+import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+import { EyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
+import { PencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
 import { type ReactNode, useState } from "react";
 
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
@@ -83,7 +87,7 @@ function PanelControls(props: {
         disabled={locked}
         onClick={() => props.onHidden(!panel.hidden)}
       >
-        {panel.hidden ? <EyeOffIcon /> : <EyeIcon />}
+        {panel.hidden ? <EyeSlashIcon /> : <EyeIcon />}
         {panel.hidden
           ? gt("Hidden", { $context: "dashboard section state" })
           : gt("Shown", { $context: "dashboard section state" })}
@@ -417,7 +421,7 @@ function EditButton(props: { readonly blocked: string | null; readonly onEdit: (
       disabled={props.blocked !== null}
       onClick={props.onEdit}
     >
-      <PencilIcon />
+      <PencilSimpleIcon />
       <T>Edit dashboard</T>
     </Button>
   );

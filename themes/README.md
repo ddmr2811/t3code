@@ -50,3 +50,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## T3 Fork v4
+
+`t3-fork-v4.json` is the redesign palette: a near-black canvas (`#0A0A0A`), dividers in `#1C1C1C`, text in `#F5F5F5` and quiet text in `#A6A6AB`, with the fork's orange accent. Light mode uses white and neutral greys with the same accent. It sets the radii to 6, 8 and 12 px (`rounded-md`, `-lg`, `-xl`) and the fonts to Geist and Geist Mono, which the app ships with. It changes colours, radii and fonts only, so upstream updates should not break it.
+
+Install it the same way: **Settings → Appearance → Add a theme**, or `t3 theme set themes/t3-fork-v4.json`. A font chosen in Appearance still wins over the theme's.
+
+The fonts are under the SIL Open Font License; see `apps/web/src/fork/NOTICE.md`.

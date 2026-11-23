@@ -24,7 +24,8 @@ import {
 import { Link } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useGT } from "gt-react";
-import { ArrowRightIcon, XIcon } from "lucide-react";
+import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { useEffect, useState } from "react";
 
 import { BackgroundThreadContext } from "~/components/chat/backgroundThread";

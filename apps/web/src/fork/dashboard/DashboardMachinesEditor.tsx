@@ -13,16 +13,14 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import type { ForkDashboardLayout } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  EyeIcon,
-  EyeOffIcon,
-  GripVerticalIcon,
-  PlusIcon,
-  Trash2Icon,
-  XIcon,
-} from "lucide-react";
+import { ArrowDownIcon } from "@phosphor-icons/react/dist/csr/ArrowDown";
+import { ArrowUpIcon } from "@phosphor-icons/react/dist/csr/ArrowUp";
+import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+import { EyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
+import { DotsSixVerticalIcon } from "@phosphor-icons/react/dist/csr/DotsSixVertical";
+import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -181,7 +179,7 @@ function SectionEditor<T>(
               aria-label={gt("Delete section {name}", { name: section.name })}
               onClick={() => onChange(removeSection(layout, section.id))}
             >
-              <Trash2Icon />
+              <TrashIcon />
             </Button>
           </span>
         ) : null}
@@ -263,7 +261,7 @@ function MachineRow<T>(
         aria-hidden
         className="flex size-6 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
       >
-        <GripVerticalIcon className="size-3.5" />
+        <DotsSixVerticalIcon className="size-3.5" />
       </span>
       <AppearancePicker
         label={machine.label}
@@ -292,7 +290,7 @@ function MachineRow<T>(
         <StatusBadge machine={machine} status={status} />
         {machine.hidden ? (
           <Badge variant="outline" size="sm">
-            <EyeOffIcon aria-hidden className="-ms-px size-2.5" />
+            <EyeSlashIcon aria-hidden className="-ms-px size-2.5" />
             <T context="dashboard machine state">Hidden</T>
           </Badge>
         ) : null}
@@ -345,7 +343,7 @@ function MachineRow<T>(
           }
           onClick={() => onChange(updateMachine(layout, machine, { hidden: !machine.hidden }))}
         >
-          {machine.hidden ? <EyeOffIcon /> : <EyeIcon />}
+          {machine.hidden ? <EyeSlashIcon /> : <EyeIcon />}
         </Button>
         <Button
           type="button"

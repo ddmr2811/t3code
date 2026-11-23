@@ -2,7 +2,7 @@
 // layout on screen there or taking the one it already keeps.
 import type { EnvironmentId, ForkDashboardLayout } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { CloudOffIcon } from "lucide-react";
+import { CloudSlashIcon } from "@phosphor-icons/react/dist/csr/CloudSlash";
 import { useRef, useState } from "react";
 
 import { Alert, AlertAction, AlertDescription } from "../../components/ui/alert";
@@ -214,7 +214,7 @@ export function DashboardOwnerNotice(props: {
   if (source.kind !== "unavailable") return null;
   return (
     <Alert variant="warning">
-      <CloudOffIcon />
+      <CloudSlashIcon />
       <AlertDescription>{source.notice}</AlertDescription>
       <AlertAction>
         <DashboardOwnerPicker

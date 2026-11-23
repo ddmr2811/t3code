@@ -2,7 +2,7 @@
 // client remembers.
 import { Link } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
-import { LayoutDashboardIcon } from "lucide-react";
+import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 
 import { WorkspacePageHeader } from "../../components/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
@@ -83,7 +83,7 @@ export function ActivityPage() {
               </div>
               <span className="ms-auto flex">
                 <Button variant="outline" size="sm" render={<Link to="/dashboard" />}>
-                  <LayoutDashboardIcon />
+                  <SquaresFourIcon />
                   <T>Dashboard</T>
                 </Button>
               </span>

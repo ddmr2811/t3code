@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { MonitorIcon } from "lucide-react";
+import { MonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";
 import { type ReactNode, useContext } from "react";
 
 import { isElectron } from "../../env";

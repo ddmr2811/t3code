@@ -1,6 +1,6 @@
 // Fork-only: the Dashboard as a right panel surface beside a chat, the same sections in one column.
 import { Link } from "@tanstack/react-router";
-import { Maximize2Icon } from "lucide-react";
+import { ArrowsOutIcon } from "@phosphor-icons/react/dist/csr/ArrowsOut";
 import { T, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
@@ -43,7 +43,7 @@ function OpenFullDashboard() {
           />
         }
       >
-        <Maximize2Icon aria-hidden className="size-3.5" />
+        <ArrowsOutIcon aria-hidden className="size-3.5" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">
         <T>Open the full dashboard</T>

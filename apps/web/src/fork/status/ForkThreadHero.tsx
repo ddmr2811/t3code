@@ -9,6 +9,7 @@ import { cn } from "~/lib/utils";
 import { useProject, useThreadShell } from "~/state/entities";
 import { useEnvironment } from "~/state/environments";
 import { textDirection } from "~/textDirection";
+import { DitherFill } from "../dither/DitherFill";
 import { ThreadStatusGlyph } from "./ThreadStatusGlyph";
 
 // The header shows what state the thread is in, not whether it is news, so a finished
@@ -32,8 +33,18 @@ export function ForkThreadHero({ threadRef }: { threadRef: ScopedThreadRef }) {
   return (
     <div
       data-fork-thread-hero=""
-      className="flex shrink-0 items-end justify-between gap-4 border-b px-3 pt-3 pb-4 sm:px-5"
+      className="relative isolate flex shrink-0 items-end justify-between gap-4 overflow-hidden border-b px-3 pt-3 pb-4 sm:px-5"
     >
+      {/* Dithered in the state's colour, or the accent when the thread has no state to show. */}
+      <DitherFill
+        color={status ? "currentColor" : "ink"}
+        edge="right"
+        matrix="blue-noise"
+        length={48}
+        from={0.6}
+        to={0}
+        className={cn("-z-10 inset-y-0 right-0 w-1/2 opacity-35", status?.colorClass)}
+      />
       <div className="min-w-0">
         {context.length > 0 ? (
           <p className="truncate font-mono text-2xs text-muted-foreground uppercase tracking-wider">
@@ -50,7 +61,7 @@ export function ForkThreadHero({ threadRef }: { threadRef: ScopedThreadRef }) {
       {status ? (
         <span
           className={cn(
-            "inline-flex shrink-0 items-center gap-2 rounded-lg border border-current/40 px-3 py-1.5 font-semibold text-sm sm:text-base",
+            "inline-flex shrink-0 items-center gap-2 rounded-lg border border-current/40 bg-background px-3 py-1.5 font-semibold text-sm sm:text-base",
             status.colorClass,
           )}
         >

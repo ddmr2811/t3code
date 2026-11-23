@@ -8,20 +8,18 @@ import {
   type NodeViewProps,
   useEditor,
 } from "@tiptap/react";
-import {
-  Heading1Icon,
-  Heading2Icon,
-  Heading3Icon,
-  ListIcon,
-  ListOrderedIcon,
-  ListTodoIcon,
-  type LucideIcon,
-  MinusIcon,
-  PilcrowIcon,
-  SquareCodeIcon,
-  Table2Icon,
-  TextQuoteIcon,
-} from "lucide-react";
+import { TextHOneIcon } from "@phosphor-icons/react/dist/csr/TextHOne";
+import { TextHTwoIcon } from "@phosphor-icons/react/dist/csr/TextHTwo";
+import { TextHThreeIcon } from "@phosphor-icons/react/dist/csr/TextHThree";
+import { ListBulletsIcon } from "@phosphor-icons/react/dist/csr/ListBullets";
+import { ListNumbersIcon } from "@phosphor-icons/react/dist/csr/ListNumbers";
+import { CheckSquareIcon } from "@phosphor-icons/react/dist/csr/CheckSquare";
+import type { Icon as PhosphorIcon } from "@phosphor-icons/react/dist/lib/types";
+import { MinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
+import { ParagraphIcon } from "@phosphor-icons/react/dist/csr/Paragraph";
+import { CodeBlockIcon } from "@phosphor-icons/react/dist/csr/CodeBlock";
+import { TableIcon } from "@phosphor-icons/react/dist/csr/Table";
+import { QuotesIcon } from "@phosphor-icons/react/dist/csr/Quotes";
 import { msg, useGT, useMessages } from "gt-react";
 import { createContext, type ReactNode, use, useRef, useState } from "react";
 
@@ -70,7 +68,7 @@ const EDITOR_EXTENSIONS = [
 interface SlashCommand {
   readonly label: string;
   readonly keywords: readonly string[];
-  readonly icon: LucideIcon;
+  readonly icon: PhosphorIcon;
   readonly apply: (chain: ChainedCommands) => ChainedCommands;
 }
 
@@ -78,61 +76,61 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     label: msg("Text", { $context: "markdown block type" }),
     keywords: ["text", "paragraph", "plain"],
-    icon: PilcrowIcon,
+    icon: ParagraphIcon,
     apply: (c) => c.setParagraph(),
   },
   {
     label: msg("Heading 1"),
     keywords: ["heading", "h1", "title"],
-    icon: Heading1Icon,
+    icon: TextHOneIcon,
     apply: (c) => c.setHeading({ level: 1 }),
   },
   {
     label: msg("Heading 2"),
     keywords: ["heading", "h2", "subtitle"],
-    icon: Heading2Icon,
+    icon: TextHTwoIcon,
     apply: (c) => c.setHeading({ level: 2 }),
   },
   {
     label: msg("Heading 3"),
     keywords: ["heading", "h3"],
-    icon: Heading3Icon,
+    icon: TextHThreeIcon,
     apply: (c) => c.setHeading({ level: 3 }),
   },
   {
     label: msg("Bulleted list"),
     keywords: ["list", "ul", "unordered", "bullet"],
-    icon: ListIcon,
+    icon: ListBulletsIcon,
     apply: (c) => c.toggleBulletList(),
   },
   {
     label: msg("Numbered list"),
     keywords: ["list", "ol", "ordered", "number"],
-    icon: ListOrderedIcon,
+    icon: ListNumbersIcon,
     apply: (c) => c.toggleOrderedList(),
   },
   {
     label: msg("To-do list"),
     keywords: ["list", "todo", "task", "checkbox"],
-    icon: ListTodoIcon,
+    icon: CheckSquareIcon,
     apply: (c) => c.toggleTaskList(),
   },
   {
     label: msg("Code block"),
     keywords: ["code", "snippet", "pre"],
-    icon: SquareCodeIcon,
+    icon: CodeBlockIcon,
     apply: (c) => c.setCodeBlock(),
   },
   {
     label: msg("Quote", { $context: "markdown block type" }),
     keywords: ["blockquote", "quote"],
-    icon: TextQuoteIcon,
+    icon: QuotesIcon,
     apply: (c) => c.setBlockquote(),
   },
   {
     label: msg("Table", { $context: "markdown block type" }),
     keywords: ["table", "grid"],
-    icon: Table2Icon,
+    icon: TableIcon,
     apply: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }),
   },
   {
