@@ -19,9 +19,9 @@ const NO_THREADS: ReadonlyArray<EnvironmentThreadShell> = [];
 
 const needsYouThreadsAtom = (() => {
   let previous = NO_THREADS;
-  // Shells change on every streamed event; readers re-render only when the waiting list does.
+  // Quiet shells keep their reference through streaming; readers re-render only when the waiting list does.
   return Atom.make((get) => {
-    const next = selectNeedsYouThreads(get(environmentThreadShells.visibleThreadShellsAtom));
+    const next = selectNeedsYouThreads(get(environmentThreadShells.quietThreadShellsAtom));
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next.length === 0 ? NO_THREADS : next;
     return previous;

@@ -33,7 +33,8 @@ import { BackgroundThreadContext } from "~/components/chat/backgroundThread";
 import { ChildApproval } from "~/components/chat/ChildThreadApprovals";
 import { ComposerPendingUserInputPanel } from "~/components/chat/ComposerPendingUserInputPanel";
 import { Button } from "~/components/ui/button";
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { pendingDraftWork } from "~/components/chat/pendingDraftWork";
+import { composerTargetKey, useComposerDraftStore } from "~/composerDraftStore";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { derivePendingUserInputProgress } from "~/pendingUserInput";
 import { registerCommands } from "~/shortcuts/dispatcher";
@@ -227,11 +228,10 @@ function DecisionQuestion({
   const attachmentDraftIds = prompt.questions.map((question) =>
     questionAttachmentDraftId(environmentId, threadId, prompt.requestId, question.id),
   );
+  const answerDraftKey = userInputDraftKey(environmentId, threadId, prompt.requestId);
   // Answering here would resolve the request and prune what the thread holds unsent for it.
   const hasThreadAnswer = usePendingUserInputAnswers(
-    (drafts) =>
-      Object.keys(drafts[userInputDraftKey(environmentId, threadId, prompt.requestId)] ?? {})
-        .length > 0,
+    (drafts) => Object.keys(drafts[answerDraftKey] ?? {}).length > 0,
   );
   const hasThreadAttachments = useComposerDraftStore((store) =>
     attachmentDraftIds.some((id) => {
@@ -242,6 +242,17 @@ function DecisionQuestion({
   const isPreparingAttachments = useQuestionAttachmentPreparation((state) =>
     attachmentDraftIds.some((id) => (state.counts[id] ?? 0) > 0),
   );
+  // Read again on send: a transcript import is not observable, and the stores may have moved.
+  const threadHoldsDraftNow = () =>
+    Object.keys(usePendingUserInputAnswers.getState()[answerDraftKey] ?? {}).length > 0 ||
+    attachmentDraftIds.some((id) => {
+      const draft = useComposerDraftStore.getState().getComposerDraft(id);
+      return (
+        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) > 0 ||
+        (useQuestionAttachmentPreparation.getState().counts[id] ?? 0) > 0 ||
+        pendingDraftWork.has(composerTargetKey(id))
+      );
+    });
 
   if (prompt.questions.some((question) => question.options.length === 0)) {
     return (
@@ -260,6 +271,10 @@ function DecisionQuestion({
 
   const run = async (send: () => Promise<AtomCommandResult<unknown, unknown>>) => {
     if (!canRespond || responding) return;
+    if (threadHoldsDraftNow()) {
+      setError(gt("This question has a draft in the thread. Answer it there."));
+      return;
+    }
     setResponding(true);
     setError(null);
     const result = await send();
