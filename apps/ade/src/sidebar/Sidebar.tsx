@@ -62,7 +62,7 @@ const stableList = (
   }).pipe(Atom.withLabel(label));
 };
 
-const listedThreadsAtom = stableList("ade-listed-threads", listedThreads);
+export const listedThreadsAtom = stableList("ade-listed-threads", listedThreads);
 // Subagents included: the one that asks is the one to answer. Only where this ADE can answer.
 const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
   const operable = get(operableEnvironmentIdsAtom);
@@ -366,7 +366,7 @@ export function SelectedThread() {
             />
           )}
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
-            Volver al resumen
+            Volver
           </button>
         </div>
       </header>

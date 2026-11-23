@@ -1,5 +1,4 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { StrictMode, useContext, useEffect } from "react";
 import { createRoot } from "react-dom/client";
@@ -11,29 +10,14 @@ import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
-import { ExtensionPanel } from "./extensions/Extensions.tsx";
-import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
+import { ConnectionSummary, MachinesSidebar } from "./Machines.tsx";
+import { Overview, ViewNav } from "./overview/Overview.tsx";
 import {
   NeedsYouBlock,
   SelectedThread,
   selectedThreadKeyAtom,
   ThreadTree,
 } from "./sidebar/Sidebar.tsx";
-
-function Overview() {
-  return (
-    <>
-      {/* The empty state shows through only while MachineCards renders nothing. */}
-      <MachineCards />
-      <section className="ade-empty">
-        <PlugsIcon size={28} />
-        <h1>Sin conectar</h1>
-        <p>Empareja una máquina con T3 Code desde la barra lateral para empezar.</p>
-      </section>
-      <ExtensionPanel />
-    </>
-  );
-}
 
 function MainContent() {
   return useAtomValue(selectedThreadKeyAtom) === null ? <Overview /> : <SelectedThread />;
@@ -55,6 +39,7 @@ function Shell() {
       <aside className="ade-sidebar">
         <div className="ade-brand">ADE</div>
         <NeedsYouBlock />
+        <ViewNav />
         <ThreadTree />
         <MachinesSidebar />
         <div className="ade-sidebar-footer">

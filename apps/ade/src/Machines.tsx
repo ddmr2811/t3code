@@ -15,10 +15,9 @@ import { AsyncResult } from "effect/reactivity";
 import { type FormEvent, useContext, useState } from "react";
 
 import { pairMachine, TOKEN_IN_QUERY_TEXT, tokenInQuery } from "./connection/pairing.ts";
-import { environmentCatalog, environmentShell } from "./connection/runtime.ts";
+import { environmentCatalog } from "./connection/runtime.ts";
 import { machineStatus } from "./connection/status.ts";
 import { machinesChanged } from "./connection/tabs.ts";
-import { MachineExtensions } from "./extensions/Extensions.tsx";
 
 // A link that opens the ADE to pair (`?host=…#token=…`) leaves the address bar before anything
 // renders: the one-time token must not stay in the URL, the history, or a later Referer. Only the
@@ -33,7 +32,7 @@ const addressBar = (() => {
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
-function useMachineStatus(environmentId: EnvironmentId, entry: ConnectionCatalogEntry) {
+export function useMachineStatus(environmentId: EnvironmentId, entry: ConnectionCatalogEntry) {
   const state = AsyncResult.getOrElse(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
     () => AVAILABLE_CONNECTION_STATE,
@@ -177,41 +176,6 @@ export function MachinesSidebar() {
         </ul>
       )}
     </>
-  );
-}
-
-function MachineCard(props: { environmentId: EnvironmentId; entry: ConnectionCatalogEntry }) {
-  const status = useMachineStatus(props.environmentId, props.entry);
-  const snapshot = Option.getOrNull(
-    useAtomValue(environmentShell.stateValueAtom(props.environmentId)).snapshot,
-  );
-  return (
-    <section className="ade-card" data-tone={status.tone}>
-      <h2>
-        <span className="ade-dot" />
-        {props.entry.target.label}
-      </h2>
-      <p>{status.text}</p>
-      {snapshot !== null && (
-        <p className="ade-card-counts">
-          {count(snapshot.projects.length, "proyecto")} · {count(snapshot.threads.length, "hilo")}
-        </p>
-      )}
-      <MachineExtensions environmentId={props.environmentId} />
-    </section>
-  );
-}
-
-/** Null while no machine is paired, so the shell can show its empty state. */
-export function MachineCards() {
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  if (catalog.entries.size === 0) return null;
-  return (
-    <div className="ade-cards">
-      {[...catalog.entries].map(([environmentId, entry]) => (
-        <MachineCard key={environmentId} environmentId={environmentId} entry={entry} />
-      ))}
-    </div>
   );
 }
 
