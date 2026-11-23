@@ -569,21 +569,30 @@ function ComposerForm(props: {
       images: (current.images ?? []).filter((image) => image.key !== key),
     }));
 
+  const settings = turnSettings(
+    draft,
+    {
+      model: thread.modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+    },
+    providers,
+  );
+  const provider = providers.find((choice) => choice.instanceId === settings.model.instanceId);
+  // Said before sending: the machine would take the message and then fail its turn.
+  const imagesRefused =
+    images.length > 0 && provider?.takesImages === false
+      ? `${provider.label} no admite imágenes: quítalas o elige otro proveedor para enviar.`
+      : null;
+
   const send = async () => {
     const typed = draft.text;
     const sentImages = images;
-    if (sending || (typed.trim() === "" && sentImages.length === 0)) return;
+    if (sending || imagesRefused !== null || (typed.trim() === "" && sentImages.length === 0)) {
+      return;
+    }
     // The agent needs words to start a turn: images alone go with T3's own placeholder.
     const text = restoreAttachmentOnlyBootstrapPrompt(typed, sentImages.length > 0);
-    const settings = turnSettings(
-      draft,
-      {
-        model: thread.modelSelection,
-        runtimeMode: thread.runtimeMode,
-        interactionMode: thread.interactionMode,
-      },
-      providers,
-    );
     const target = { environmentId: threadRef.environmentId };
     const threadId = threadRef.threadId;
     setSending(true);
@@ -748,7 +757,11 @@ function ComposerForm(props: {
               className="ade-composer-send"
               aria-label={running ? "Poner en cola" : "Enviar"}
               aria-busy={sending}
-              disabled={sending || (draft.text.trim() === "" && images.length === 0)}
+              disabled={
+                sending ||
+                imagesRefused !== null ||
+                (draft.text.trim() === "" && images.length === 0)
+              }
             >
               <ArrowUpIcon size={16} weight="bold" aria-hidden />
             </button>
@@ -758,6 +771,11 @@ function ComposerForm(props: {
       {props.readOnlyReason === null ? null : (
         <p className="ade-composer-note" role="status">
           {props.readOnlyReason}
+        </p>
+      )}
+      {imagesRefused === null ? null : (
+        <p className="ade-composer-note" role="status">
+          {imagesRefused}
         </p>
       )}
       {error === null ? null : (

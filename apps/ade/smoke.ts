@@ -513,7 +513,7 @@ try {
   await terminalButtonIs(page, "on");
   NodeAssert.equal(
     granted.at(-1)?.scope.split(" ").toSorted().join(" "),
-    "orchestration:operate orchestration:read terminal:operate",
+    "filesystem:read orchestration:operate orchestration:read terminal:operate",
     "asking for the terminal adds that one scope",
   );
 
@@ -621,10 +621,7 @@ try {
   await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
   await conversation.waitFor();
 
-  // An image alone is sent as T3 sends it, and comes back from the server as the message's own.
-  const userRows = conversation.locator(".ade-msg-user");
-  const rowsBeforeImage = await userRows.count();
-  const repliesBeforeImage = await conversation.locator(".ade-msg-agent").count();
+  // Replay's ACP agent takes no images: the composer says so before sending, and sends nothing.
   await composer.locator('input[type="file"]').setInputFiles({
     name: `punto-${run}.png`,
     mimeType: "image/png",
@@ -635,37 +632,15 @@ try {
   });
   const pending = composer.getByRole("list", { name: "Imágenes adjuntas" });
   await pending.getByRole("img", { name: `punto-${run}.png` }).waitFor();
-  await shot("compositor-imagen");
-  await message.press("Enter");
-  await pending.waitFor({ state: "detached" });
-  await page.waitForFunction(
-    (count) => document.querySelectorAll(".ade-msg-user").length > count,
-    rowsBeforeImage,
+  const noImages = composer.getByRole("status").filter({ hasText: "no admite imágenes" });
+  await noImages.waitFor();
+  await shot("compositor-sin-imagenes");
+  NodeAssert.ok(
+    await composer.getByRole("button", { name: "Enviar", exact: true }).isDisabled(),
+    "a message with images cannot be sent to a provider that takes none",
   );
-  const sentImage = userRows.last().getByRole("img", { name: `punto-${run}.png` });
-  // Loaded, not only placed: the signed URL is the server's and the CSP lets it in.
-  await page.waitForFunction(
-    (name) =>
-      [...document.querySelectorAll<HTMLImageElement>(".ade-msg-user img")].some(
-        (image) => image.alt === name && image.complete && image.naturalWidth > 0,
-      ),
-    `punto-${run}.png`,
-  );
-  NodeAssert.equal(await sentImage.count(), 1, "the sent image shows in its message");
-  NodeAssert.doesNotMatch(
-    await userRows.last().innerText(),
-    /User attached/,
-    "the agent's placeholder for an image alone is not shown",
-  );
-  await shot("mensaje-con-imagen");
-  // Replay's ACP agent takes no images: its turn ends in an error, and the thread's later turns
-  // fail too. So this comes last of the turns.
-  await page.waitForFunction(
-    (count) =>
-      document.querySelectorAll(".ade-msg-agent").length > count ||
-      document.querySelector(".ade-turn:last-child .ade-error") !== null,
-    repliesBeforeImage,
-  );
+  await pending.getByRole("button", { name: `Quitar punto-${run}.png` }).click();
+  await noImages.waitFor({ state: "detached" });
   await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
 
   const repaired = await readCatalog();
@@ -683,7 +658,7 @@ try {
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(
     granted[0]?.scope.split(" ").toSorted().join(" "),
-    "orchestration:operate orchestration:read",
+    "filesystem:read orchestration:operate orchestration:read",
     "the ADE holds only the scopes it asked for",
   );
 

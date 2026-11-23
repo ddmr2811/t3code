@@ -51,7 +51,16 @@ export interface ProviderChoice {
   }>;
   readonly runtimeModes: ReadonlyArray<RuntimeMode>;
   readonly interactionModes: boolean;
+  /** False where a turn with images would fail; see `takesImages`. */
+  readonly takesImages: boolean;
 }
+
+/**
+ * The generic ACP driver passes images only to an agent that negotiated them when it started,
+ * and fails the turn otherwise (Replay (dev) does not). The server does not publish what the
+ * agent negotiated, so that driver counts as without images; every other one sends them.
+ */
+const takesImages = (driver: ProviderDriverKind) => driver !== "acpRegistry";
 
 /** The providers a thread of `projectId` may run on this machine, with the modes each allows. */
 export function providerChoices(
@@ -85,6 +94,7 @@ export function providerChoices(
         (mode) => !isRuntimeModeAbove(mode, ceiling),
       ),
       interactionModes: provider.showInteractionModeToggle === true,
+      takesImages: takesImages(provider.driver),
     }));
 }
 

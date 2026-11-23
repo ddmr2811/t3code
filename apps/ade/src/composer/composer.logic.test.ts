@@ -49,6 +49,24 @@ describe("providerChoices", () => {
     expect(choices.map((choice) => choice.instanceId)).toEqual(["codex"]);
   });
 
+  it("counts the generic ACP driver, whose agents may refuse images, as without images", () => {
+    const acpRegistry = ProviderDriverKind.make("acpRegistry");
+    const choices = providerChoices(
+      {
+        providers: [provider("codex"), provider("devReplay", { driver: acpRegistry })],
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: { [ProviderInstanceId.make("devReplay")]: { driver: acpRegistry } },
+        },
+      },
+      project,
+    );
+    expect(choices.map((choice) => [choice.instanceId, choice.takesImages])).toEqual([
+      ["codex", true],
+      ["devReplay", false],
+    ]);
+  });
+
   it("leaves out runtime modes above the managed policy's ceiling", () => {
     const [choice] = providerChoices(
       {
@@ -76,6 +94,7 @@ describe("turnSettings", () => {
     models: [{ slug: "m", name: "M", descriptors: [] }],
     runtimeModes: ["approval-required", "auto"] as const,
     interactionModes,
+    takesImages: true,
   });
 
   it("never sends a mode the chosen provider does not offer", () => {
