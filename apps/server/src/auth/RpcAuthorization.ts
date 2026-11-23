@@ -38,6 +38,7 @@ import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import { isProviderSignOutPrompt } from "../orchestration-v2/CommandPolicy.ts";
+import { FORK_RPC_REQUIRED_SCOPES } from "../fork/rpcScopes.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -187,24 +188,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
-  // Fork: Extensions settings page.
-  [WS_METHODS.forkExtensionsSnapshot]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkExtensionsCheckHealth]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkExtensionsInspectSource]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkExtensionsInstall]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsUninstall]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsSetEnabled]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsAuthorize]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
-  // Fork: Dashboard. Reads the tailnet's machines, as diagnostics read this one.
-  [WS_METHODS.forkTailnetStatus]: AuthDiagnosticsReadScope,
-  // The same reading as serverGetHostResources, so the same scope.
-  [WS_METHODS.forkMachinesHostResources]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkMachinesNodeExporters]: AuthDiagnosticsReadScope,
-  // Limits and activity across the machine, as the usage summary reads them.
-  [WS_METHODS.forkInsightsLimitHistory]: AuthDiagnosticsReadScope,
-  [WS_METHODS.forkInsightsActivity]: AuthDiagnosticsReadScope,
-  [WS_METHODS.forkActivityFeed]: AuthDiagnosticsReadScope,
+  ...FORK_RPC_REQUIRED_SCOPES,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,

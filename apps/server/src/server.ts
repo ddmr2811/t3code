@@ -47,11 +47,7 @@ import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
-import * as ForkExtensions from "./fork/extensions/ForkExtensions.ts";
-import * as ForkTailnet from "./fork/tailnet/ForkTailnet.ts";
-import * as ForkMachines from "./fork/machines/ForkMachines.ts";
-import * as ForkInsights from "./fork/insights/ForkInsights.ts";
-import * as ForkActivity from "./fork/activity/ForkActivity.ts";
+import { ForkLayer } from "./fork/layer.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as SpeechModelStore from "./speech/SpeechModelStore.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
@@ -761,16 +757,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,
   ReplayMarkers.layer,
-  // Fork: one per server, so its write queue, health check and logins span every client.
-  ForkExtensions.layer,
-  // Fork: one per server, so Dashboards on several devices share one Tailscale read.
-  ForkTailnet.layer,
-  // Fork: one per server, so node_exporter readings and CPU baselines are shared by every client.
-  ForkMachines.layer,
-  // Fork: one per server, so the limit history has one sampler and one file.
-  ForkInsights.layer,
-  // Fork: one per server, so every open activity card shares one cached read.
-  ForkActivity.layer,
+  ForkLayer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),

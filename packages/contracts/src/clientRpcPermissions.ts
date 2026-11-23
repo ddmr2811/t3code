@@ -14,16 +14,12 @@ import {
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
+import { FORK_CLIENT_GUARDED_RPC_SCOPES } from "./forkRpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
-  // Fork: changing an agent's extensions changes what its provider can run.
-  [WS_METHODS.forkExtensionsInstall]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsUninstall]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsSetEnabled]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsAuthorize]: AuthProvidersManageScope,
-  [WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
+  ...FORK_CLIENT_GUARDED_RPC_SCOPES,
   // An MCP sign-in stores a credential for the agent, as an account sign-in does.
   [WS_METHODS.providerMcpSignInStart]: AuthProvidersManageScope,
   [WS_METHODS.providerMcpSignInComplete]: AuthProvidersManageScope,

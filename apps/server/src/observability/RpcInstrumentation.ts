@@ -7,6 +7,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
+import { FORK_RPC_METRIC_GROUPS } from "../fork/rpcScopes.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -197,20 +198,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",
-  [WS_METHODS.forkExtensionsSnapshot]: "fork",
-  [WS_METHODS.forkExtensionsCheckHealth]: "fork",
-  [WS_METHODS.forkExtensionsInspectSource]: "fork",
-  [WS_METHODS.forkExtensionsInstall]: "fork",
-  [WS_METHODS.forkExtensionsUninstall]: "fork",
-  [WS_METHODS.forkExtensionsSetEnabled]: "fork",
-  [WS_METHODS.forkExtensionsAuthorize]: "fork",
-  [WS_METHODS.forkExtensionsAuthorizeComplete]: "fork",
-  [WS_METHODS.forkTailnetStatus]: "fork",
-  [WS_METHODS.forkMachinesHostResources]: "fork",
-  [WS_METHODS.forkMachinesNodeExporters]: "fork",
-  [WS_METHODS.forkInsightsLimitHistory]: "fork",
-  [WS_METHODS.forkInsightsActivity]: "fork",
-  [WS_METHODS.forkActivityFeed]: "fork",
+  ...FORK_RPC_METRIC_GROUPS,
   [WS_METHODS.assetsCreateUrl]: "workspace",
   [WS_METHODS.assetsPersistChatAttachments]: "orchestration",
   [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",

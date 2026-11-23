@@ -1,0 +1,36 @@
+import {
+  AuthDiagnosticsReadScope,
+  AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
+  FORK_WS_METHODS,
+  WS_METHODS,
+} from "@t3tools/contracts";
+
+/** The scope each fork RPC needs; `RpcAuthorization.ts` spreads this into its table. */
+export const FORK_RPC_REQUIRED_SCOPES = {
+  // Extensions settings page.
+  [WS_METHODS.forkExtensionsSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkExtensionsCheckHealth]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkExtensionsInspectSource]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkExtensionsInstall]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsUninstall]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsSetEnabled]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsAuthorize]: AuthProvidersManageScope,
+  [WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
+  // Dashboard. Reads the tailnet's machines, as diagnostics read this one.
+  [WS_METHODS.forkTailnetStatus]: AuthDiagnosticsReadScope,
+  // The same reading as serverGetHostResources, so the same scope.
+  [WS_METHODS.forkMachinesHostResources]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkMachinesNodeExporters]: AuthDiagnosticsReadScope,
+  // Limits and activity across the machine, as the usage summary reads them.
+  [WS_METHODS.forkInsightsLimitHistory]: AuthDiagnosticsReadScope,
+  [WS_METHODS.forkInsightsActivity]: AuthDiagnosticsReadScope,
+  [WS_METHODS.forkActivityFeed]: AuthDiagnosticsReadScope,
+} as const;
+
+type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];
+
+/** Every fork RPC counts under one metric group; `RpcInstrumentation.ts` spreads this. */
+export const FORK_RPC_METRIC_GROUPS = Object.fromEntries(
+  Object.values(FORK_WS_METHODS).map((method) => [method, "fork"]),
+) as Record<ForkRpcMethod, "fork">;

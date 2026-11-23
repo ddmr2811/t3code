@@ -465,28 +465,7 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
-import {
-  ForkAuthorizeCompleteInput,
-  ForkAuthorizeEvent,
-  ForkExtensionAgent,
-  ForkExtensionsError,
-  ForkExtensionsSnapshot,
-  ForkHealthEvent,
-  ForkInstallRequest,
-  ForkInstallResult,
-  ForkPastedSource,
-  ForkSetEnabledInput,
-  ForkUninstallInput,
-} from "./forkExtensions.ts";
-import { ForkTailnetStatus, ForkTailnetStatusInput } from "./forkTailnet.ts";
-import { ForkNodeExportersStatus } from "./forkMachines.ts";
-import {
-  ForkActivity,
-  ForkActivityInput,
-  ForkLimitHistory,
-  ForkLimitHistoryInput,
-} from "./forkInsights.ts";
-import { ForkActivityFeed, ForkActivityFeedInput } from "./forkActivity.ts";
+import { FORK_RPCS, FORK_WS_METHODS } from "./forkRpc.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -510,24 +489,7 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
-  // Fork: Extensions settings page.
-  forkExtensionsSnapshot: "forkExtensions.snapshot",
-  forkExtensionsCheckHealth: "forkExtensions.checkHealth",
-  forkExtensionsInspectSource: "forkExtensions.inspectSource",
-  forkExtensionsInstall: "forkExtensions.install",
-  forkExtensionsUninstall: "forkExtensions.uninstall",
-  forkExtensionsSetEnabled: "forkExtensions.setEnabled",
-  forkExtensionsAuthorize: "forkExtensions.authorize",
-  forkExtensionsAuthorizeComplete: "forkExtensions.authorizeComplete",
-  // Fork: Dashboard.
-  forkTailnetStatus: "forkTailnet.status",
-  forkMachinesHostResources: "forkMachines.hostResources",
-  forkMachinesNodeExporters: "forkMachines.nodeExporters",
-  // Fork: charts under a new thread and on the Dashboard.
-  forkInsightsLimitHistory: "forkInsights.limitHistory",
-  forkInsightsActivity: "forkInsights.activity",
-  // Fork: the Dashboard's "What the AI did".
-  forkActivityFeed: "forkActivity.feed",
+  ...FORK_WS_METHODS,
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1754,98 +1716,6 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
-// Fork: Extensions settings page.
-const ForkExtensionsRpcError = Schema.Union([ForkExtensionsError, EnvironmentAuthorizationError]);
-
-const WsForkExtensionsSnapshotRpc = Rpc.make(WS_METHODS.forkExtensionsSnapshot, {
-  payload: Schema.Struct({}),
-  success: ForkExtensionsSnapshot,
-  error: ForkExtensionsRpcError,
-});
-
-const WsForkExtensionsCheckHealthRpc = Rpc.make(WS_METHODS.forkExtensionsCheckHealth, {
-  payload: Schema.Struct({}),
-  success: ForkHealthEvent,
-  error: ForkExtensionsRpcError,
-  stream: true,
-});
-
-const WsForkExtensionsInspectSourceRpc = Rpc.make(WS_METHODS.forkExtensionsInspectSource, {
-  payload: Schema.Struct({ text: Schema.String }),
-  success: ForkPastedSource,
-  error: ForkExtensionsRpcError,
-});
-
-const WsForkExtensionsInstallRpc = Rpc.make(WS_METHODS.forkExtensionsInstall, {
-  payload: ForkInstallRequest,
-  success: Schema.Array(ForkInstallResult),
-  error: ForkExtensionsRpcError,
-});
-
-const WsForkExtensionsUninstallRpc = Rpc.make(WS_METHODS.forkExtensionsUninstall, {
-  payload: ForkUninstallInput,
-  success: Schema.Array(ForkInstallResult),
-  error: ForkExtensionsRpcError,
-});
-
-const WsForkExtensionsSetEnabledRpc = Rpc.make(WS_METHODS.forkExtensionsSetEnabled, {
-  payload: ForkSetEnabledInput,
-  success: ForkInstallResult,
-  error: ForkExtensionsRpcError,
-});
-
-const WsForkExtensionsAuthorizeRpc = Rpc.make(WS_METHODS.forkExtensionsAuthorize, {
-  payload: Schema.Struct({ itemId: Schema.String, agent: ForkExtensionAgent }),
-  success: ForkAuthorizeEvent,
-  error: ForkExtensionsRpcError,
-  stream: true,
-});
-
-const WsForkExtensionsAuthorizeCompleteRpc = Rpc.make(WS_METHODS.forkExtensionsAuthorizeComplete, {
-  payload: ForkAuthorizeCompleteInput,
-  success: Schema.Struct({}),
-  error: ForkExtensionsRpcError,
-});
-
-// Fork: Dashboard.
-const WsForkTailnetStatusRpc = Rpc.make(WS_METHODS.forkTailnetStatus, {
-  payload: ForkTailnetStatusInput,
-  success: ForkTailnetStatus,
-  error: EnvironmentAuthorizationError,
-});
-
-/** A fresh sample of the whole machine about every second, while subscribed. */
-const WsForkMachinesHostResourcesRpc = Rpc.make(WS_METHODS.forkMachinesHostResources, {
-  payload: Schema.Struct({}),
-  success: HostResourcesSnapshot,
-  error: EnvironmentAuthorizationError,
-  stream: true,
-});
-
-const WsForkMachinesNodeExportersRpc = Rpc.make(WS_METHODS.forkMachinesNodeExporters, {
-  payload: Schema.Struct({}),
-  success: ForkNodeExportersStatus,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsForkInsightsLimitHistoryRpc = Rpc.make(WS_METHODS.forkInsightsLimitHistory, {
-  payload: ForkLimitHistoryInput,
-  success: ForkLimitHistory,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsForkInsightsActivityRpc = Rpc.make(WS_METHODS.forkInsightsActivity, {
-  payload: ForkActivityInput,
-  success: ForkActivity,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsForkActivityFeedRpc = Rpc.make(WS_METHODS.forkActivityFeed, {
-  payload: ForkActivityFeedInput,
-  success: ForkActivityFeed,
-  error: EnvironmentAuthorizationError,
-});
-
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2663,20 +2533,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
-  WsForkExtensionsSnapshotRpc,
-  WsForkExtensionsCheckHealthRpc,
-  WsForkExtensionsInspectSourceRpc,
-  WsForkExtensionsInstallRpc,
-  WsForkExtensionsUninstallRpc,
-  WsForkExtensionsSetEnabledRpc,
-  WsForkExtensionsAuthorizeRpc,
-  WsForkExtensionsAuthorizeCompleteRpc,
-  WsForkTailnetStatusRpc,
-  WsForkMachinesHostResourcesRpc,
-  WsForkMachinesNodeExportersRpc,
-  WsForkInsightsLimitHistoryRpc,
-  WsForkInsightsActivityRpc,
-  WsForkActivityFeedRpc,
+  ...FORK_RPCS,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,
