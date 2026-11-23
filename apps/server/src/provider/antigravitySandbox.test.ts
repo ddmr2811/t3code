@@ -1,130 +1,72 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeAntigravityAcpAdapterFlavor } from "../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import {
   buildAntigravityAcpSpawnInput,
+  prepareAntigravityProfile,
   type AntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import {
+  AntigravityWorkspaceRefused,
   BubblewrapCandidates,
+  antigravityConversationDirectories,
   antigravityProcessSandboxSpec,
-  antigravityProfileDataDirectories,
+  antigravitySandboxArea,
   antigravitySessionProfileDirectory,
-  antigravitySandboxArgs,
-  antigravitySandboxMasks,
   antigravityThreadProfileDirectory,
+  copyAntigravityThreadCredentials,
   findUsableBubblewrap,
-  linkAntigravityThreadCredentials,
   sandboxAntigravitySpawn,
+  type AntigravitySandboxArea,
 } from "./antigravitySandbox.ts";
 
-describe("Antigravity sandbox arguments", () => {
-  const mounts = (args: ReadonlyArray<string>) => {
-    const start = args.indexOf("/proc") + 1;
-    return args.slice(start, args.indexOf("--chdir")).join(" ");
-  };
+const linuxHost = HostProcess.Platform.defaultValue() === "linux";
+const sandboxHost = linuxHost && NodeFS.existsSync("/usr/bin/bwrap");
 
-  it("empties T3's state, then shows only this process's own paths on top", () => {
-    const args = antigravitySandboxArgs(
-      {
-        masks: ["/home/ada/.t3", "/home/ada/.t3/userdata", "/tmp"],
-        roots: ["/home/ada/project", "/tmp/scratch", "/home/ada/.t3/worktrees/one"],
-        grants: [
-          { path: "/home/ada/.t3/userdata/providers/antigravity/i/threads/t", writable: true },
-          { path: "/home/ada/.t3/userdata/attachments-by-thread/t", writable: false },
-        ],
-        hidden: [],
-      },
-      "/home/ada/project",
-    );
-    expect(args.slice(0, 9)).toEqual([
-      "--die-with-parent",
-      "--unshare-pid",
-      "--bind",
-      "/",
-      "/",
-      "--dev",
-      "/dev",
-      "--proc",
-      "/proc",
-    ]);
-    expect(mounts(args)).toBe(
-      [
-        "--tmpfs /tmp --tmpfs /home/ada/.t3",
-        "--bind /tmp/scratch /tmp/scratch",
-        "--bind /home/ada/.t3/worktrees/one /home/ada/.t3/worktrees/one",
-        "--ro-bind /home/ada/.t3/userdata/attachments-by-thread/t /home/ada/.t3/userdata/attachments-by-thread/t",
-        "--bind /home/ada/.t3/userdata/providers/antigravity/i/threads/t /home/ada/.t3/userdata/providers/antigravity/i/threads/t",
-      ].join(" "),
-    );
-    expect(args.slice(-3)).toEqual(["--chdir", "/home/ada/project", "--"]);
-  });
-
-  it("empties a mask again when a workspace folder holds it, and never grants a folder that does", () => {
-    const args = antigravitySandboxArgs(
-      {
-        // A dev server keeps its state inside the worktree it runs from.
-        masks: ["/home/ada/.t3", "/home/ada/.t3/worktrees/one/.t3"],
-        roots: ["/home/ada/.t3/worktrees/one", "/home/ada/.t3"],
-        grants: [
-          { path: "/home/ada", writable: false },
-          { path: "/usr/bin/agy", writable: false },
-          { path: "/home/ada/.t3/worktrees/one/.t3/tools/agy", writable: false },
-        ],
-        hidden: ["/home/ada/.t3/worktrees/one/.t3/providers/antigravity/i/threads"],
-      },
-      "/home/ada/.t3/worktrees/one",
-    );
-    expect(mounts(args)).toBe(
-      [
-        "--tmpfs /home/ada/.t3",
-        "--bind /home/ada/.t3 /home/ada/.t3",
-        "--bind /home/ada/.t3/worktrees/one /home/ada/.t3/worktrees/one",
-        "--tmpfs /home/ada/.t3 --tmpfs /home/ada/.t3/worktrees/one/.t3",
-        "--ro-bind /home/ada/.t3/worktrees/one/.t3/tools/agy /home/ada/.t3/worktrees/one/.t3/tools/agy",
-        "--tmpfs /home/ada/.t3/worktrees/one/.t3/providers/antigravity/i/threads",
-      ].join(" "),
-    );
-  });
-});
-
-const sandboxHost =
-  HostProcess.Platform.defaultValue() === "linux" &&
-  NodeFS.existsSync("/usr/bin/bwrap") &&
-  process.getuid !== undefined;
-
-// A stand-in for `agy`: launched exactly as the driver launches it, it tries to read each path it
-// is given with its own tools, the way the real agent reads the disk without asking T3.
+// A stand-in for `agy`: launched exactly as the driver launches it, it uses its own tools on each
+// path it is given, the way the real agent reads and writes the disk without asking T3.
 const FAKE_AGY = `#!/bin/sh
 [ "$1" = acp ] && [ "$2" = --gemini-dir ] || exit 64
+[ -z "$FAKE_AGY_WAIT" ] || read -r _ < "$FAKE_AGY_WAIT"
 for target in $FAKE_AGY_READS; do
   if cat "$target" >/dev/null 2>&1; then echo "read $target"; else echo "denied $target"; fi
 done
-echo mine > "$GEMINI_HOME/antigravity-acp/conversations/mine.db" && echo "wrote own conversation"
-echo renewed >> "$GEMINI_HOME/antigravity-acp/antigravity-oauth-token" && echo "renewed token"
+for target in $FAKE_AGY_WRITES; do
+  if (echo agent > "$target") 2>/dev/null; then echo "wrote $target"; else echo "unwritable $target"; fi
+done
+[ -z "$FAKE_AGY_ENV" ] || env
 `;
+const FAKE_AGY_VARIABLES = ["FAKE_AGY_WAIT", "FAKE_AGY_READS", "FAKE_AGY_WRITES", "FAKE_AGY_ENV"];
 
 function makeHome() {
-  const root = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-antigravity-sandbox-")),
-  );
+  // Not under /tmp: the sandbox has its own, which would hide everything here by itself.
+  const root = NodeFS.realpathSync(NodeFS.mkdtempSync("/var/tmp/t3-antigravity-sandbox-"));
+  const temporary = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-antigravity-sandbox-"));
+  NodeFS.writeFileSync(NodePath.join(temporary, "tmux-socket"), "socket");
   const file = (...segments: ReadonlyArray<string>) => {
     const path = NodePath.join(root, ...segments);
     NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
     NodeFS.writeFileSync(path, segments.at(-1) ?? "");
     return path;
   };
-  const baseDir = NodePath.join(root, "home", ".t3");
+  const userHome = NodePath.join(root, "home");
+  const baseDir = NodePath.join(userHome, ".t3");
   const stateDir = NodePath.join(baseDir, "userdata");
   const instanceProfile = NodePath.join(stateDir, "providers", "antigravity", "instance");
   const own = antigravityThreadProfileDirectory(instanceProfile, "thread-own");
@@ -136,22 +78,24 @@ function makeHome() {
   NodeFS.chmodSync(executablePath, 0o755);
   const paths = {
     root,
-    baseDir,
+    userHome,
+    area: antigravitySandboxArea({ baseDir, stateDir, homeDirectory: userHome }),
     stateDir,
     instanceProfile,
     own,
     executablePath,
     runtimeTemp: NodePath.dirname(state("antigravity-tmp", "instance", "run-1", "keep")),
-    cwd: NodePath.dirname(file("work", "source.ts")),
-    extraRoot: NodePath.dirname(file("home", ".t3", "worktrees", "extra", "extra.ts")),
+    cwd: NodePath.dirname(file("home", "projects", "work", "source.ts")),
+    extraRoot: NodePath.dirname(file("home", "projects", "extra", "extra.ts")),
+    checkout: NodePath.dirname(file("home", ".t3", "worktrees", "project", "own", "own.ts")),
     ownFolder: NodePath.dirname(state("attachments-by-thread", "thread-own", "own.png")),
     token: NodePath.join(instanceProfile, "antigravity-acp", "antigravity-oauth-token"),
     allowed: {
-      workspace: NodePath.join(root, "work", "source.ts"),
-      extraRoot: NodePath.join(baseDir, "worktrees", "extra", "extra.ts"),
+      workspace: NodePath.join(userHome, "projects", "work", "source.ts"),
+      extraRoot: NodePath.join(userHome, "projects", "extra", "extra.ts"),
       ownAttachment: NodePath.join(stateDir, "attachments-by-thread", "thread-own", "own.png"),
       ownConversation: NodePath.join(own, "antigravity-acp", "conversations", "own.db"),
-      token: NodePath.join(own, "antigravity-acp", "antigravity-oauth-token"),
+      ownToken: NodePath.join(own, "antigravity-acp", "antigravity-oauth-token"),
     },
     forbidden: {
       attachmentStore: state("attachments", "other.png"),
@@ -167,11 +111,19 @@ function makeHome() {
         "conversations",
         "helper.db",
       ),
-      otherWorktree: file("home", ".t3", "worktrees", "another", "private.ts"),
-      temporarySocket: file("tmux-socket"),
+      instanceToken: NodePath.join(instanceProfile, "antigravity-acp", "antigravity-oauth-token"),
+      otherWorktree: file("home", ".t3", "worktrees", "project", "another", "private.ts"),
+      userConfig: file("home", ".config", "gh", "hosts.yml"),
+      userGemini: file("home", ".gemini", "antigravity", "conversations", "mine.db"),
+      otherProviderHome: file("home", ".codex", "auth.json"),
+      otherT3Home: file("other-t3-home", "userdata", "secrets", "provider.key"),
+      temporarySocket: NodePath.join(temporary, "tmux-socket"),
       serverRoot: `/proc/${process.pid}/root/etc/hostname`,
     },
-    [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    [Symbol.dispose]: () => {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+      NodeFS.rmSync(temporary, { recursive: true, force: true });
+    },
   };
   for (const path of [
     paths.allowed.ownConversation,
@@ -186,63 +138,64 @@ function makeHome() {
   return paths;
 }
 
+type Home = ReturnType<typeof makeHome>;
+
 const launch = Effect.fn("AntigravitySandboxTest.launch")(function* (
-  home: ReturnType<typeof makeHome>,
-  thread: boolean,
-  reads: ReadonlyArray<string>,
+  home: Home,
+  options: {
+    readonly thread: boolean;
+    readonly cwd?: string;
+    readonly area?: AntigravitySandboxArea;
+    readonly environment?: NodeJS.ProcessEnv;
+  },
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostEnvironment = yield* HostProcess.Environment;
   const bubblewrapPath = yield* findUsableBubblewrap();
   if (bubblewrapPath === undefined) return yield* Effect.die("bubblewrap is not usable here");
-  const profileDirectory = thread ? home.own : home.instanceProfile;
-  const sharedCredentials = thread
-    ? yield* Effect.promise(() =>
-        linkAntigravityThreadCredentials({
-          instanceProfile: home.instanceProfile,
-          threadProfile: home.own,
-        }),
-      )
-    : [];
+  const profileDirectory = options.thread ? home.own : home.instanceProfile;
+  if (options.thread) {
+    yield* Effect.promise(() =>
+      copyAntigravityThreadCredentials({
+        instanceProfile: home.instanceProfile,
+        threadProfile: home.own,
+      }),
+    );
+  }
   const profile: AntigravityProfile = {
     platform: "linux",
+    helperExecutable: "/bin/true",
+    instanceVariables: new Set(FAKE_AGY_VARIABLES),
     geminiHome: profileDirectory,
     acpDirectory: NodePath.join(profileDirectory, "antigravity-acp"),
     tokenPath: NodePath.join(profileDirectory, "antigravity-acp", "acp_token.json"),
     tempDirectory: home.runtimeTemp,
     browserCommand: "true",
   };
+  const cwd = options.cwd ?? home.cwd;
   const spawn = yield* Effect.promise(() =>
     sandboxAntigravitySpawn({
       bubblewrapPath,
       spawn: buildAntigravityAcpSpawnInput({
         installation: { executablePath: home.executablePath },
         profile,
-        cwd: home.cwd,
-        baseEnv: { PATH: hostEnvironment.PATH, FAKE_AGY_READS: reads.join(" ") },
+        cwd,
+        baseEnv: { PATH: hostEnvironment.PATH, ...options.environment },
         runtimeTempDirectory: home.runtimeTemp,
       }),
       spec: antigravityProcessSandboxSpec({
-        masks: antigravitySandboxMasks({
-          baseDir: home.baseDir,
-          stateDir: home.stateDir,
-          homeDirectory: NodePath.join(home.root, "home"),
-          uid: process.getuid?.(),
-          runtimeDirectory: undefined,
-        }),
-        executablePath: home.executablePath,
-        instanceProfile: home.instanceProfile,
+        area: options.area ?? home.area,
         profile: profileDirectory,
         runtimeTempDirectory: home.runtimeTemp,
-        thread: thread
-          ? { extraRoots: [home.extraRoot], attachmentsFolder: home.ownFolder, sharedCredentials }
+        thread: options.thread
+          ? { extraRoots: [home.extraRoot], attachmentsFolder: home.ownFolder }
           : undefined,
       }),
     }),
   );
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, [...spawn.args], {
-      cwd: home.cwd,
+      cwd,
       env: spawn.env ?? {},
       extendEnv: false,
       shell: false,
@@ -262,80 +215,159 @@ const launch = Effect.fn("AntigravitySandboxTest.launch")(function* (
 
 describe("Antigravity sandbox with real bubblewrap", () => {
   it.live.skipIf(!sandboxHost)(
-    "a thread's process reads its own folders and none of T3's state or other threads'",
+    "a thread's process sees its own folders and nothing else of T3, the home directory or other threads",
     () =>
       Effect.gen(function* () {
         using home = makeHome();
         const allowed = Object.values(home.allowed);
         const forbidden = Object.values(home.forbidden);
         // Outside the sandbox every one of these is readable, so a denial below is the sandbox's.
-        for (const path of [...Object.values(home.forbidden).slice(0, -1), home.token]) {
+        for (const path of forbidden.slice(0, -1)) {
           expect(NodeFS.readFileSync(path, "utf8")).not.toBe("");
         }
-        const output = yield* launch(home, true, [...allowed, ...forbidden]);
+        const written = NodePath.join(home.cwd, "written.ts");
+        const hostHomeFile = NodePath.join(home.userHome, ".bashrc");
+        const output = yield* launch(home, {
+          thread: true,
+          environment: {
+            FAKE_AGY_READS: [...allowed, ...forbidden].join(" "),
+            FAKE_AGY_WRITES: [
+              written,
+              home.allowed.ownToken,
+              home.allowed.ownAttachment,
+              hostHomeFile,
+            ].join(" "),
+          },
+        });
         expect(output).toEqual([
           ...allowed.map((path) => `read ${path}`),
           ...forbidden.map((path) => `denied ${path}`),
-          "wrote own conversation",
-          "renewed token",
+          `wrote ${written}`,
+          `wrote ${home.allowed.ownToken}`,
+          `unwritable ${home.allowed.ownAttachment}`,
+          // The home directory it sees is an empty stand-in that ends with the process.
+          `wrote ${hostHomeFile}`,
         ]);
-        expect(
-          NodeFS.readFileSync(
-            NodePath.join(home.own, "antigravity-acp", "conversations", "mine.db"),
-            "utf8",
-          ),
-        ).toBe("mine\n");
-        // The sign-in is the one thing threads share: a renewal reaches the instance's file.
-        expect(NodeFS.readFileSync(home.token, "utf8")).toBe("privaterenewed\n");
+        expect(NodeFS.readFileSync(written, "utf8")).toBe("agent\n");
+        expect(NodeFS.existsSync(hostHomeFile)).toBe(false);
+        // Renewing or replacing its own copy of the sign-in leaves every other thread's source.
+        expect(NodeFS.readFileSync(home.token, "utf8")).toBe("private");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.skipIf(!sandboxHost)(
-    "a setup or helper process sees the instance profile and no thread's conversations",
+    "a thread working in its own T3 worktree sees that checkout and no other",
     () =>
       Effect.gen(function* () {
         using home = makeHome();
-        const { instanceConversation, ...forbidden } = home.forbidden;
-        const output = yield* launch(home, false, [
-          home.allowed.workspace,
-          instanceConversation,
-          home.allowed.ownConversation,
-          ...Object.values(forbidden),
-        ]);
-        expect(output.slice(0, -2)).toEqual([
-          `read ${home.allowed.workspace}`,
-          `read ${instanceConversation}`,
-          `denied ${home.allowed.ownConversation}`,
-          ...Object.values(forbidden).map((path) => `denied ${path}`),
+        const own = NodePath.join(home.checkout, "own.ts");
+        const output = yield* launch(home, {
+          thread: true,
+          cwd: home.checkout,
+          environment: {
+            FAKE_AGY_READS: [own, home.forbidden.otherWorktree, home.forbidden.database].join(" "),
+          },
+        });
+        expect(output).toEqual([
+          `read ${own}`,
+          `denied ${home.forbidden.otherWorktree}`,
+          `denied ${home.forbidden.database}`,
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("finds every thread's conversations for the usage history and child transcripts", () =>
-    Effect.gen(function* () {
-      using home = makeHome();
-      const directories = yield* Effect.promise(() =>
-        antigravityProfileDataDirectories(home.instanceProfile),
-      );
-      expect(directories.toSorted()).toEqual(
-        [
-          home.instanceProfile,
-          home.own,
-          antigravityThreadProfileDirectory(home.instanceProfile, "thread-other"),
-        ]
-          .map((profile) => NodePath.join(profile, "antigravity-acp"))
-          .toSorted(),
-      );
-      const profileOf = (sessionId: string) =>
-        antigravitySessionProfileDirectory({
-          instanceProfile: home.instanceProfile,
-          threadId: "thread-own",
-          sessionId,
+  it.live.skipIf(!sandboxHost)(
+    "a workspace that holds T3's state, as a dev server's does, shows the workspace without it",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        const devState = NodePath.join(home.cwd, ".t3");
+        const devSecret = NodePath.join(devState, "userdata", "secrets", "provider.key");
+        NodeFS.mkdirSync(NodePath.dirname(devSecret), { recursive: true });
+        NodeFS.writeFileSync(devSecret, "private");
+        const output = yield* launch(home, {
+          thread: true,
+          area: { ...home.area, state: [...home.area.state, devState] },
+          environment: { FAKE_AGY_READS: [home.allowed.workspace, devSecret].join(" ") },
         });
-      // A session that ran before the thread had its own profile is still read where it ran.
-      expect(yield* Effect.promise(() => profileOf("own"))).toBe(home.own);
-      expect(yield* Effect.promise(() => profileOf("helper"))).toBe(home.instanceProfile);
-    }),
+        expect(output).toEqual([`read ${home.allowed.workspace}`, `denied ${devSecret}`]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(!sandboxHost)(
+    "a helper process started before any thread profile exists never sees one made later",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        NodeFS.rmSync(NodePath.dirname(home.own), { recursive: true });
+        const gate = NodePath.join(home.cwd, "gate");
+        NodeChildProcess.execFileSync("mkfifo", [gate]);
+        const late = NodePath.join(
+          antigravityThreadProfileDirectory(home.instanceProfile, "thread-late"),
+          "antigravity-acp",
+          "conversations",
+          "late.db",
+        );
+        const releaseWriter = Effect.sync(() => {
+          const { O_NONBLOCK, O_RDONLY } = NodeFS.constants;
+          NodeFS.closeSync(NodeFS.openSync(gate, O_RDONLY | O_NONBLOCK));
+        });
+        const [output] = yield* Effect.all(
+          [
+            launch(home, {
+              thread: false,
+              environment: {
+                FAKE_AGY_WAIT: gate,
+                FAKE_AGY_READS: [home.forbidden.instanceConversation, late].join(" "),
+              },
+            }).pipe(Effect.onError(() => releaseWriter)),
+            Effect.promise(async () => {
+              // Opening the pipe returns once the agent, already in its namespace, reads it.
+              const writer = await NodeFSP.open(gate, "w");
+              NodeFS.mkdirSync(NodePath.dirname(late), { recursive: true });
+              NodeFS.writeFileSync(late, "private");
+              await writer.close();
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        expect(output).toEqual([`read ${home.forbidden.instanceConversation}`, `denied ${late}`]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(!sandboxHost)(
+    "the agent gets a private HOME and none of the variables other programs left in the server's environment",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        const foreign = {
+          OPENAI_API_KEY: "sk-other-provider",
+          ANTHROPIC_API_KEY: "sk-ant-other-provider",
+          CODEX_HOME: "/home/someone/.codex",
+          T3CODE_HOME: "/home/someone/.t3",
+          T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
+          T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+          SSH_AUTH_SOCK: "/run/user/1000/agent.sock",
+          HOME: home.userHome,
+        };
+        const output = yield* launch(home, {
+          thread: true,
+          environment: { ...foreign, LANG: "C.UTF-8", FAKE_AGY_ENV: "1" },
+        });
+        const variables = new Map(
+          output.map((line) => [
+            line.slice(0, line.indexOf("=")),
+            line.slice(line.indexOf("=") + 1),
+          ]),
+        );
+        const { HOME: _home, ...absent } = foreign;
+        expect(Object.keys(absent).filter((name) => variables.has(name))).toEqual([]);
+        expect(variables.get("HOME")).toBe(NodePath.join(home.own, "home"));
+        expect(variables.get("LANG")).toBe("C.UTF-8");
+        expect(variables.get("GEMINI_HOME")).toBe(home.own);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.skipIf(!sandboxHost)("finds no sandbox where bubblewrap is missing or refused", () =>
@@ -351,4 +383,175 @@ describe("Antigravity sandbox with real bubblewrap", () => {
       expect(yield* find([refused, "/usr/bin/bwrap"])).toBe("/usr/bin/bwrap");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("Antigravity sandbox rules", () => {
+  it.skipIf(!linuxHost)(
+    "refuses a workspace folder inside T3's state or holding the home directory",
+    async () => {
+      using home = makeHome();
+      const link = NodePath.join(home.cwd, "innocent");
+      NodeFS.symlinkSync(NodePath.join(home.stateDir, "secrets"), link);
+      const refuses = (cwd: string, extraRoots: ReadonlyArray<string> = []) =>
+        expect(
+          sandboxAntigravitySpawn({
+            bubblewrapPath: "/usr/bin/bwrap",
+            spawn: { command: home.executablePath, args: [], cwd },
+            spec: {
+              ...antigravityProcessSandboxSpec({
+                area: home.area,
+                profile: home.own,
+                runtimeTempDirectory: home.runtimeTemp,
+              }),
+              extraRoots,
+            },
+          }),
+        ).rejects.toBeInstanceOf(AntigravityWorkspaceRefused);
+      await refuses(NodePath.join(home.stateDir, "providers", "codex"));
+      await refuses(home.own);
+      // A link is the folder it names.
+      await refuses(link);
+      await refuses(home.cwd, [link]);
+      // Another thread's checkout, and the folder of every checkout of a project.
+      await refuses(home.cwd, [NodePath.dirname(home.forbidden.otherWorktree)]);
+      await refuses(NodePath.dirname(home.checkout));
+      await refuses(home.userHome);
+      await refuses(home.root);
+      await refuses(NodePath.join(home.cwd, "missing"));
+    },
+  );
+
+  it.live.skipIf(!linuxHost)(
+    "a client file read is refused wherever the sandbox would not show the file",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        const devState = NodePath.join(home.cwd, ".t3");
+        const devSecret = NodePath.join(devState, "secrets", "provider.key");
+        NodeFS.mkdirSync(NodePath.dirname(devSecret), { recursive: true });
+        NodeFS.writeFileSync(devSecret, "private");
+        const flavor = makeAntigravityAcpAdapterFlavor({
+          instanceId: ProviderInstanceId.make("antigravity-test"),
+          random: undefined as never,
+          fileSystem: yield* FileSystem.FileSystem,
+          path: yield* Path.Path,
+          host: { paths: { attachmentsDir: NodePath.join(home.stateDir, "attachments") } } as never,
+          selfInvocation: undefined as never,
+          makeRuntime: () => Effect.die("not spawned in this test"),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          sandbox: {
+            threadProfileDirectory: () => home.own,
+            area: { ...home.area, state: [...home.area.state, devState] },
+          },
+        });
+        const read = (cwd: string, path: string) =>
+          flavor
+            .clientFileSystem!.readTextFile(
+              { sessionId: "session", path },
+              cwd,
+              ThreadId.make("thread-own"),
+            )
+            .pipe(
+              Effect.map((response) => response.content),
+              Effect.orElseSucceed(() => "refused"),
+            );
+        expect(yield* read(home.cwd, home.allowed.workspace)).toBe("source.ts");
+        expect(yield* read(home.cwd, devSecret)).toBe("refused");
+        // A session whose working directory is the home directory is never launched; its reads
+        // are not served either, least of all T3's own secrets below it.
+        expect(yield* read(home.userHome, home.forbidden.secret)).toBe("refused");
+        expect(yield* read(home.userHome, home.forbidden.userConfig)).toBe("refused");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(!linuxHost)(
+    "links the agent left in its profile never redirect what T3 writes or copies there",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        const victim = NodePath.join(home.root, "victim");
+        NodeFS.mkdirSync(victim, { mode: 0o755 });
+        NodeFS.writeFileSync(NodePath.join(victim, "settings.json"), "victim");
+        NodeFS.writeFileSync(NodePath.join(victim, "keep"), "victim");
+        const data = NodePath.join(home.own, "antigravity-acp");
+        const prepare = prepareAntigravityProfile({
+          profileDirectory: home.own,
+          runtimeExecutablePath: process.execPath,
+          platform: "linux",
+          baseEnv: {},
+          tempDirectory: home.runtimeTemp,
+          isolated: true,
+        });
+        const copy = Effect.promise(() =>
+          copyAntigravityThreadCredentials({
+            instanceProfile: home.instanceProfile,
+            threadProfile: home.own,
+          }).then(
+            () => "copied",
+            () => "refused",
+          ),
+        );
+
+        // Files T3 writes by name, replaced by links to another program's file and folder.
+        NodeFS.symlinkSync(
+          NodePath.join(victim, "settings.json"),
+          NodePath.join(data, "settings.json"),
+        );
+        NodeFS.symlinkSync(
+          NodePath.join(victim, "keep"),
+          NodePath.join(data, "antigravity-oauth-token"),
+        );
+        // The instance's sign-in replaced by a link to a file no thread may read.
+        NodeFS.symlinkSync(
+          home.forbidden.secret,
+          NodePath.join(home.instanceProfile, "antigravity-acp", "acp_token.json"),
+        );
+        yield* prepare;
+        expect(yield* copy).toBe("copied");
+        expect(NodeFS.lstatSync(NodePath.join(data, "settings.json")).isFile()).toBe(true);
+        expect(NodeFS.readFileSync(NodePath.join(data, "antigravity-oauth-token"), "utf8")).toBe(
+          "private",
+        );
+        expect(NodeFS.existsSync(NodePath.join(data, "acp_token.json"))).toBe(false);
+
+        // The whole folder replaced by a link: nothing is written, chmodded or removed through it.
+        NodeFS.rmSync(data, { recursive: true });
+        NodeFS.symlinkSync(victim, data);
+        expect((yield* prepare.pipe(Effect.flip))._tag).toBe("AcpTransportError");
+        expect(yield* copy).toBe("refused");
+
+        expect(NodeFS.readdirSync(victim).toSorted()).toEqual(["keep", "settings.json"]);
+        expect(NodeFS.readFileSync(NodePath.join(victim, "settings.json"), "utf8")).toBe("victim");
+        expect(NodeFS.readFileSync(NodePath.join(victim, "keep"), "utf8")).toBe("victim");
+        expect(NodeFS.statSync(victim).mode & 0o777).toBe(0o755);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("reads a thread's conversations from its own profile, and no folder a link stands in for", async () => {
+    using home = makeHome();
+    const conversations = (profile: string) =>
+      NodePath.join(profile, "antigravity-acp", "conversations");
+    const other = antigravityThreadProfileDirectory(home.instanceProfile, "thread-other");
+    const profileOf = (sessionId: string) =>
+      antigravitySessionProfileDirectory({
+        instanceProfile: home.instanceProfile,
+        threadId: "thread-own",
+        sessionId,
+      });
+    expect((await antigravityConversationDirectories(home.instanceProfile)).toSorted()).toEqual(
+      [home.instanceProfile, home.own, other].map(conversations).toSorted(),
+    );
+    // A session that ran before the thread had its own profile is still read where it ran.
+    expect(await profileOf("own")).toBe(home.own);
+    expect(await profileOf("helper")).toBe(home.instanceProfile);
+
+    // The agent points its conversations at another thread's.
+    NodeFS.rmSync(conversations(home.own), { recursive: true });
+    NodeFS.symlinkSync(conversations(other), conversations(home.own));
+    expect((await antigravityConversationDirectories(home.instanceProfile)).toSorted()).toEqual(
+      [home.instanceProfile, other].map(conversations).toSorted(),
+    );
+    expect(await profileOf("other")).toBe(home.instanceProfile);
+  });
 });

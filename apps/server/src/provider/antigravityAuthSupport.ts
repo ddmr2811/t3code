@@ -23,6 +23,7 @@ import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
+import { replaceAntigravityDataFile, withAntigravityDataDirectory } from "./antigravitySandbox.ts";
 
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
@@ -81,8 +82,17 @@ const removedEnvironmentKeys = new Set([
   "CHROME_CRASHPAD_PIPE_NAME",
 ]);
 
+// All `agy` inherits from the server's own environment; the rest belongs to other programs and
+// may hold their credentials. Windows keeps the old block list: it has no sandbox to complete.
+const inheritedEnvironmentKey =
+  /^(?:PATH|HOME|USER|LOGNAME|SHELL|LANG|LC_\w+|TERM|TZ|SSH_CONNECTION|SSL_CERT_FILE|SSL_CERT_DIR|NIX_SSL_CERT_FILE|(?:HTTPS?|ALL|NO)_PROXY)$/i;
+
 export interface AntigravityProfile {
   readonly platform: NodeJS.Platform;
+  /** The Node the agent's BROWSER command runs. */
+  readonly helperExecutable: string;
+  /** Variables set in this provider instance's own settings, which the agent does receive. */
+  readonly instanceVariables: ReadonlySet<string>;
   readonly geminiHome: string;
   readonly acpDirectory: string;
   readonly tokenPath: string;
@@ -208,7 +218,14 @@ function antigravityEnvironment(
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     // Windows treats environment keys as case-insensitive. Remove aliases too.
-    if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
+    if (removedEnvironmentKeys.has(key.toUpperCase())) continue;
+    if (
+      profile.platform === "win32" ||
+      inheritedEnvironmentKey.test(key) ||
+      profile.instanceVariables.has(key)
+    ) {
+      environment[key] = value;
+    }
   }
   // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
   const credential =
@@ -398,6 +415,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
+  /** Names of the variables set in the provider instance's settings. */
+  readonly instanceVariables?: ReadonlyArray<string>;
+  /**
+   * The agent runs sandboxed and can write this profile: T3's files in it are written without
+   * following a link, and nothing from the real `~/.gemini`, which it cannot see, is linked in.
+   */
+  readonly isolated?: boolean;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -464,6 +488,8 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   }
   const profile: AntigravityProfile = {
     platform,
+    helperExecutable: runtimeExecutablePath,
+    instanceVariables: new Set(input.instanceVariables),
     geminiHome,
     acpDirectory,
     tokenPath: path.join(acpDirectory, "acp_token.json"),
@@ -511,7 +537,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
+  for (const directory of [geminiHome, ...(input.isolated ? [] : [acpDirectory]), tempDirectory]) {
     yield* fs
       .makeDirectory(directory, { recursive: true, mode: 0o700 })
       .pipe(
@@ -529,13 +555,21 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
+  const settingsFailed = () =>
+    authSupportError("The Antigravity profile settings could not be written.");
+  if (input.isolated) {
+    yield* Effect.tryPromise({
+      try: () =>
+        withAntigravityDataDirectory(geminiHome, (directory) =>
+          replaceAntigravityDataFile(directory, "settings.json", antigravityProfileSettings(auth)),
+        ),
+      catch: settingsFailed,
+    });
+    return profile;
+  }
   yield* fs
     .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
-    .pipe(
-      Effect.mapError(() =>
-        authSupportError("The Antigravity profile settings could not be written."),
-      ),
-    );
+    .pipe(Effect.mapError(settingsFailed));
   yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
   if (platform === "win32") {
     yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });

@@ -398,6 +398,7 @@ export interface AcpAdapterV2Flavor {
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
+    threadId: ThreadId,
   ) => Effect.Effect<
     (result: EffectAcpSchema.PromptResponse) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
   >;
@@ -417,6 +418,8 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
+  /** The agent gets no T3 MCP server, endpoint or credential, in its session or its environment. */
+  readonly withoutT3Mcp?: boolean;
   /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
   readonly deferMcpTools?: boolean;
   readonly normalizeSessionUpdate?: (
@@ -544,6 +547,7 @@ export interface AcpAdapterV2Flavor {
    * it returns hold the turn open and the rest become idle.
    */
   readonly subagentsOutlivingPrompt?: (input: {
+    readonly threadId: ThreadId;
     readonly sessionId: string;
     readonly nativeTaskIds: ReadonlyArray<string>;
   }) => Effect.Effect<ReadonlyArray<string>>;
@@ -656,7 +660,7 @@ export interface AcpAdapterV2Flavor {
    * Checked before finalizing a settled prompt or its deferred debounce, so the turn waits
    * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
    */
-  readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
+  readonly hasPendingReply?: (sessionId: string, threadId: ThreadId) => Effect.Effect<boolean>;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -2032,7 +2036,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
-    threadId === null
+    threadId === null || flavor.withoutT3Mcp === true
       ? Effect.succeed(
           acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
         )
@@ -4306,6 +4310,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           if (running.length === 0) return;
           const atWork = yield* flavor.subagentsOutlivingPrompt({
+            threadId: input.threadId,
             sessionId: context.nativeThreadId,
             nativeTaskIds: running.map(nativeTaskId),
           });
@@ -8775,7 +8780,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!stillCurrent()) return;
             const pendingReply =
               !replyOpen && flavor.hasPendingReply !== undefined
-                ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                ? yield* flavor.hasPendingReply(context.nativeThreadId, input.threadId)
                 : false;
             if (!stillCurrent()) return;
             if (pendingReply) {
@@ -9218,7 +9223,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     status === "completed" &&
                     !context.interrupted &&
                     flavor.hasPendingReply !== undefined
-                      ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                      ? yield* flavor.hasPendingReply(context.nativeThreadId, input.threadId)
                       : false;
                   if (context.finalized) return;
                   if (deferredBackgroundWork || pendingReply) {
@@ -9634,7 +9639,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const checkPromptOutcome =
               flavor.watchPromptOutcome === undefined
                 ? undefined
-                : yield* flavor.watchPromptOutcome(requestedSessionId);
+                : yield* flavor.watchPromptOutcome(requestedSessionId, input.threadId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = {
               dispatched: context.promptDispatched,
@@ -9723,7 +9728,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const checkPromptOutcome =
                 flavor.watchPromptOutcome === undefined
                   ? undefined
-                  : yield* flavor.watchPromptOutcome(context.nativeThreadId);
+                  : yield* flavor.watchPromptOutcome(context.nativeThreadId, input.threadId);
               const dispatched = yield* Deferred.make<void, never>();
               const steered = yield* runRuntimeCallbackAtGeneration(
                 generation,

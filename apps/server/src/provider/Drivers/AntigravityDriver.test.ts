@@ -16,7 +16,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
@@ -32,7 +31,7 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
-import { BubblewrapCandidates } from "../antigravitySandbox.ts";
+import { BubblewrapCandidates, antigravityThreadProfileDirectory } from "../antigravitySandbox.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -71,9 +70,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    /** What the server process itself inherited, besides PATH. */
+    readonly hostEnvironment?: NodeJS.ProcessEnv;
     readonly platform?: NodeJS.Platform;
-    /** A stand-in `bwrap` that exits with this code, as the only candidate. */
-    readonly bubblewrapExitCode?: number;
+    /**
+     * The only `bwrap` candidate. By default a stand-in that runs the command unconfined: the
+     * stand-in agent is a script in this checkout, which a real sandbox hides unless a test names
+     * the checkout as a workspace folder.
+     */
+    readonly bubblewrap?: "real" | { readonly exitCode: number };
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -138,11 +143,17 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     } satisfies AntigravityInstallation.AntigravityExecutable;
   });
 
-  const bubblewrap = path.join(root, "bwrap");
-  if (options.bubblewrapExitCode !== undefined) {
-    yield* fs.writeFileString(bubblewrap, `#!/bin/sh\nexit ${options.bubblewrapExitCode}\n`);
+  const bubblewrap = options.bubblewrap === "real" ? "/usr/bin/bwrap" : path.join(root, "bwrap");
+  if (options.bubblewrap !== "real") {
+    yield* fs.writeFileString(
+      bubblewrap,
+      options.bubblewrap === undefined
+        ? '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n'
+        : `#!/bin/sh\nexit ${options.bubblewrap.exitCode}\n`,
+    );
     yield* fs.chmod(bubblewrap, 0o755);
   }
+  const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
@@ -154,8 +165,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
+    /** The program run, and its arguments, without the sandbox in front of them. */
     command: string;
     args: ReadonlyArray<string>;
+    /** The sandbox's own arguments, for a launch that went through it. */
+    sandbox: ReadonlyArray<string> | undefined;
     cwd: string | undefined;
     extendEnv: boolean | undefined;
     environment: Record<string, string | undefined>;
@@ -216,9 +230,13 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         const value = environment[name];
         return Redacted.isRedacted(value) ? Redacted.value(value) : value;
       };
+      const all = command.args.map(String);
+      const split = command.command === bubblewrap ? all.indexOf("--") : -1;
+      const program = split === -1 ? command.command : all[split + 1]!;
       launches.push({
-        command: command.command,
-        args: command.args.map(String),
+        command: program,
+        args: split === -1 ? all : all.slice(split + 2),
+        sandbox: split === -1 ? undefined : all.slice(0, split),
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
@@ -228,7 +246,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: env("GEMINI_API_KEY"),
-        tempDirectory: agentExecutables.has(command.command) ? env("TMPDIR") : undefined,
+        tempDirectory: agentExecutables.has(program) ? env("TMPDIR") : undefined,
         handle,
       });
       return handle;
@@ -238,12 +256,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     instanceId,
     displayName: "Google test account",
     enabled: options.enabled ?? true,
-    // The stand-in agent is a script in this checkout, which the sandbox hides unless a test
-    // names the checkout as a workspace folder. Tests that open several sessions are not about
-    // the session limit.
+    // Tests that open several sessions are not about the session limit.
     config: {
       ...AntigravityDriver.defaultConfig(),
-      sandbox: false,
+      // Only Linux has the sandbox; elsewhere turning it off is the one way to run.
+      sandbox: (options.platform ?? hostPlatform) === "linux",
       maxSessionProcesses: 16,
       ...options.config,
     },
@@ -263,9 +280,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
     Effect.provideService(HostProcess.Platform, options.platform ?? hostPlatform),
-    options.bubblewrapExitCode === undefined
-      ? identity
-      : Effect.provideService(BubblewrapCandidates, [bubblewrap]),
+    Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+    Effect.provideService(HostProcess.Environment, {
+      PATH: baseEnv.PATH,
+      ...options.hostEnvironment,
+    }),
+    Effect.provideService(BubblewrapCandidates, [bubblewrap]),
   );
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
@@ -291,6 +311,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     fs,
     path,
     profileDirectory,
+    threadProfile: (threadId: string) =>
+      antigravityThreadProfileDirectory(profileDirectory, threadId),
     directories,
     instancePath,
     first,
@@ -499,7 +521,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           expect(h.launches.at(-1)?.args).toEqual([
             "acp",
             "--gemini-dir",
-            h.profileDirectory,
+            h.threadProfile(cliThreadId),
             "--app-data-dir",
             "antigravity-acp",
           ]);
@@ -518,37 +540,35 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "gives a thread session its own T3 thread and MCP fallback environment",
+    "gives the agent no T3 MCP server or credential, and nothing other programs left in the server's environment",
     () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness({
-          environment: [
-            { name: "T3CODE_THREAD_ID", value: "thread-antigravity-ambient" },
-            { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:9/ambient" },
-            { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer ambient-token" },
-            { name: "T3_ACP_MCP_NODE", value: "/ambient/node" },
-            { name: "T3_ACP_MCP_ENTRYPOINT", value: "/ambient/entrypoint.mjs" },
-          ],
-        });
+        // What a server started from another agent's shell, or beside other providers, inherits.
+        const foreign = {
+          OPENAI_API_KEY: "sk-other-provider",
+          CODEX_HOME: "/home/someone/.codex",
+          T3CODE_THREAD_ID: "thread-antigravity-ambient",
+          T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
+          T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",
+        };
+        const h = yield* makeHarness({ hostEnvironment: foreign });
         yield* h.refresh();
-        const endpoint = "http://127.0.0.1:43126/mcp";
         const threadId = ThreadId.make("thread-antigravity-process-environment");
+        // The session every other ACP agent would be handed as its `t3-code` MCP server.
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("environment-antigravity-process-environment"),
           threadId,
           providerSessionId: "mcp-session-antigravity-process-environment",
           providerInstanceId: h.instance.instanceId,
-          endpoint,
+          endpoint: "http://127.0.0.1:43126/mcp",
           authorizationHeader: "Bearer antigravity-thread-token",
           browserToolsAvailable: false,
         });
-        // Running from source, the fallback entrypoint is this process's script.
-        const entrypoint = h.path.resolve(process.argv[1]!);
         yield* Effect.scoped(
           Effect.gen(function* () {
             const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-environment-" });
             const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-              runtimeMode: "approval-required",
+              runtimeMode: "full-access",
               interactionMode: "default",
               cwd: workspace,
             });
@@ -565,27 +585,24 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           }),
         );
 
-        // Gemini Enterprise can strip the native MCP servers, and the documented `acp-mcp-call`
-        // fallback reads these from the shell.
-        const agentLaunches = h.launches.filter(
-          (launch) => launch.command === h.first.executablePath,
-        );
-        expect(agentLaunches).toHaveLength(2);
-        expect(agentLaunches[1]?.environment).toMatchObject({
-          T3CODE_THREAD_ID: threadId,
-          T3_ACP_MCP_ENDPOINT: endpoint,
-          T3_ACP_MCP_AUTHORIZATION: "Bearer antigravity-thread-token",
-          T3_ACP_MCP_NODE: process.execPath,
-          T3_ACP_MCP_ENTRYPOINT: entrypoint,
-        });
-        // Model refresh and sign-in launches are not part of a thread.
-        expect(agentLaunches[0]?.environment).toMatchObject({
-          T3CODE_THREAD_ID: "thread-antigravity-ambient",
-          T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
-          T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",
-          T3_ACP_MCP_NODE: "/ambient/node",
-          T3_ACP_MCP_ENTRYPOINT: "/ambient/entrypoint.mjs",
-        });
+        expect(
+          h.launches.filter((launch) => launch.command === h.first.executablePath),
+        ).toHaveLength(2);
+        // Every process the driver starts: the sandbox check, the browser check and the agent.
+        for (const launch of h.launches) {
+          expect(launch.extendEnv).toBe(false);
+          expect(
+            Object.keys(launch.environment).filter(
+              (name) =>
+                name in foreign || name.startsWith("T3_ACP_MCP_") || name === "T3CODE_THREAD_ID",
+            ),
+          ).toEqual([]);
+        }
+        expect(
+          (yield* h.readRequests)
+            .filter((request) => request.method === "session/new")
+            .map((request) => request.params?.mcpServers),
+        ).toEqual([[], []]);
         yield* h.assertClosed;
       }),
   );
@@ -623,54 +640,46 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(!sandboxHost)(
-    "runs a thread's session in the sandbox, on that thread's own profile and the shared sign-in",
+    "runs each thread's session in the sandbox, on that thread's own profile and its own copy of the sign-in",
     () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness({ config: { sandbox: true } });
+        const h = yield* makeHarness({ bubblewrap: "real" });
         const token = h.path.join(h.profileDirectory, "antigravity-acp", "antigravity-oauth-token");
         yield* h.fs.makeDirectory(h.path.dirname(token), { recursive: true });
         yield* h.fs.writeFileString(token, "sign-in");
-        // The stand-in agent's script, Node and request log must be inside a workspace folder.
-        const repository = h.path.resolve(h.path.dirname(h.mockAgentPath), "..", "..", "..");
+        // The stand-in agent's script, its Node and its request log must be in workspace folders.
+        const roots = [
+          h.path.resolve(h.path.dirname(h.mockAgentPath), "..", "..", ".."),
+          h.path.dirname(h.nodePath),
+          h.root,
+        ];
         const launched = yield* Effect.scoped(
           Effect.gen(function* () {
-            const one = yield* openThreadSession(h, "sandbox-one", [repository, h.root]);
-            const two = yield* openThreadSession(h, "sandbox-two", [repository, h.root]);
+            const one = yield* openThreadSession(h, "sandbox-one", roots);
+            const two = yield* openThreadSession(h, "sandbox-two", roots);
             return [one, two];
           }),
         );
         const sessions = h.launches.filter(
-          (launch) => launch.command === "/usr/bin/bwrap" && launch.args.includes("acp"),
+          (launch) => launch.sandbox !== undefined && launch.command === h.first.executablePath,
         );
-        expect(sessions).toHaveLength(2);
-        const profiles = sessions.map((launch) => launch.profileDirectory ?? "");
-        expect(new Set(profiles).size).toBe(2);
+        const profiles = launched.map((thread) => h.threadProfile(thread.threadId));
+        expect(sessions.map((launch) => launch.profileDirectory)).toEqual(profiles);
         for (const [index, launch] of sessions.entries()) {
           const profile = profiles[index]!;
-          expect(profile.startsWith(h.path.join(h.profileDirectory, "threads") + h.path.sep)).toBe(
-            true,
-          );
-          expect(launch.args.slice(launch.args.indexOf("--") + 1)).toEqual([
-            h.first.executablePath,
-            "acp",
-            "--gemini-dir",
-            profile,
-            "--app-data-dir",
-            "antigravity-acp",
-          ]);
           expect(launch.cwd).toBe(launched[index]?.workspace);
-          const mounts = launch.args.slice(0, launch.args.indexOf("--")).join(" ");
-          // T3's state is under the temporary directory here, which is emptied whole.
-          expect(mounts).toContain("--tmpfs /tmp ");
+          expect(launch.environment.HOME).toBe(h.path.join(profile, "home"));
+          const mounts = launch.sandbox?.join(" ") ?? "";
           expect(mounts).toContain(`--bind ${profile} ${profile}`);
-          expect(mounts).toContain(`--bind ${token} ${token}`);
           expect(mounts).not.toContain(profiles[1 - index]);
+          // Neither the instance's profile nor its sign-in is mounted: the thread has a copy.
           expect(mounts).not.toContain(`${h.profileDirectory} `);
+          expect(mounts).not.toContain(token);
           expect(
-            yield* h.fs.readLink(
+            yield* h.fs.readFileString(
               h.path.join(profile, "antigravity-acp", "antigravity-oauth-token"),
             ),
-          ).toBe(token);
+          ).toBe("sign-in");
         }
         // Both stand-in agents answered from inside the sandbox.
         const methods = (yield* h.readRequests).map((request) => request.method);
@@ -680,21 +689,27 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
 
   for (const { name, options, message } of [
     {
-      name: "a platform without the sandbox",
-      options: { platform: "darwin" },
+      name: "with Sandbox on, on a platform without the sandbox",
+      options: { platform: "darwin", config: { sandbox: true } },
       message:
         "Antigravity's sandbox only exists on Linux. On this platform, turn off Sandbox in the Antigravity provider settings to run it without isolation.",
     },
     {
-      name: "Linux where bubblewrap is refused its user namespace",
-      options: { platform: "linux", bubblewrapExitCode: 1 },
+      name: "on Linux where bubblewrap is refused its user namespace",
+      options: { platform: "linux", bubblewrap: { exitCode: 1 } },
       message:
-        "Antigravity runs inside a bubblewrap sandbox, and bubblewrap (bwrap) is missing or not allowed to create user namespaces on this machine. Install bubblewrap, or turn off Sandbox in the Antigravity provider settings to run it without isolation.",
+        "Antigravity runs inside a bubblewrap sandbox, and bubblewrap (bwrap) is missing or not allowed to create user namespaces on this machine. Install bubblewrap: on Linux Antigravity does not run without it.",
+    },
+    {
+      name: "on Linux with Sandbox turned off",
+      options: { platform: "linux", config: { sandbox: false } },
+      message:
+        "On Linux Antigravity only runs inside its sandbox. Turn Sandbox back on in the Antigravity provider settings.",
     },
   ] as const) {
-    it.effect.skipIf(windowsHost)(`starts no agent with Sandbox on ${name}`, () =>
+    it.effect.skipIf(windowsHost)(`starts no agent ${name}`, () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness({ ...options, config: { sandbox: true } });
+        const h = yield* makeHarness(options);
         const session = yield* Effect.scoped(openThreadSession(h, "no-sandbox")).pipe(Effect.flip);
         expect(knownProviderFailureMessage(session)).toBe(message);
         // Model refresh stands for every helper: sign-in and titles launch through the same step.

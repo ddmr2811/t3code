@@ -51,6 +51,14 @@ import {
   buildAntigravityAcpSpawnInput,
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
+import {
+  ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+  BubblewrapCandidates,
+  antigravityProcessSandboxSpec,
+  antigravitySandboxArea,
+  findUsableBubblewrap,
+  sandboxAntigravitySpawn,
+} from "./antigravitySandbox.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
@@ -189,6 +197,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const bubblewrapCandidates = yield* BubblewrapCandidates;
   let releaseAsset = options.releaseAsset ?? null;
   const supported =
     options.releaseAsset === undefined
@@ -756,18 +766,52 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
+          isolated: platform === "linux",
           baseEnv: environment,
           // A shallow scoped profile cleans up unpacked files within Windows' path limit.
           tempDirectory: profileDirectory,
         });
+        const unsandboxed = buildAntigravityAcpSpawnInput({
+          installation: executable,
+          profile,
+          cwd: profileDirectory,
+          baseEnv: environment,
+        });
+        // A download is run for the first time here, so on Linux it runs where every session
+        // does: inside the sandbox, or not at all.
+        const bubblewrap =
+          platform === "linux"
+            ? yield* findUsableBubblewrap().pipe(
+                Effect.provideService(BubblewrapCandidates, bubblewrapCandidates),
+              )
+            : undefined;
+        if (platform === "linux" && bubblewrap === undefined) {
+          return yield* installationError("verify", ANTIGRAVITY_SANDBOX_UNAVAILABLE);
+        }
+        const spawn =
+          bubblewrap === undefined
+            ? unsandboxed
+            : yield* Effect.tryPromise({
+                try: () =>
+                  sandboxAntigravitySpawn({
+                    bubblewrapPath: bubblewrap,
+                    spawn: unsandboxed,
+                    spec: antigravityProcessSandboxSpec({
+                      area: antigravitySandboxArea({
+                        baseDir: options.baseDir,
+                        stateDir: options.baseDir,
+                        homeDirectory,
+                      }),
+                      profile: profileDirectory,
+                      runtimeTempDirectory: profileDirectory,
+                    }),
+                  }),
+                catch: (cause) =>
+                  installationError("verify", ANTIGRAVITY_SANDBOX_UNAVAILABLE, cause),
+              });
         const runtime = yield* makeAntigravityAcpRuntime({
           runtimeVersion: expectedVersion,
-          spawn: buildAntigravityAcpSpawnInput({
-            installation: executable,
-            profile,
-            cwd: profileDirectory,
-            baseEnv: environment,
-          }),
+          spawn,
           cwd: profileDirectory,
           childProcessSpawner:
             platform === "win32"

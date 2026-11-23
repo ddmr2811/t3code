@@ -47,18 +47,34 @@ back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay ou
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
 Antigravity's own tools read the disk without asking T3, and the shared ACP policy approves every
-read, so no T3-side check can keep a thread's agent out of T3's state. On Linux each `agy` process
-therefore runs in a bubblewrap mount namespace: T3's home, `/tmp` and the user's runtime directory
-are empty, and only the workspace folders, the thread's attachment folder and the process's own
-profile are mounted back. `/tmp` and the runtime directory are hidden for their sockets (tmux, the
-session bus), which would run commands outside the namespace. A thread's session gets a profile of
-its own under the instance's, because the agent names its conversation files itself and one shared
-profile would show every thread's; the sign-in files are links to the instance's. Anything T3 reads
-from a session's native files must use that session's profile. With Sandbox on, no `agy`
-process starts unless the namespace can be built: a missing or refused bubblewrap fails the launch,
-and so does any platform other than Linux, until the user turns Sandbox off. The
-namespace does not limit the network, the rest of the home directory, or files the agent writes for
-a later process to run. See [the sandbox](../../apps/server/src/provider/antigravitySandbox.ts).
+read, so no T3-side check can keep a thread's agent out of T3's state. On Linux every `agy` process
+therefore runs in a bubblewrap mount namespace that starts empty. It gets the operating system
+read-only, the working directory and the thread's extra workspace folders, its own profile and
+temporary folder, the thread's attachment folder read-only, and a HOME of its own inside the
+profile. The real home directory, `/run`, `/tmp` and T3's state are simply not mounted, so nothing
+has to be listed to stay hidden. A workspace folder is refused, and the launch with it, when it is
+inside T3's state or holds the home directory; a thread's own checkout under T3's worktrees is the
+one exception, and a workspace that holds T3's state (a dev server's) has that state emptied.
+The server answers `fs/read_text_file` from outside the namespace, so it applies the same view.
+
+A thread's sessions get a profile of their own, beside the instance's rather than inside it,
+because the agent names its conversation files itself and helper processes see the whole instance
+profile. T3 reads a session's native files in its thread's profile. The agent can write its
+profile, so T3 writes its own files there (`settings.json`, the sign-in) through the opened folder
+without following links. Each launch copies the instance's sign-in files into the thread's
+profile: we do not know how `agy` renews a token, and a copy lets it rewrite its own file in any
+way without touching the one other threads start from.
+
+The process inherits only a short list of variables from the server (PATH, locale, proxies), plus
+the ones set on the provider instance. It gets no T3 MCP server, endpoint or credential: those
+tools read other threads and delegate work to agents that run outside the namespace.
+
+No `agy` process starts unless the namespace can be built, the installer's first run of a
+download included. On Linux the Sandbox setting cannot turn this off; on other platforms, where no
+sandbox exists, turning it off is how the user accepts running without one. The namespace does not
+limit the network or files the agent writes in the workspace for a later process to run, and git
+commands fail in a worktree checkout, whose repository lives outside it. See
+[the sandbox](../../apps/server/src/provider/antigravitySandbox.ts).
 
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
 client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer

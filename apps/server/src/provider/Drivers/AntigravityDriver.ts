@@ -50,13 +50,16 @@ import {
 } from "../antigravityAuthSupport.ts";
 import {
   ANTIGRAVITY_SANDBOX_LINUX_ONLY,
+  ANTIGRAVITY_SANDBOX_REQUIRED,
   ANTIGRAVITY_SANDBOX_UNAVAILABLE,
+  AntigravityWorkspaceRefused,
   BubblewrapCandidates,
   antigravityProcessSandboxSpec,
-  antigravitySandboxMasks,
+  antigravitySandboxArea,
   antigravityThreadProfileDirectory,
+  copyAntigravityThreadCredentials,
   findUsableBubblewrap,
-  linkAntigravityThreadCredentials,
+  removeAntigravityThreadCredentials,
   sandboxAntigravitySpawn,
 } from "../antigravitySandbox.ts";
 import {
@@ -99,6 +102,7 @@ const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isProviderSetupError = Schema.is(ProviderSetupError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
+const isWorkspaceRefused = Schema.is(AntigravityWorkspaceRefused);
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
@@ -172,7 +176,11 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
-    const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
+    const instanceVariables = (environment ?? []).map((variable) => variable.name);
     const hostPlatform = yield* HostProcess.Platform;
     const hostHome = yield* HostProcess.HomeDirectory;
     const userHome = resolveAntigravityUserHome(hostPlatform, processEnvironment, hostHome);
@@ -226,16 +234,26 @@ export const AntigravityDriver: ProviderDriver<
         instanceId,
         operation: "start",
         // Only Linux has the mount namespace the sandbox is made of.
-        detail:
-          hostPlatform === "linux"
+        detail: isWorkspaceRefused(cause)
+          ? cause.detail
+          : hostPlatform === "linux"
             ? ANTIGRAVITY_SANDBOX_UNAVAILABLE
             : ANTIGRAVITY_SANDBOX_LINUX_ONLY,
         cause,
       });
     const bubblewrapCandidates = yield* BubblewrapCandidates;
     let bubblewrapPath: string | undefined;
-    // With Sandbox on, no `agy` process starts unless the sandbox can be built around it.
+    // No `agy` process starts unless the sandbox can be built around it. On Linux the setting
+    // cannot turn that off; elsewhere, where no sandbox exists, it is how the user accepts none.
     const requireBubblewrap = Effect.gen(function* () {
+      if (hostPlatform === "linux" && !settings.sandbox) {
+        return yield* new ProviderSetupError({
+          instanceId,
+          operation: "start",
+          detail: ANTIGRAVITY_SANDBOX_REQUIRED,
+        });
+      }
+      if (!settings.sandbox) return undefined;
       if (bubblewrapPath !== undefined) return bubblewrapPath;
       const found =
         hostPlatform === "linux"
@@ -248,17 +266,14 @@ export const AntigravityDriver: ProviderDriver<
       bubblewrapPath = found;
       return found;
     });
-    const sandboxMasks = antigravitySandboxMasks({
+    const sandboxArea = antigravitySandboxArea({
       baseDir: host.paths.baseDir,
       stateDir: host.paths.stateDir,
       homeDirectory: hostHome,
-      uid: process.getuid?.(),
-      runtimeDirectory: processEnvironment.XDG_RUNTIME_DIR,
     });
 
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
-      baseEnv: NodeJS.ProcessEnv,
       thread?: AntigravityAdapterV2RuntimeInput["thread"],
     ): Effect.fn.Return<
       {
@@ -275,7 +290,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
-      const bubblewrap = settings.sandbox ? yield* requireBubblewrap : undefined;
+      const bubblewrap = yield* requireBubblewrap;
       const executable = yield* installation.acquire(settings.binaryPath, processEnvironment).pipe(
         Effect.mapError(
           (cause) =>
@@ -298,6 +313,8 @@ export const AntigravityDriver: ProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        instanceVariables,
+        isolated: bubblewrap !== undefined,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -341,35 +358,31 @@ export const AntigravityDriver: ProviderDriver<
         installation: executable,
         profile,
         cwd,
-        baseEnv,
+        baseEnv: processEnvironment,
         auth,
         runtimeTempDirectory,
       });
       if (bubblewrap === undefined) return { executable, spawn };
       const sandboxedSpawn = yield* Effect.tryPromise({
-        try: async () =>
-          sandboxAntigravitySpawn({
+        try: async () => {
+          if (thread !== undefined) {
+            await copyAntigravityThreadCredentials({
+              instanceProfile: profileDirectory,
+              threadProfile: sessionProfile,
+            });
+          }
+          return sandboxAntigravitySpawn({
             bubblewrapPath: bubblewrap,
             spawn,
             spec: antigravityProcessSandboxSpec({
-              masks: sandboxMasks,
-              executablePath: executable.executablePath,
-              instanceProfile: profileDirectory,
+              area: sandboxArea,
               profile: sessionProfile,
               runtimeTempDirectory,
-              thread:
-                thread === undefined
-                  ? undefined
-                  : {
-                      extraRoots: thread.extraRoots,
-                      attachmentsFolder: thread.attachmentsFolder,
-                      sharedCredentials: await linkAntigravityThreadCredentials({
-                        instanceProfile: profileDirectory,
-                        threadProfile: sessionProfile,
-                      }),
-                    },
+              helperExecutable: profile.helperExecutable,
+              thread,
             }),
-          }),
+          });
+        },
         catch: sandboxFailed,
       });
       return { executable, spawn: sandboxedSpawn };
@@ -381,7 +394,10 @@ export const AntigravityDriver: ProviderDriver<
     // sign-in) take turns on one slot of their own, so they never add more than one process.
     const takeProcessSlot = (thread: AntigravityAdapterV2RuntimeInput["thread"]) =>
       thread === undefined
-        ? Effect.acquireRelease(helperProcesses.take(1), () => helperProcesses.release(1))
+        ? Effect.acquireRelease(helperProcesses.take(1), () => helperProcesses.release(1), {
+            // A helper waiting behind a sign-in that needs the user can still be cancelled.
+            interruptible: true,
+          })
         : Effect.acquireRelease(
             Effect.suspend(() => {
               const held = sessionThreads.get(thread.id) ?? 0;
@@ -412,17 +428,9 @@ export const AntigravityDriver: ProviderDriver<
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
-      // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
-      // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, thread, ...runtimeInput } = input;
+      const { thread, ...runtimeInput } = input;
       yield* takeProcessSlot(thread);
-      const { executable, spawn } = yield* prepareSpawn(
-        runtimeInput.cwd,
-        threadEnvironment === undefined
-          ? processEnvironment
-          : { ...processEnvironment, ...threadEnvironment },
-        thread,
-      );
+      const { executable, spawn } = yield* prepareSpawn(runtimeInput.cwd, thread);
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
         runtimeVersion: executable.version,
@@ -534,7 +542,7 @@ export const AntigravityDriver: ProviderDriver<
           ),
         );
       yield* takeProcessSlot(undefined);
-      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
+      const { spawn } = yield* prepareSpawn(cwd);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
       // Without a display it prints the link only, instead of opening a browser on this machine.
@@ -629,7 +637,9 @@ export const AntigravityDriver: ProviderDriver<
         Effect.suspend(() => provider.onSignedIn).pipe(
           Effect.andThen(publishCatalog(started, runtime)),
         ),
-      onSignedOut: Effect.suspend(() => provider.onSignedOut),
+      onSignedOut: Effect.suspend(() => provider.onSignedOut).pipe(
+        Effect.andThen(Effect.promise(() => removeAntigravityThreadCredentials(profileDirectory))),
+      ),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       codeLogin,
     });
@@ -718,7 +728,9 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-      ...(settings.sandbox ? { threadProfileDirectory: threadProfile } : {}),
+      ...(settings.sandbox
+        ? { sandbox: { threadProfileDirectory: threadProfile, area: sandboxArea } }
+        : {}),
       onSessionStarted: (started, cwd) =>
         provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {

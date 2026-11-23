@@ -49,6 +49,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 describe("Antigravity process environment", () => {
   const profile: AntigravityProfile = {
     platform: "linux",
+    helperExecutable: "/usr/bin/node",
+    instanceVariables: new Set(["CUSTOM_INSTANCE_VARIABLE"]),
     geminiHome: "/t3/userdata/providers/antigravity/profile",
     acpDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp",
     tokenPath: "/t3/userdata/providers/antigravity/profile/antigravity-acp/acp_token.json",
@@ -79,7 +81,7 @@ describe("Antigravity process environment", () => {
       ELECTRON_RUN_AS_NODE: "0",
       CHROME_CRASHPAD_PIPE_NAME: "\\\\.\\pipe\\crashpad_50144_ZUJNJELFHHXPBIRT",
       chrome_crashpad_pipe_name: "\\\\.\\pipe\\crashpad_stale_alias",
-      CUSTOM_SETTING: "keep-this",
+      CUSTOM_INSTANCE_VARIABLE: "keep-this",
     };
     const original = { ...baseEnv };
     const spawn = buildAntigravityAcpSpawnInput({
@@ -98,7 +100,7 @@ describe("Antigravity process environment", () => {
       env: {
         HOME: "/home/developer",
         PATH: "/usr/bin",
-        CUSTOM_SETTING: "keep-this",
+        CUSTOM_INSTANCE_VARIABLE: "keep-this",
         SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
@@ -161,6 +163,8 @@ describe("Antigravity process environment", () => {
   it("isolates TEMP and TMP to the profile directory on Windows", () => {
     const windowsProfile: AntigravityProfile = {
       platform: "win32",
+      helperExecutable: "C:\\node\\node.exe",
+      instanceVariables: new Set(),
       geminiHome: "C:\\state\\providers\\antigravity\\profile",
       acpDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp",
       tokenPath: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\acp_token.json",

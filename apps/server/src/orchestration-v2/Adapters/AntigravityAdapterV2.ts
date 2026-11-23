@@ -57,6 +57,11 @@ import {
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
+  antigravityViewShows,
+  antigravityWorkspaceView,
+  type AntigravitySandboxArea,
+} from "../../provider/antigravitySandbox.ts";
+import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
@@ -74,7 +79,7 @@ const AntigravityProviderCapabilitiesV2 = {
   },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
-    supportsMcpTools: true,
+    supportsMcpTools: false,
   },
   subagents: {
     ...AcpProviderCapabilitiesV2.subagents,
@@ -82,12 +87,10 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
-/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
 > & {
-  readonly processEnvironment?: NodeJS.ProcessEnv;
   /** Present for a thread's session; setup and helper processes serve no thread. */
   readonly thread?: {
     readonly id: ThreadId;
@@ -119,8 +122,12 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
-  /** The GEMINI_HOME of one thread's sessions, when each thread keeps its own. */
-  readonly threadProfileDirectory?: (threadId: ThreadId) => string;
+  /** Present when sessions run in the sandbox, which this adapter's own file reads then follow. */
+  readonly sandbox?: {
+    /** The GEMINI_HOME of one thread's sessions. */
+    readonly threadProfileDirectory: (threadId: ThreadId) => string;
+    readonly area: AntigravitySandboxArea;
+  };
 }
 
 /**
@@ -168,9 +175,9 @@ export function makeAntigravityAcpAdapterFlavor(
   // Roots are compared after resolving links, so the folder must still be the directory this
   // session opened: one swapped for a link elsewhere is no longer a root.
   const openedFolders = new Map<string, { readonly dev: number; readonly ino: number }>();
-  // The server reads a session's native files where that session's process wrote them.
-  const sessionProfiles = new Map<string, string>();
-  const profileOf = (sessionId: string) => sessionProfiles.get(sessionId);
+  // The server reads a session's native files in its thread's profile, where the process wrote
+  // them. The thread decides, never the session id: the agent chooses that.
+  const profileOf = (threadId: ThreadId) => options.sandbox?.threadProfileDirectory(threadId);
   const antigravityClientFileRoots = Effect.fn("AntigravityAdapterV2.clientFileRoots")(function* (
     cwd: string | null,
     threadId: string,
@@ -187,7 +194,21 @@ export function makeAntigravityAcpAdapterFlavor(
       current.ino === opened.ino
         ? threadAttachmentsDir({ attachmentsDir: options.host.paths.attachmentsDir, threadId })
         : null;
-    return [...(cwd === null ? [] : [cwd]), ...(folder === null ? [] : [folder])];
+    const own = folder === null ? [] : [folder];
+    if (options.sandbox === undefined) {
+      return { roots: [...(cwd === null ? [] : [cwd]), ...own], masks: [] };
+    }
+    // The same rule as the sandbox's mounts: a file the agent's process cannot see is not read
+    // for it here either. Its own attachment folder is the one thing inside T3's state.
+    const area = options.sandbox.area;
+    const view =
+      cwd === null
+        ? undefined
+        : yield* Effect.promise(() =>
+            // A folder the sandbox refuses as a workspace is not one to read from either.
+            antigravityWorkspaceView({ area, cwd, extraRoots: [] }).catch(() => undefined),
+          );
+    return { roots: [...(view?.roots ?? []), ...own], masks: view?.masks ?? [] };
   });
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
@@ -203,11 +224,6 @@ export function makeAntigravityAcpAdapterFlavor(
       });
       if (identity === null) openedFolders.delete(input.threadId);
       else openedFolders.set(input.threadId, identity);
-      const sessionProfile = options.threadProfileDirectory?.(input.threadId);
-      // Every session this process opens keeps its files in this process's profile.
-      const ownSession = (sessionId: string) => {
-        if (sessionProfile !== undefined) sessionProfiles.set(sessionId, sessionProfile);
-      };
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
@@ -269,20 +285,13 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime.start().pipe(
-            Effect.tap((started) => {
-              ownSession(started.sessionId);
-              return options.onSessionStarted?.(started, input.cwd) ?? Effect.void;
-            }),
-          ),
-        loadSession: (sessionId, loadOptions) => {
-          ownSession(sessionId);
-          return runtime.loadSession(sessionId, loadOptions);
-        },
-        resumeSession: (sessionId, resumeOptions) => {
-          ownSession(sessionId);
-          return runtime.resumeSession(sessionId, resumeOptions);
-        },
+          runtime
+            .start()
+            .pipe(
+              Effect.tap(
+                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
+              ),
+            ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -298,8 +307,8 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeHarness: "Antigravity",
     capabilities: AntigravityProviderCapabilitiesV2,
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
-    // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
-    mcpOverHttp: true,
+    // On purpose: T3's MCP reads other threads and delegates work to agents outside the sandbox.
+    withoutT3Mcp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
@@ -346,11 +355,12 @@ export function makeAntigravityAcpAdapterFlavor(
     clientFileSystem: {
       readTextFile: (request, cwd, threadId) =>
         antigravityClientFileRoots(cwd, threadId).pipe(
-          Effect.flatMap((allowedRoots) =>
+          Effect.flatMap(({ roots, masks }) =>
             readAntigravityClientTextFile({
               fileSystem: options.fileSystem,
               path: options.path,
-              allowedRoots,
+              allowedRoots: roots,
+              shows: (candidate) => antigravityViewShows({ roots, masks }, candidate),
               request,
             }),
           ),
@@ -389,17 +399,17 @@ export function makeAntigravityAcpAdapterFlavor(
     ...(profileDirectory === undefined
       ? {}
       : {
-          watchPromptOutcome: (sessionId: string) =>
-            watchAntigravityPromptOutcome(profileOf(sessionId) ?? profileDirectory, sessionId),
-          subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
+          watchPromptOutcome: (sessionId: string, threadId: ThreadId) =>
+            watchAntigravityPromptOutcome(profileOf(threadId) ?? profileDirectory, sessionId),
+          subagentsOutlivingPrompt: ({ threadId, sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
-              profileDirectory: profileOf(sessionId) ?? profileDirectory,
+              profileDirectory: profileOf(threadId) ?? profileDirectory,
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
             }),
-          hasPendingReply: (sessionId: string) =>
+          hasPendingReply: (sessionId: string, threadId: ThreadId) =>
             readAntigravityPendingReply({
-              profileDirectory: profileOf(sessionId) ?? profileDirectory,
+              profileDirectory: profileOf(threadId) ?? profileDirectory,
               sessionId,
             }),
         }),

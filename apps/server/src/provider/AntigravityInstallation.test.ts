@@ -25,6 +25,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { type AntigravityCliReleaseAsset } from "./antigravityCliRelease.ts";
+import { BubblewrapCandidates } from "./antigravitySandbox.ts";
 
 const serverContents = "antigravity runtime\n";
 const previousReleaseId = "1".repeat(64);
@@ -102,6 +103,8 @@ interface HarnessOptions {
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  /** The only `bwrap` the default validation may use. */
+  readonly bubblewrap?: string;
   readonly connectTimeout?: boolean;
   readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
   readonly native?: boolean;
@@ -183,6 +186,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
       : (effect) => effect,
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
+    options.bubblewrap === undefined
+      ? (effect) => effect
+      : Effect.provideService(BubblewrapCandidates, [options.bubblewrap]),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(ModelManifest.ModelManifest, {
@@ -639,16 +645,58 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
-  // The runtime's own abort is a real process; Windows has no POSIX sh.
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "never runs a downloaded runtime where its sandbox cannot be built",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Installed, but refused its user namespace, as under an AppArmor policy.
+        const refused = path.join(yield* fs.makeTempDirectoryScoped(), "bwrap");
+        yield* fs.writeFileString(refused, "#!/bin/sh\nexit 1\n");
+        yield* fs.chmod(refused, 0o755);
+        const programs: Array<string> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) programs.push(String(command.command));
+          return realSpawner.spawn(command);
+        });
+        const { installation } = yield* makeHarness({
+          useDefaultValidation: true,
+          spawner,
+          bubblewrap: refused,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state).toMatchObject({
+          phase: "failed",
+          message: expect.stringMatching(/bubblewrap/),
+        });
+        expect(programs).toContain(refused);
+        expect(programs.filter((program) => program.endsWith(executableName))).toEqual([]);
+      }),
+  );
+
+  // The runtime's own abort is a real process, started the way Linux starts it: by the sandbox.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "explains that the linux-arm64 runtime needs 4 KiB pages when it aborts on a 16 KiB kernel",
     () =>
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // A sandbox that runs the command unconfined: the abort is what this test is about.
+        const bubblewrap = path.join(yield* fs.makeTempDirectoryScoped(), "bwrap");
+        yield* fs.writeFileString(
+          bubblewrap,
+          '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n',
+        );
+        yield* fs.chmod(bubblewrap, 0o755);
         // Google's linux-arm64 build aborts like this on Asahi and Raspberry Pi 5 kernels.
         const spawner = ChildProcessSpawner.make((command) =>
           ChildProcess.isStandardCommand(command) &&
-          String(command.command).endsWith(executableName)
+          command.command === bubblewrap &&
+          command.args.some((argument) => String(argument).endsWith(executableName))
             ? realSpawner.spawn(
                 ChildProcess.make(
                   "sh",
@@ -665,6 +713,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           arch: "arm64",
           useDefaultValidation: true,
           spawner,
+          bubblewrap,
         });
         yield* installation.start;
         const state = yield* terminalState(installation);

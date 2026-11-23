@@ -63,6 +63,7 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
     readonly allowedRoots: ReadonlyArray<string>;
+    readonly shows?: ((candidate: string) => boolean) | undefined;
     readonly requestPath: string;
   }) {
     const { path } = input;
@@ -94,7 +95,9 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
-    const inside = (candidate: string) => roots.some((root) => isInsideRoot(path, root, candidate));
+    const inside = (candidate: string) =>
+      roots.some((root) => isInsideRoot(path, root, candidate)) &&
+      (input.shows === undefined || input.shows(candidate));
     if (!inside(real)) {
       return yield* outside;
     }
@@ -107,6 +110,8 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
     readonly allowedRoots: ReadonlyArray<string>;
+    /** A further limit on canonical paths inside the roots, such as folders hidden within them. */
+    readonly shows?: (candidate: string) => boolean;
     readonly request: EffectAcpSchema.ReadTextFileRequest;
   }): Effect.fn.Return<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError> {
     const resolved = yield* resolveClientFilePath({ ...input, requestPath: input.request.path });
