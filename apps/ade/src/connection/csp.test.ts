@@ -12,8 +12,19 @@ describe("parseConnectOrigins", () => {
     ["plain http to another machine", "http://10.0.0.2:3773"],
     ["plain http to a name that only starts like loopback", "http://localhost.evil.net"],
     ["an IPv6 literal, which Chromium drops from the policy", "http://[::1]:3773"],
+    ["plain http just below Tailscale's range", "http://100.63.255.255:3773"],
+    ["plain http just above Tailscale's range", "http://100.128.0.0:3773"],
+    ["plain http to a name that only starts like a tailnet's", "http://ts.net.evil.com:3773"],
   ])("rejects %s", (_name, raw) => {
     expect(() => parseConnectOrigins(raw)).toThrow();
+  });
+
+  it.each([
+    ["the first address of Tailscale's range", "http://100.64.0.0:3773"],
+    ["the last address of Tailscale's range", "http://100.127.255.255:3773"],
+    ["a tailnet name", "http://x.ts.net:3773"],
+  ])("allows plain http to %s", (_name, raw) => {
+    expect(parseConnectOrigins(raw)).toEqual([raw]);
   });
 
   it("splits on spaces and commas and allows nothing when unset", () => {
@@ -34,7 +45,14 @@ describe("connectSrc", () => {
 });
 
 describe("originAllowed", () => {
-  const origins = ["https://*.tail.ts.net", "http://localhost:3773", "https://box.lan:*"];
+  const origins = [
+    "https://*.tail.ts.net",
+    "http://localhost:3773",
+    "https://box.lan:*",
+    "http://100.100.1.2:3773",
+    // Never built in: `parseConnectOrigins` refuses it.
+    "http://10.0.0.2:3773",
+  ];
 
   it.each([
     ["a machine of the wildcard tailnet", "https://dev.tail.ts.net/pair#token=x", true],
@@ -46,6 +64,8 @@ describe("originAllowed", () => {
     ["an exact origin on another port", "http://localhost:3774", false],
     ["any port when the entry says so", "https://box.lan:9000", true],
     ["an unlisted host", "https://example.com", false],
+    ["plain http to a listed Tailscale address", "http://100.100.1.2:3773", true],
+    ["plain http outside loopback and Tailscale, even if listed", "http://10.0.0.2:3773", false],
     ["text that is not a URL", "dev.tail.ts.net", false],
   ])("%s", (_name, url, expected) => {
     expect(originAllowed(url, origins)).toBe(expected);

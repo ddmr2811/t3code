@@ -1,9 +1,18 @@
 // The servers the ADE may reach are fixed when it is built (ADE_CONNECT_ORIGINS), so script
 // running in the page cannot widen them. `*.` covers every machine of one tailnet.
 const ENTRY = /^(https?):\/\/((?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d+|\*))?$/i;
-// Plain HTTP carries the session in the clear: only this same computer may use it. No `[::1]`:
-// Chromium drops an IPv6 literal from a CSP source list, and `localhost` reaches it anyway.
+// Plain HTTP carries the session in the clear: only this same computer may use it, or a machine
+// reached through Tailscale, which encrypts the path itself. No `[::1]`: Chromium drops an IPv6
+// literal from a CSP source list, and `localhost` reaches it anyway.
 const LOOPBACK = new Set(["127.0.0.1", "localhost"]);
+// 100.64.0.0/10, the range Tailscale gives its machines.
+const TAILSCALE_IP = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])(\.(25[0-5]|2[0-4]\d|1?\d?\d)){2}$/;
+
+/** Whether plain HTTP may go to this host: a literal one, or a wildcard's suffix. */
+function plainHttpAllowed(host: string): boolean {
+  const name = host.toLowerCase();
+  return LOOPBACK.has(name) || TAILSCALE_IP.test(name) || name.endsWith(".ts.net");
+}
 
 export function parseConnectOrigins(raw: string | undefined): ReadonlyArray<string> {
   const entries = (raw ?? "").split(/[\s,]+/).filter((entry) => entry !== "");
@@ -12,8 +21,10 @@ export function parseConnectOrigins(raw: string | undefined): ReadonlyArray<stri
     if (scheme === undefined || host === undefined) {
       throw new Error(`ADE_CONNECT_ORIGINS: origen no válido «${entry}»`);
     }
-    if (scheme.toLowerCase() === "http" && !LOOPBACK.has(host.toLowerCase())) {
-      throw new Error(`ADE_CONNECT_ORIGINS: «${entry}» debe ser https:// (http solo en loopback)`);
+    if (scheme.toLowerCase() === "http" && !plainHttpAllowed(host)) {
+      throw new Error(
+        `ADE_CONNECT_ORIGINS: «${entry}» debe ser https:// (http solo en loopback, en IPs de Tailscale 100.64.0.0/10 y en nombres *.ts.net)`,
+      );
     }
   }
   return entries;
@@ -34,6 +45,7 @@ export function originAllowed(url: string, origins: ReadonlyArray<string>): bool
   } catch {
     return false;
   }
+  if (target.protocol === "http:" && !plainHttpAllowed(target.hostname)) return false;
   return origins.some((origin) => {
     const [, scheme, host, port] = ENTRY.exec(origin) ?? [];
     if (scheme === undefined || host === undefined) return false;

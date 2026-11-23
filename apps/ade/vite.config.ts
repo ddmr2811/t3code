@@ -6,7 +6,8 @@ import { defineConfig } from "vite-plus";
 
 import { connectSrc, parseConnectOrigins } from "./src/connection/csp.ts";
 
-// The T3 servers this build may talk to, e.g. "https://*.my-tailnet.ts.net". Unset allows none.
+// The T3 servers this build may talk to, e.g. "https://*.my-tailnet.ts.net" or, over Tailscale,
+// "http://100.101.102.103:3773". Unset allows none.
 const connectOrigins = parseConnectOrigins(process.env.ADE_CONNECT_ORIGINS);
 
 // img-src allows the dither's data: SVG masks. Inline styles carry the diff's theme and syntax
