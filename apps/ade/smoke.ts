@@ -1,5 +1,5 @@
 // Smoke test of the built ADE against a real T3 server; `vp run --filter @t3tools/ade smoke`.
-// Needs T3_URL (dev server started with T3CODE_DEV_ALLOWED_ORIGINS=<ADE_URL>), ADE_URL (a
+// Needs a server with at least one thread, T3_URL (dev server started with T3CODE_DEV_ALLOWED_ORIGINS=<ADE_URL>), ADE_URL (a
 // `preview` of a build made with ADE_CONNECT_ORIGINS=<T3_URL>) and T3_PAIRING_TOKEN (`t3 pair`).
 // ADE_SMOKE_SHOT=<file.png> also saves the connected sidebar.
 import * as NodeAssert from "node:assert/strict";
@@ -55,6 +55,16 @@ try {
   await page.getByText("Conectada", { exact: true }).first().waitFor();
   await page.getByText(/\d+ proyectos? · \d+ hilos?/).waitFor();
   if (process.env.ADE_SMOKE_SHOT) await page.screenshot({ path: process.env.ADE_SMOKE_SHOT });
+
+  // The server needs a thread: the sidebar lists it from the live shell, and choosing it keeps it.
+  const firstThread = page
+    .getByRole("navigation", { name: "Hilos" })
+    .locator(".ade-thread-title")
+    .first();
+  const title = await firstThread.innerText();
+  await firstThread.click();
+  NodeAssert.match(page.url(), /[?&]hilo=/, "the selected thread is in the address");
+  await page.getByRole("heading", { level: 1, name: title, exact: true }).waitFor();
 
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(

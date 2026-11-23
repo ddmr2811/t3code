@@ -301,3 +301,216 @@ body {
   color: var(--ade-text);
   font: 13px var(--ade-font-mono);
 }
+
+.ade-sidebar {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ade-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The one number that leads the screen; same shape as T3's fork sidebar. */
+.ade-needs-you {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-accent);
+  color: #0a0a0a;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ade-needs-you:hover {
+  background: color-mix(in srgb, var(--ade-accent) 90%, white);
+}
+
+.ade-needs-you:focus-visible {
+  outline: 2px solid var(--ade-text);
+  outline-offset: 2px;
+}
+
+.ade-needs-you[data-empty] {
+  padding: 8px;
+  background: none;
+  color: var(--ade-text-tertiary);
+  font-weight: 700;
+  cursor: default;
+}
+
+.ade-needs-you-count {
+  font-size: 56px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.ade-needs-you[data-empty] .ade-needs-you-count {
+  font-size: 20px;
+}
+
+.ade-needs-you-words {
+  display: grid;
+  gap: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.ade-needs-you-action {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 500 10.5px var(--ade-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ade-needs-you[aria-pressed="true"] .ade-needs-you-action {
+  background: var(--ade-text);
+  color: var(--ade-bg);
+}
+
+.ade-needs-you-dither {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: -1;
+  width: 48px;
+  opacity: 0.3;
+}
+
+.ade-tree {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ade-tree h2,
+.ade-tree h3 {
+  margin: 0;
+}
+
+.ade-tree-project-title {
+  padding: 4px 8px 2px;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-tree-threads {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-thread {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ade-thread:hover,
+.ade-thread:focus-visible {
+  background: var(--ade-surface);
+  outline: none;
+}
+
+.ade-thread[aria-current="true"] {
+  background: var(--ade-border);
+}
+
+.ade-thread-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A state reads by shape first; colour only backs it up. */
+.ade-thread-state {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--ade-text-tertiary);
+}
+
+.ade-thread-state[data-state="needs-you"] {
+  color: var(--ade-accent);
+}
+
+.ade-thread-state[data-state="working"] {
+  color: #e2b340;
+}
+
+.ade-thread-state[data-state="error"] {
+  color: #ff8589;
+}
+
+.ade-thread-view {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  max-width: 640px;
+  padding: 32px;
+}
+
+.ade-thread-view h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ade-thread-view-meta {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font: 13px var(--ade-font-mono);
+}
+
+.ade-button-quiet {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text-muted);
+  font: 13px var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-button-quiet:hover,
+.ade-button-quiet:focus-visible {
+  color: var(--ade-text);
+}

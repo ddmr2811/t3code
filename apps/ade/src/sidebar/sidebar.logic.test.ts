@@ -1,0 +1,147 @@
+import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import { groupThreads, listedThreads, threadState } from "./sidebar.logic.ts";
+
+const run = (status: "completed" | "failed" | "running") =>
+  ({
+    runId: RunId.make("run-1"),
+    status,
+    requestedAt: "2026-11-23T10:00:00.000Z",
+    startedAt: "2026-11-23T10:00:00.000Z",
+    completedAt: status === "running" ? null : "2026-11-23T10:05:00.000Z",
+    assistantMessageId: null,
+  }) as const;
+
+const runtime = (status: "running" | "idle" | "failed") =>
+  ({ status, activeRunId: status === "running" ? RunId.make("run-1") : null }) as const;
+
+type StateInput = Parameters<typeof threadState>[0];
+const stateInput = (overrides: Partial<StateInput> = {}): StateInput => ({
+  archivedAt: null,
+  deletedAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  pendingGuestMessageCount: 0,
+  interactionMode: "default",
+  hasActionableProposedPlan: false,
+  latestRun: run("completed"),
+  runtime: runtime("idle") as StateInput["runtime"],
+  pendingSubagentRequest: null,
+  lastVisitedAt: "2026-11-23T09:00:00.000Z",
+  ...overrides,
+});
+
+describe("threadState", () => {
+  it.each([
+    ["a pending approval", stateInput({ hasPendingApprovals: true }), "needs-you"],
+    // Its subagent's row is hidden, so the parent is where the request shows.
+    [
+      "a parent whose subagent asks",
+      stateInput({ pendingSubagentRequest: "approval" }),
+      "needs-you",
+    ],
+    [
+      "a running turn",
+      stateInput({
+        latestRun: run("running"),
+        runtime: runtime("running") as StateInput["runtime"],
+      }),
+      "working",
+    ],
+    [
+      "a failure not yet opened",
+      stateInput({ latestRun: run("failed"), runtime: runtime("failed") as StateInput["runtime"] }),
+      "error",
+    ],
+    [
+      "a failure the user already opened",
+      stateInput({
+        latestRun: run("failed"),
+        runtime: runtime("failed") as StateInput["runtime"],
+        lastVisitedAt: "2026-11-23T11:00:00.000Z",
+      }),
+      "done",
+    ],
+    ["a finished turn", stateInput(), "done"],
+  ])("%s → %s", (_name, input, expected) => {
+    expect(threadState(input)).toBe(expected);
+  });
+});
+
+const machineA = EnvironmentId.make("machine-a");
+const machineB = EnvironmentId.make("machine-b");
+const thread = (
+  id: string,
+  environmentId: EnvironmentId,
+  projectId: string,
+  lastWrittenAt: string,
+  overrides: Partial<Parameters<typeof listedThreads>[0][number]> = {},
+) => ({
+  id: ThreadId.make(id),
+  environmentId,
+  projectId: ProjectId.make(projectId),
+  lineage: { relationshipToParent: null, sideChat: false } as never,
+  archivedAt: null,
+  deletedAt: null,
+  createdAt: "2026-11-01T00:00:00.000Z",
+  updatedAt: "2026-11-01T00:00:00.000Z",
+  latestUserMessageAt: lastWrittenAt,
+  latestUserAuthoredMessageAt: lastWrittenAt,
+  ...overrides,
+});
+
+describe("listedThreads", () => {
+  it("leaves out archived, deleted, subagent and side-chat threads", () => {
+    const kept = thread("kept", machineA, "p", "2026-11-23T10:00:00.000Z");
+    const threads = [
+      kept,
+      thread("archived", machineA, "p", "2026-11-23T10:00:00.000Z", {
+        archivedAt: "2026-11-23T11:00:00.000Z",
+      }),
+      thread("deleted", machineA, "p", "2026-11-23T10:00:00.000Z", {
+        deletedAt: "2026-11-23T11:00:00.000Z",
+      }),
+      thread("subagent", machineA, "p", "2026-11-23T10:00:00.000Z", {
+        lineage: { relationshipToParent: "subagent", sideChat: false } as never,
+      }),
+      thread("side-chat", machineA, "p", "2026-11-23T10:00:00.000Z", {
+        lineage: { relationshipToParent: null, sideChat: true } as never,
+      }),
+    ];
+    expect(listedThreads(threads)).toEqual([kept]);
+  });
+});
+
+describe("groupThreads", () => {
+  it("groups by machine in the given order, then by project, most recent first", () => {
+    const groups = groupThreads(
+      [
+        thread("a-old", machineA, "web", "2026-11-20T10:00:00.000Z"),
+        thread("b-only", machineB, "api", "2026-11-23T12:00:00.000Z"),
+        thread("a-new", machineA, "docs", "2026-11-23T10:00:00.000Z"),
+        thread("a-mid", machineA, "web", "2026-11-22T10:00:00.000Z"),
+        thread("gone", EnvironmentId.make("removed"), "x", "2026-11-23T13:00:00.000Z"),
+      ],
+      [machineA, machineB],
+    );
+    expect(
+      groups.map((machine) => [
+        machine.environmentId,
+        machine.projects.map((project) => [
+          project.projectId,
+          project.threads.map((entry) => entry.id),
+        ]),
+      ]),
+    ).toEqual([
+      [
+        machineA,
+        [
+          ["docs", ["a-new"]],
+          ["web", ["a-mid", "a-old"]],
+        ],
+      ],
+      [machineB, [["api", ["b-only"]]]],
+    ]);
+  });
+});
