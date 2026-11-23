@@ -11,14 +11,15 @@ describe("parseConnectOrigins", () => {
     ["a path", "https://a.ts.net/x"],
     ["plain http to another machine", "http://10.0.0.2:3773"],
     ["plain http to a name that only starts like loopback", "http://localhost.evil.net"],
+    ["an IPv6 literal, which Chromium drops from the policy", "http://[::1]:3773"],
   ])("rejects %s", (_name, raw) => {
     expect(() => parseConnectOrigins(raw)).toThrow();
   });
 
   it("splits on spaces and commas and allows nothing when unset", () => {
     expect(
-      parseConnectOrigins("https://a.ts.net, http://127.0.0.1:3773 http://[::1]:3773"),
-    ).toEqual(["https://a.ts.net", "http://127.0.0.1:3773", "http://[::1]:3773"]);
+      parseConnectOrigins("https://a.ts.net, http://127.0.0.1:3773 http://localhost:3773"),
+    ).toEqual(["https://a.ts.net", "http://127.0.0.1:3773", "http://localhost:3773"]);
     expect(parseConnectOrigins(undefined)).toEqual([]);
   });
 });
