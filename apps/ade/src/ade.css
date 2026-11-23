@@ -1,0 +1,132 @@
+@import "../../web/src/fork/fonts/fonts.css";
+
+/* Dark v4 palette, from themes/t3-fork-v4.json. */
+:root {
+  color-scheme: dark;
+  --ade-bg: #0a0a0a;
+  --ade-surface: #161616;
+  --ade-divider: #1c1c1c;
+  --ade-border: #2b2b2b;
+  --ade-text: #f5f5f5;
+  --ade-text-muted: #a6a6ab;
+  --ade-text-tertiary: #6f6f75;
+  --ade-accent: #d97757;
+  --ade-radius-sm: 6px;
+  --ade-radius-md: 8px;
+  --ade-radius-lg: 12px;
+  --ade-font-sans: "Geist", system-ui, sans-serif;
+  --ade-font-mono: "Geist Mono", ui-monospace, monospace;
+  --dither-ink: var(--ade-accent);
+  --dither-cell: 3px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 14px/1.5 var(--ade-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.ade-shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: 100%;
+}
+
+.ade-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px;
+  border-right: 1px solid var(--ade-divider);
+}
+
+.ade-brand {
+  padding: 0 8px 16px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ade-label {
+  padding: 0 8px;
+  color: var(--ade-text-tertiary);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ade-sidebar-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  color: var(--ade-text-muted);
+}
+
+.ade-sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 8px;
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--ade-text-tertiary);
+}
+
+.ade-main {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.ade-dither {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 660px; /* 220 cells of 3px: the fade ends at zero */
+  height: 160px;
+  pointer-events: none;
+}
+
+.ade-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: 360px;
+  padding: 32px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  color: var(--ade-text-muted);
+  text-align: center;
+}
+
+.ade-empty h1 {
+  margin: 4px 0 0;
+  color: var(--ade-text);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ade-empty p {
+  margin: 0;
+}

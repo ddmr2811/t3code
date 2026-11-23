@@ -27,6 +27,8 @@ const EXTRA_OWNERS = [
   [/^native\/browser-secret\//, ["@t3tools/desktop"]],
   [/^native\/kde-snap-shot\//, ["@t3tools/desktop"]],
   [/^native\/libghostty-vt\//, ["@t3tools/web"]],
+  // apps/ade imports the fork's dither code and fonts from apps/web by path.
+  [/^apps\/web\/src\/fork\/(dither|fonts)\//, ["@t3tools/ade"]],
   // apps/server/src/cloud/ConnectReachability.test.ts checks the guide's headings.
   [/^docs\/user\/t3-connect-troubleshooting\.md$/, ["t3"]],
 ];
