@@ -1518,6 +1518,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
     const fetchArgs = (mode: "--dry-run" | "--quiet") => [
+      // Nobody asked for this fetch, and an agent can write the repository's hooks: none runs.
+      "-c",
+      "core.hooksPath=/dev/null",
       "--git-dir",
       gitCommonDir,
       "fetch",
@@ -6485,7 +6488,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
       // Storage cleanup runs this every sweep: like the status fetch, a killed fetch strands a
       // `tmp_pack_*` and a failing `gc --auto` repeats each time, so allow time and skip gc.
+      // It moves a ref by itself, so like the status fetch it runs none of the repository's hooks.
       const args = [
+        "-c",
+        "core.hooksPath=/dev/null",
         "fetch",
         "--quiet",
         "--no-tags",

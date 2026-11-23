@@ -5987,6 +5987,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each([
+      { fetch: "statusDetailsRemote" },
+      { fetch: "fetchRemoteTrackingBranch" },
+    ] as const)("runs none of the repository's hooks in background $fetch fetches", ({ fetch }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+        // A hook an agent could write in the checkout; moving any ref fires it.
+        const ran = path.join(yield* makeTmpDir("git-vcs-driver-hook-ran-"), "ran");
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/reference-transaction",
+          `#!/bin/sh\necho ran >> '${ran}'\n`,
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/reference-transaction"), 0o755);
+        const remoteRef = `refs/remotes/origin/${initialBranch}`;
+        const before = yield* git(cwd, ["rev-parse", remoteRef]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        if (fetch === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
+        else
+          yield* driver.fetchRemoteTrackingBranch({
+            cwd,
+            remoteName: "origin",
+            remoteBranch: initialBranch,
+          });
+
+        assert.notEqual(yield* git(cwd, ["rev-parse", remoteRef]), before);
+        assert.isFalse(yield* fs.exists(ran), "a background fetch ran the repository's hook");
+
+        // What a caller asks for through `execute` still runs it.
+        yield* driver.execute({
+          operation: "test.updateRef",
+          cwd,
+          args: ["update-ref", "refs/heads/asked", "HEAD"],
+        });
+        assert.isTrue(yield* fs.exists(ran));
+      }),
+    );
+
     it.effect("leaves FETCH_HEAD to the user's own pulls in background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
