@@ -5,6 +5,8 @@ import {
 import { memo } from "react";
 import Markdown, { type Components, defaultUrlTransform } from "react-markdown";
 
+import { MarkdownMedia } from "./Media.tsx";
+
 // A pure splitter shared with the web chat: completed blocks keep their text while a reply streams.
 import { splitMarkdownBlocks } from "../../../web/src/components/chat/markdownStreamBlocks.ts";
 
@@ -12,7 +14,7 @@ const OPENS_ELSEWHERE = /^(?:https?:|mailto:)/i;
 
 // The pipeline sanitizes; these only decide what a surviving link or image does here. Links
 // that are not web or mail (files, threads, relative paths) mean nothing in the ADE: text only.
-// Images show their alt text: the CSP serves no remote images, and local ones need T3's assets.
+// Images and videos named by path come from the machine; any other shows its alt text.
 const COMPONENTS: Components = {
   a: ({ href, children }) =>
     href !== undefined && OPENS_ELSEWHERE.test(href) ? (
@@ -22,7 +24,9 @@ const COMPONENTS: Components = {
     ) : (
       <span className="ade-md-link">{children}</span>
     ),
-  img: ({ alt }) => <span className="ade-md-image">[imagen{alt ? `: ${alt}` : ""}]</span>,
+  img: ({ src, alt }) => (
+    <MarkdownMedia src={typeof src === "string" ? src : undefined} alt={alt ?? ""} />
+  ),
 };
 
 const MarkdownBlock = memo(function MarkdownBlock(props: { text: string }) {

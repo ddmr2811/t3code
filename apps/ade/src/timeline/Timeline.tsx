@@ -5,6 +5,7 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { shouldShowLoadEarlierControl } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
+import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
@@ -20,11 +21,17 @@ import type {
 } from "@t3tools/contracts";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { AsyncResult } from "effect/reactivity";
-import { memo, type ReactNode, useContext, useState } from "react";
+import { memo, type ReactNode, use, useContext, useMemo, useState } from "react";
 
-import { environmentThreadDetails, orchestrationEnvironment, threadEnvironment } from "../state.ts";
+import {
+  environmentProjects,
+  environmentThreadDetails,
+  environmentThreadShells,
+  orchestrationEnvironment,
+  threadEnvironment,
+} from "../state.ts";
 import { AgentMarkdown } from "./AgentMarkdown.tsx";
-import { MediaStrip } from "./Media.tsx";
+import { MediaStrip, ThreadMedia } from "./Media.tsx";
 import { formatCount, groupTurns, rowKind } from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
@@ -75,12 +82,18 @@ function localOutput(item: OrchestrationV2TurnItem): string | null {
   return turnItemOutputText(item);
 }
 
-function outputImages(item: OrchestrationV2TurnItem) {
-  return turnItemOutputImages(item).map((resource) => ({
+function outputImages(item: OrchestrationV2TurnItem, workspaceRoot: string | null) {
+  const images = turnItemOutputImages(item).map((resource) => ({
     key: String(resource.index),
     resource,
     alt: `imagen ${resource.index + 1} de ${toolLabel(item)}`,
   }));
+  // Some providers (Codex) record only the path of an image the agent opened, not its bytes.
+  const viewed =
+    images.length === 0 && item.type === "dynamic_tool" && item.viewedImagePath !== undefined
+      ? resolveViewedImageAsset(item.viewedImagePath, { threadId: item.threadId, workspaceRoot })
+      : null;
+  return viewed === null ? images : [{ key: "viewed", resource: viewed.resource, alt: viewed.alt }];
 }
 
 // A file read as an image has only the file's metadata as text: the image says it all.
@@ -111,7 +124,7 @@ function OutputText(props: { text: string | null }) {
 }
 
 function ToolOutput(props: RowTarget & { item: OrchestrationV2TurnItem }) {
-  const images = outputImages(props.item);
+  const images = outputImages(props.item, use(ThreadMedia)?.workspaceRoot ?? null);
   return (
     <>
       <MediaStrip environmentId={props.environmentId} images={images} />
@@ -146,7 +159,7 @@ function FetchedOutput(props: RowTarget & { item: OrchestrationV2TurnItem }) {
 
 function ToolRow(props: RowTarget & { item: OrchestrationV2TurnItem }) {
   const status = STATUS_TEXT[props.item.status];
-  const images = outputImages(props.item);
+  const images = outputImages(props.item, use(ThreadMedia)?.workspaceRoot ?? null);
   // An image the agent opened shows in the timeline, as in T3; there is nothing else to open.
   if (showsOnlyImages(props.item, images)) {
     return (
@@ -380,6 +393,17 @@ export function ThreadTimeline(props: {
   );
   const status = useAtomValue(environmentThreadDetails.statusAtom(props.threadRef));
   const error = useAtomValue(environmentThreadDetails.errorAtom(props.threadRef));
+  const thread = useAtomValue(environmentThreadShells.quietThreadShellAtom(props.threadRef));
+  const projectRoot = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(environmentId),
+    (index) => (thread === null ? null : (index.get(thread.projectId)?.workspaceRoot ?? null)),
+  );
+  // Relative paths in replies are the thread's worktree's, or its project's without one.
+  const workspaceRoot = thread?.worktreePath ?? projectRoot;
+  const media = useMemo(
+    () => ({ environmentId, threadId, workspaceRoot }),
+    [environmentId, threadId, workspaceRoot],
+  );
   const turns = groupTurns(rows);
   if (turns.length === 0) {
     return (
@@ -394,27 +418,29 @@ export function ThreadTimeline(props: {
   return (
     // column-reverse keeps the view pinned to the newest turn as rows grow, with no scroll code.
     <div className="ade-timeline-scroll">
-      <ol className="ade-timeline" aria-label="Conversación">
-        <EarlierHistory environmentId={environmentId} threadId={threadId} />
-        {turns.map((turn) => {
-          const checkpoint = turn.runId === null ? undefined : checkpointByRun.get(turn.runId);
-          return (
-            <li key={turn.key} className="ade-turn">
-              {turn.rows.map((row) => (
-                <TimelineRow
-                  key={row.item.id}
-                  environmentId={environmentId}
-                  threadId={threadId}
-                  row={row}
-                />
-              ))}
-              {checkpoint === undefined ? null : (
-                <TurnChanges checkpoint={checkpoint} onOpen={props.onOpenChanges} />
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <ThreadMedia value={media}>
+        <ol className="ade-timeline" aria-label="Conversación">
+          <EarlierHistory environmentId={environmentId} threadId={threadId} />
+          {turns.map((turn) => {
+            const checkpoint = turn.runId === null ? undefined : checkpointByRun.get(turn.runId);
+            return (
+              <li key={turn.key} className="ade-turn">
+                {turn.rows.map((row) => (
+                  <TimelineRow
+                    key={row.item.id}
+                    environmentId={environmentId}
+                    threadId={threadId}
+                    row={row}
+                  />
+                ))}
+                {checkpoint === undefined ? null : (
+                  <TurnChanges checkpoint={checkpoint} onOpen={props.onOpenChanges} />
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </ThreadMedia>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  AuthFilesystemReadScope,
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
@@ -90,6 +91,16 @@ export const gatewayAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     const session = AsyncResult.getOrElse(result, () => null);
     return session !== null && sessionGrantsScope(session, AuthForkGatewayScope);
   }).pipe(Atom.withLabel(`ade-gateway-access:${environmentId}`)),
+);
+
+/** Whether this ADE's session may read a machine's files; null while the session is loading. */
+export const filesAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    if (result._tag === "Failure") return false;
+    const session = AsyncResult.getOrElse(result, () => null);
+    return session === null ? null : sessionGrantsScope(session, AuthFilesystemReadScope);
+  }).pipe(Atom.withLabel(`ade-files-access:${environmentId}`)),
 );
 
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();
