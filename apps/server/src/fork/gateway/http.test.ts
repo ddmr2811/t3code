@@ -10,6 +10,7 @@ import {
   type AuthSessionId,
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../../policy/ManagedPolicy.ts";
+import { makeDpopKey } from "../../auth/dpop.testkit.ts";
 import * as ForkGateway from "./ForkGateway.ts";
 import * as ForkGatewayHttp from "./http.ts";
 
@@ -182,6 +184,31 @@ it.live("forwards no T3 credential and returns no sidecar cookie", () =>
     for (const name of ["authorization", "cookie", "dpop", "x-forwarded-for"]) {
       expect(headers[name]).toBeUndefined();
     }
+  }).pipe(Effect.scoped),
+);
+
+it.live("reaches the sidecar with a DPoP-bound session, whose proof is used once", () =>
+  Effect.gen(function* () {
+    const { auth, fetch, requests } = yield* gateway;
+    const key = makeDpopKey();
+    const pairing = yield* auth.issuePairingCredential({ scopes: [AuthForkGatewayScope] });
+    const { access_token: token } = yield* auth.exchangeBootstrapCredentialForAccessToken(
+      pairing.credential,
+      undefined,
+      { deviceType: "desktop" },
+      { proofKeyThumbprint: key.thumbprint },
+    );
+    const iat = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+    const url = "http://127.0.0.1/api/fork/ext/panel/view";
+    const response = yield* fetch("/api/fork/ext/panel/view", {
+      headers: {
+        host: "127.0.0.1",
+        authorization: `DPoP ${token}`,
+        dpop: key.sign({ method: "GET", url, token, iat }),
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(requests.map(({ url }) => url)).toEqual(["/view"]);
   }).pipe(Effect.scoped),
 );
 

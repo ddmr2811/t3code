@@ -194,8 +194,14 @@ const proxy = Effect.gen(function* () {
     HttpClientRequest.setHeaders(pick(request.headers, FORWARDED_REQUEST_HEADERS)),
     body === undefined ? (self) => self : HttpClientRequest.bodyUint8Array(body, contentType),
   );
-  // Revocation may have landed while the manifest or body was read; check once more before sending.
-  yield* authenticate(request, url.value, id);
+  // Revocation may have landed while the manifest or body was read. The session is read again,
+  // not the credential: a DPoP proof is single-use.
+  const active = yield* (yield* SessionStore.SessionStore)
+    .listActive()
+    .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+  if (!active.some((row) => row.sessionId === session.sessionId)) {
+    return yield* failEnvironmentAuthInvalid("invalid_credential");
+  }
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const response = yield* Effect.raceFirst(
     client.execute(upstream).pipe(
