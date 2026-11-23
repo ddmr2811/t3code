@@ -301,6 +301,28 @@ describe("provider installation routing", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("starts or joins no installation for an instance whose Sandbox is off on Linux", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        settings: {
+          providerInstances: {
+            [ProviderInstanceId.make("antigravity")]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { sandbox: false },
+            },
+          },
+        },
+      });
+      const start = yield* Effect.flip(harness.router.start({ instanceId }));
+      assert.include(start.detail, "only runs inside its sandbox");
+      assert.deepEqual(harness.calls, []);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("protects another instance's binary found through its own PATH", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

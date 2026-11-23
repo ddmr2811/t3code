@@ -8,6 +8,7 @@ import {
   ProviderSetupError,
   type ProviderSetupInput,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import { ANTIGRAVITY_SANDBOX_REQUIRED } from "./antigravitySandbox.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -58,6 +60,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scope = yield* Effect.scope;
+  const hostPlatform = yield* HostProcess.Platform;
   // A start during a running install joins it, so one operation is checked once whichever instance asked.
   let accountCheckOperation: string | undefined;
 
@@ -122,7 +125,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
           "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
       });
     }
-    return { installation, driver: instance.driverKind };
+    return { installation, driver: instance.driverKind, config };
   });
 
   const failure =
@@ -154,7 +157,20 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
   });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
-    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
+    const { installation, driver, config } = yield* requireInstance(
+      input.instanceId,
+      "install",
+      true,
+    );
+    // Installing runs the download. An instance that cannot run `agy` does not start that, nor
+    // join an installation another instance started.
+    if (hostPlatform === "linux" && "sandbox" in config && !config.sandbox) {
+      return yield* new ProviderSetupError({
+        instanceId: input.instanceId,
+        operation: "install",
+        detail: ANTIGRAVITY_SANDBOX_REQUIRED,
+      });
+    }
     const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
     if (
       driver === ANTIGRAVITY &&

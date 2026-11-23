@@ -35,6 +35,8 @@ export interface AntigravitySandboxSpec {
   readonly grants: ReadonlyArray<{ readonly path: string; readonly writable: boolean }>;
   /** The process's HOME, inside a writable grant. */
   readonly home: string;
+  /** A writable grant only this process uses, removed when it ends. */
+  readonly temp: string;
 }
 
 /** Canonical paths. Where they nest, the deepest one decides what a path below it shows. */
@@ -79,10 +81,19 @@ const SYSTEM_DIRECTORIES = [
   "/lib64",
   "/libx32",
   "/etc",
-  "/opt",
-  "/nix",
   "/sys",
 ];
+// Other programs install here, so these are mounted only when `agy` itself lives in one.
+const EXECUTABLE_DIRECTORIES = ["/opt", "/nix"];
+// What the sandbox mounts for itself. A workspace folder mounted over, under or in place of one
+// would put the host's back: its /tmp sockets, its /proc, a writable piece of the system.
+const RESERVED_DIRECTORIES = [...SYSTEM_DIRECTORIES, "/dev", "/proc", "/tmp"];
+
+/** Where T3 makes a setup or helper process's working folder: one under /tmp is refused. */
+export const antigravityHelperFolder = (platform: NodeJS.Platform, prefix: string) => ({
+  prefix,
+  ...(platform === "linux" ? { directory: "/var/tmp" } : {}),
+});
 
 function isWithin(path: string, parent: string): boolean {
   const relative = NodePath.relative(parent, path);
@@ -122,6 +133,8 @@ export async function antigravityWorkspaceView(input: {
   readonly area: AntigravitySandboxArea;
   readonly cwd: string;
   readonly extraRoots: ReadonlyArray<string>;
+  /** Further folders this launch mounts for itself. */
+  readonly reserved?: ReadonlyArray<string>;
 }): Promise<Pick<AntigravitySandboxView, "roots" | "masks">> {
   const cwd = await canonical(input.cwd);
   if (cwd === undefined) {
@@ -133,7 +146,16 @@ export async function antigravityWorkspaceView(input: {
   const home = (await canonical(input.area.homeDirectory)) ?? input.area.homeDirectory;
   const worktrees = await canonical(input.area.worktreesDirectory);
   const roots = [...new Set([cwd, ...(await canonicalAll(input.extraRoots))])];
+  const named = [...RESERVED_DIRECTORIES, ...(input.reserved ?? [])];
+  // `/bin` is often a link into `/usr`; a root is compared with both names.
+  const reserved = [...named, ...(await canonicalAll(named))];
   for (const root of roots) {
+    const taken = reserved.find((mount) => isWithin(root, mount) || isWithin(mount, root));
+    if (taken !== undefined) {
+      throw new AntigravityWorkspaceRefused({
+        detail: `Antigravity cannot work in ${root}: its sandbox keeps ${taken} for itself. Use a project folder elsewhere.`,
+      });
+    }
     if (isWithin(home, root)) {
       throw new AntigravityWorkspaceRefused({
         detail: `Antigravity cannot work in ${root}: it holds your home directory, and with it every other program's files. Use a project folder.`,
@@ -168,7 +190,11 @@ export function antigravityViewShows(
 }
 
 /** Arguments for `bwrap`, up to and including `--`. Every path must already be canonical. */
-function antigravitySandboxArgs(view: AntigravitySandboxView, cwd: string): ReadonlyArray<string> {
+function antigravitySandboxArgs(
+  view: AntigravitySandboxView,
+  cwd: string,
+  executableDirectories: ReadonlyArray<string> = [],
+): ReadonlyArray<string> {
   const listed = [
     ...view.roots.map((path) => ({ path, args: ["--bind", path, path] })),
     ...view.masks.map((path) => ({ path, args: ["--tmpfs", path] })),
@@ -187,7 +213,11 @@ function antigravitySandboxArgs(view: AntigravitySandboxView, cwd: string): Read
     "--new-session",
     // A fresh /proc lists only the sandbox, so `/proc/<pid>/root` of an outside process is absent.
     "--unshare-pid",
-    ...SYSTEM_DIRECTORIES.flatMap((directory) => ["--ro-bind-try", directory, directory]),
+    ...[...SYSTEM_DIRECTORIES, ...executableDirectories].flatMap((directory) => [
+      "--ro-bind-try",
+      directory,
+      directory,
+    ]),
     "--dev",
     "/dev",
     "--proc",
@@ -227,6 +257,7 @@ export function antigravityProcessSandboxSpec(input: {
       ...(thread?.attachmentsFolder ? [{ path: thread.attachmentsFolder, writable: false }] : []),
     ],
     home: NodePath.join(input.profile, "home"),
+    temp: input.runtimeTempDirectory,
   };
 }
 
@@ -284,12 +315,15 @@ export function antigravityThreadProfileDirectory(
 const conversationsOf = (profile: string) =>
   antigravityManagedPath(profile, ["antigravity-acp", "conversations"], "directory");
 
-/** The profile holding a session's native files: the thread's own when it ran there. */
+/**
+ * The thread's profile, when it holds this session's native files. No other profile is tried: the
+ * instance's own holds the helper sessions, which belong to no thread.
+ */
 export async function antigravitySessionProfileDirectory(input: {
   readonly instanceProfile: string;
   readonly threadId: string;
   readonly sessionId: string;
-}): Promise<string> {
+}): Promise<string | undefined> {
   const threadProfile = antigravityThreadProfileDirectory(input.instanceProfile, input.threadId);
   // The agent names the session and writes the folder, so neither may lead out of the profile.
   const database = await antigravityManagedPath(
@@ -297,7 +331,7 @@ export async function antigravitySessionProfileDirectory(input: {
     ["antigravity-acp", "conversations", `${input.sessionId}.db`],
     "file",
   );
-  return database === undefined ? input.instanceProfile : threadProfile;
+  return database === undefined ? undefined : threadProfile;
 }
 
 async function antigravityThreadProfiles(instanceProfile: string): Promise<ReadonlyArray<string>> {
@@ -324,12 +358,21 @@ export async function withAntigravityDataDirectory<A>(
   profile: string,
   use: (directory: string) => Promise<A>,
 ): Promise<A> {
-  const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = NodeFS.constants;
   const path = NodePath.join(profile, "antigravity-acp");
   await NodeFSP.mkdir(path, { recursive: true, mode: 0o700 });
+  return withAntigravityFolder(path, use, 0o700);
+}
+
+/** Runs `use` on a folder opened without following a link at its name. Linux only. */
+export async function withAntigravityFolder<A>(
+  path: string,
+  use: (directory: string) => Promise<A>,
+  mode?: number,
+): Promise<A> {
+  const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = NodeFS.constants;
   const handle = await NodeFSP.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
   try {
-    await handle.chmod(0o700);
+    if (mode !== undefined) await handle.chmod(mode);
     return await use(`/proc/self/fd/${handle.fd}`);
   } finally {
     await handle.close();
@@ -357,7 +400,8 @@ export async function replaceAntigravityDataFile(
   }
 }
 
-async function readAntigravityDataFile(
+/** A regular file's bytes, read without following a link at its name; `undefined` otherwise. */
+export async function readAntigravityDataFile(
   directory: string,
   name: string,
 ): Promise<Uint8Array | undefined> {
@@ -393,14 +437,21 @@ export async function copyAntigravityThreadCredentials(input: {
   );
 }
 
-/** After a sign-out no thread profile keeps the old account's copy. */
+/**
+ * After a sign-out no thread profile keeps the old account's copy. Every profile is tried, and a
+ * copy that could not be removed fails the sign-out instead of staying behind unseen.
+ */
 export async function removeAntigravityThreadCredentials(instanceProfile: string): Promise<void> {
+  const failures: Array<unknown> = [];
   for (const profile of await antigravityThreadProfiles(instanceProfile)) {
     await withAntigravityDataDirectory(profile, async (directory) => {
       for (const name of SHARED_CREDENTIAL_FILES) {
         await replaceAntigravityDataFile(directory, name, undefined);
       }
-    }).catch(() => undefined);
+    }).catch((cause: unknown) => failures.push(cause));
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Antigravity sign-in copies could not be removed.");
   }
 }
 
@@ -411,18 +462,33 @@ export async function sandboxAntigravitySpawn(input: {
   readonly spec: AntigravitySandboxSpec;
 }): Promise<AcpSessionRuntime.AcpSpawnInput> {
   const { spawn, spec } = input;
+  // The file, not its folder: a folder could hold more than the executable.
+  const executable = await NodeFSP.realpath(spawn.command);
+  const executableDirectories = EXECUTABLE_DIRECTORIES.filter((directory) =>
+    isWithin(executable, directory),
+  );
   const view = await antigravityWorkspaceView({
     area: spec.area,
     cwd: spawn.cwd ?? "",
     extraRoots: spec.extraRoots,
+    reserved: executableDirectories,
   });
   const cwd = view.roots[0]!;
   // mkdir never follows a link at the name it creates.
   await NodeFSP.mkdir(spec.home, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "EEXIST") throw error;
   });
-  // The file, not its folder: a folder could hold more than the executable.
-  const executable = await NodeFSP.realpath(spawn.command);
+  // The agent writes the folder that holds its HOME, so what is there may not be what T3 made.
+  const home = await NodeFSP.lstat(spec.home);
+  const inHome = view.roots.find((root) => isWithin(root, spec.home));
+  if (!home.isDirectory() || home.uid !== process.getuid?.() || inHome !== undefined) {
+    throw new AntigravityWorkspaceRefused({
+      detail:
+        inHome === undefined
+          ? `Antigravity cannot start: ${spec.home} is not the private home folder T3 Code made for it. Remove it and try again.`
+          : `Antigravity cannot work in ${inHome}: its sandbox keeps ${spec.home} for itself. Use a project folder elsewhere.`,
+    });
+  }
   // Often a link into /run, which is not mounted.
   const resolver = await canonical("/etc/resolv.conf");
   const grants = await Promise.all(
@@ -433,10 +499,31 @@ export async function sandboxAntigravitySpawn(input: {
       // bwrap refuses a path that is missing, which stops the launch.
     ].map(async (grant) => ({ ...grant, path: (await canonical(grant.path)) ?? grant.path })),
   );
+  // bwrap runs outside the sandbox and gets no variables at all. The agent's are read inside,
+  // from a file and not from bwrap's arguments, which every user of the machine can list.
+  const temp = (await canonical(spec.temp)) ?? spec.temp;
+  const environmentFile = `environment-${NodeCrypto.randomUUID()}`;
+  await replaceAntigravityDataFile(
+    temp,
+    environmentFile,
+    Object.entries({ ...spawn.env, HOME: spec.home })
+      .filter(([name, value]) => value !== undefined && /^[A-Za-z_]\w*$/.test(name))
+      .map(([name, value]) => `export ${name}='${value!.replaceAll("'", `'"'"'`)}'\n`)
+      .join(""),
+  );
   return {
     ...spawn,
     command: input.bubblewrapPath,
-    args: [...antigravitySandboxArgs({ ...view, grants }, cwd), executable, ...spawn.args],
-    env: { ...spawn.env, HOME: spec.home },
+    args: [
+      ...antigravitySandboxArgs({ ...view, grants }, cwd, executableDirectories),
+      "/bin/sh",
+      "-c",
+      '. "$0" && rm -f "$0" && exec "$@"',
+      NodePath.join(temp, environmentFile),
+      executable,
+      ...spawn.args,
+    ],
+    env: {},
+    extendEnv: false,
   };
 }

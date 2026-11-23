@@ -54,6 +54,7 @@ import {
   ANTIGRAVITY_SANDBOX_UNAVAILABLE,
   AntigravityWorkspaceRefused,
   BubblewrapCandidates,
+  antigravityHelperFolder,
   antigravityProcessSandboxSpec,
   antigravitySandboxArea,
   antigravityThreadProfileDirectory,
@@ -483,7 +484,7 @@ export const AntigravityDriver: ProviderDriver<
       input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
     ) {
       const cwd = yield* fileSystem
-        .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
+        .makeTempDirectoryScoped(antigravityHelperFolder(hostPlatform, "t3-antigravity-setup-"))
         .pipe(
           Effect.mapError(
             () =>
@@ -530,7 +531,7 @@ export const AntigravityDriver: ProviderDriver<
     }) {
       if (auth.authMethod !== "oauth-personal") return undefined;
       const cwd = yield* fileSystem
-        .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
+        .makeTempDirectoryScoped(antigravityHelperFolder(hostPlatform, "t3-antigravity-login-"))
         .pipe(
           Effect.mapError(
             () =>
@@ -638,7 +639,19 @@ export const AntigravityDriver: ProviderDriver<
           Effect.andThen(publishCatalog(started, runtime)),
         ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut).pipe(
-        Effect.andThen(Effect.promise(() => removeAntigravityThreadCredentials(profileDirectory))),
+        Effect.andThen(
+          Effect.tryPromise({
+            try: () => removeAntigravityThreadCredentials(profileDirectory),
+            catch: (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "logout",
+                detail:
+                  "Antigravity signed out, but a thread's copy of the sign-in could not be removed.",
+                cause,
+              }),
+          }),
+        ),
       ),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       codeLogin,

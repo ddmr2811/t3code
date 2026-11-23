@@ -2,11 +2,13 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import { antigravityThreadProfileDirectory } from "../provider/antigravitySandbox.ts";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   describeAntigravitySubagentLaunches,
@@ -113,15 +115,25 @@ it.layer(
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const { profile } = yield* resolveAntigravityInstanceDirectories(stateDir, instanceId);
+      const steps = (logUri: string) => [
+        [
+          2,
+          127,
+          invokeStep({ callId: "x", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
+        ] as const,
+      ];
+      const sandboxed = HostProcess.Platform.defaultValue() === "linux";
+      if (sandboxed) {
+        // The instance's own profile holds helper sessions, which no thread may be shown: the
+        // same session there, with the thread's profile missing, is a failed read.
+        yield* makeProfile({ profile, steps });
+        expect((yield* readChildren("run-other").pipe(Effect.flip))._tag).toBe(
+          "OrchestrationV2GetNativeChildWorkError",
+        );
+      }
       yield* makeProfile({
-        profile,
-        steps: (logUri) => [
-          [
-            2,
-            127,
-            invokeStep({ callId: "x", launches: [LAUNCH], children: [{ id: CHILD, logUri }] }),
-          ],
-        ],
+        profile: sandboxed ? antigravityThreadProfileDirectory(profile, "thread-parent") : profile,
+        steps,
       });
       const fromOtherSession = yield* readChildren("run-other");
       expect(fromOtherSession.map((child) => child.conversationId)).toEqual([CHILD]);

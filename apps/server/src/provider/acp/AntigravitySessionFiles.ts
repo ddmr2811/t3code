@@ -1,13 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite reads the native session database read-only.
+// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite reads the native session database read-only, and only open flags refuse a link.
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { protoFields } from "./AntigravityChildWork.ts";
+import { readAntigravityDataFile } from "../antigravitySandbox.ts";
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
@@ -54,21 +58,10 @@ function decodeTrajectoryOwnership(blob: Uint8Array):
   }
 }
 
-async function readDatabaseWorkspacePaths(
-  profileDirectory: string,
+function readDatabaseWorkspacePaths(
+  databasePath: string,
   sessionId: string,
-): Promise<ReadonlyArray<string> | undefined> {
-  const profileRoot = await antigravityProfileRoot(profileDirectory);
-  if (profileRoot === undefined) return undefined;
-  const databasePath = (
-    await antigravityManagedPath(
-      profileRoot,
-      ["antigravity-acp", "conversations", `${sessionId}.db`],
-      "file",
-    )
-  )?.path;
-  if (databasePath === undefined) return undefined;
-
+): ReadonlyArray<string> | undefined {
   let database: NodeSqlite.DatabaseSync | undefined;
   try {
     database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
@@ -127,21 +120,57 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
     }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const acpDirectory = path.join(input.profileDirectory, "antigravity-acp");
-    const base = path.join(acpDirectory, "conversations", sessionId);
+    // Only Linux runs the agent sandboxed with this profile writable. There each folder is opened
+    // without following a link at its name and used through that descriptor, files go one by one,
+    // and `brain` stays: removing a tree by name could be aimed at another folder.
+    const sandboxed = (yield* HostProcess.Platform) === "linux";
+    const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = NodeFS.constants;
+    const folder = (parent: string | undefined, name: string) =>
+      parent === undefined || !sandboxed
+        ? Effect.succeed(parent && path.join(parent, name))
+        : Effect.acquireRelease(
+            Effect.promise(() =>
+              NodeFSP.open(path.join(parent, name), O_RDONLY | O_DIRECTORY | O_NOFOLLOW).catch(
+                () => undefined,
+              ),
+            ),
+            (handle) => Effect.promise(async () => handle?.close()),
+          ).pipe(Effect.map((handle) => handle && `/proc/self/fd/${handle.fd}`));
+    const acpDirectory = yield* folder(input.profileDirectory, "antigravity-acp");
+    const conversations = yield* folder(acpDirectory, "conversations");
+    if (conversations === undefined) return;
+    const base = path.join(conversations, sessionId);
 
-    if (yield* fs.exists(`${base}.meta`)) {
-      const metadata = yield* fs
-        .readFileString(`${base}.meta`)
-        .pipe(Effect.flatMap(decodeSessionMetadata));
+    const meta = yield* Effect.promise(() =>
+      readAntigravityDataFile(conversations, `${sessionId}.meta`),
+    );
+    if (meta !== undefined) {
+      const metadata = yield* decodeSessionMetadata(new TextDecoder().decode(meta));
       if (metadata.cwd !== input.cwd) {
         return;
       }
     } else {
       // Antigravity CLI 1.5+ writes no `.meta` sidecar; workspace URIs live in the session DB.
-      const workspacePaths = yield* Effect.promise(() =>
-        readDatabaseWorkspacePaths(input.profileDirectory, sessionId),
-      );
+      const databasePath = yield* Effect.promise(async () => {
+        if (sandboxed) {
+          const info = await NodeFSP.lstat(`${base}.db`).catch(() => undefined);
+          return info?.isFile() === true ? `${base}.db` : undefined;
+        }
+        const root = await antigravityProfileRoot(input.profileDirectory);
+        return root === undefined
+          ? undefined
+          : (
+              await antigravityManagedPath(
+                root,
+                ["antigravity-acp", "conversations", `${sessionId}.db`],
+                "file",
+              )
+            )?.path;
+      });
+      const workspacePaths =
+        databasePath === undefined
+          ? undefined
+          : readDatabaseWorkspacePaths(databasePath, sessionId);
       if (workspacePaths === undefined || workspacePaths.length === 0) {
         return;
       }
@@ -156,18 +185,22 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
     for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"]) {
       yield* fs.remove(`${base}${suffix}`, { force: true });
     }
-    // The agent wrote this profile: a link standing in for a folder must not aim the removal.
-    const brain = yield* Effect.promise(async () => {
-      const root = await antigravityProfileRoot(input.profileDirectory);
-      return root === undefined
-        ? undefined
-        : antigravityManagedPath(root, ["antigravity-acp", "brain", sessionId], "directory");
-    });
-    if (brain !== undefined) yield* fs.remove(brain.path, { recursive: true, force: true });
-    yield* fs.remove(path.join(acpDirectory, "annotations", `${sessionId}.pbtxt`), {
-      force: true,
-    });
+    if (!sandboxed) {
+      const root = yield* Effect.promise(() => antigravityProfileRoot(input.profileDirectory));
+      const brain =
+        root === undefined
+          ? undefined
+          : yield* Effect.promise(() =>
+              antigravityManagedPath(root, ["antigravity-acp", "brain", sessionId], "directory"),
+            );
+      if (brain !== undefined) yield* fs.remove(brain.path, { recursive: true, force: true });
+    }
+    const annotations = yield* folder(acpDirectory, "annotations");
+    if (annotations !== undefined) {
+      yield* fs.remove(path.join(annotations, `${sessionId}.pbtxt`), { force: true });
+    }
   },
+  Effect.scoped,
   Effect.catch(() => Effect.logWarning("Could not remove temporary Antigravity session files.")),
 );
 

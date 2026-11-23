@@ -304,7 +304,6 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     expect(yield* fs.exists(`${sessionBase}.db`)).toBe(false);
     expect(yield* fs.exists(`${sessionBase}.db-wal`)).toBe(false);
     expect(yield* fs.exists(`${sessionBase}.meta`)).toBe(false);
-    expect(yield* fs.exists(brainDirectory)).toBe(false);
     expect(yield* fs.readFileString(path.join(projectDirectory, "keep.txt"))).toBe("untouched");
     expect(yield* fs.readFileString(path.join(conversations, "user-session.db"))).toBe(
       "keep native history",

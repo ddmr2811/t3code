@@ -501,7 +501,8 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(
       ChildProcess.make(helperExecutable, ["-e", browserHelperSource, "--", browserPreflightUrl], {
-        env: environment,
+        // This Node runs outside the sandbox, where the agent's variables do not belong.
+        env: input.isolated ? { ELECTRON_RUN_AS_NODE: "1" } : environment,
         extendEnv: false,
         shell: false,
       }),

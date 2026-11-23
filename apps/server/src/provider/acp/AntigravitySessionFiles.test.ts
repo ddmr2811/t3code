@@ -4,6 +4,7 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +16,8 @@ import {
   retireAntigravityRuntimeTempDirs,
 } from "./AntigravitySessionFiles.ts";
 
+// Only there does a sandboxed agent write the profile, and only there is its `brain` kept.
+const sandboxed = HostProcess.Platform.defaultValue() === "linux";
 const SESSION_ID = "047c62f6-607b-44db-bfbe-f83b67e9e8b1";
 const OTHER_SESSION_ID = "9b2b7a98-28db-4422-9f46-70e106319548";
 
@@ -116,7 +119,7 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
         expect(yield* fs.exists(`${fixture.base}.db`)).toBe(false);
         expect(yield* fs.exists(`${fixture.base}.db-wal`)).toBe(false);
         expect(yield* fs.exists(`${fixture.base}.db-shm`)).toBe(false);
-        expect(yield* fs.exists(fixture.brain)).toBe(false);
+        expect(yield* fs.exists(fixture.brain)).toBe(sandboxed);
         expect(yield* fs.exists(fixture.annotationFile)).toBe(false);
         expect(yield* fs.exists(path.dirname(fixture.base))).toBe(true);
       }),
@@ -171,9 +174,41 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
       });
 
       expect(yield* fs.exists(`${fixture.base}.db`)).toBe(false);
-      expect(yield* fs.exists(fixture.brain)).toBe(false);
       expect(yield* fs.exists(fixture.annotationFile)).toBe(false);
     }),
+  );
+
+  it.effect.skipIf(!sandboxed)(
+    "removes nothing through a link the agent left where its conversations or annotations go",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" }),
+        );
+        // Another profile's session of the same name, which this helper's folder never held.
+        const other = yield* makeNativeSessionFixture({ workspacePaths: [cwd] });
+        yield* fs.writeFileString(`${other.base}.meta`, JSON.stringify({ cwd }));
+        const fixture = yield* makeNativeSessionFixture({ workspacePaths: [cwd] });
+        const remove = removeAntigravitySessionFiles({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd,
+        });
+
+        yield* fs.remove(path.dirname(fixture.annotationFile), { recursive: true });
+        yield* fs.symlink(path.dirname(other.annotationFile), path.dirname(fixture.annotationFile));
+        yield* remove;
+        expect(yield* fs.exists(`${fixture.base}.db`)).toBe(false);
+        expect(yield* fs.exists(other.annotationFile)).toBe(true);
+
+        yield* fs.remove(path.dirname(fixture.base), { recursive: true });
+        yield* fs.symlink(path.dirname(other.base), path.dirname(fixture.base));
+        yield* remove;
+        expect(yield* fs.exists(`${other.base}.db`)).toBe(true);
+        expect(yield* fs.exists(`${other.base}.meta`)).toBe(true);
+      }),
   );
 
   it.effect("keeps a 1.5+ session DB whose metadata belongs to a different workspace", () =>

@@ -4,11 +4,13 @@ import {
   type OrchestrationV2GetNativeChildWorkInput,
   type OrchestrationV2GetNativeChildWorkResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import { readAntigravityChildWork } from "../provider/acp/AntigravityChildWork.ts";
@@ -30,6 +32,15 @@ export class NativeChildWorkQuery extends Context.Service<
 >()("t3/orchestration-v2/NativeChildWorkQuery") {}
 
 const NO_CHILDREN: OrchestrationV2GetNativeChildWorkResult = { children: [] };
+
+class NativeChildWorkProfileMissing extends Schema.TaggedError<NativeChildWorkProfileMissing>()(
+  "NativeChildWorkProfileMissing",
+  { sessionId: Schema.String },
+) {
+  override get message(): string {
+    return `The thread's Antigravity profile does not hold session ${this.sessionId}.`;
+  }
+}
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -98,13 +109,22 @@ const make = Effect.gen(function* () {
         stateDir,
         subagent.providerInstanceId,
       ).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
-      const profileDirectory = yield* Effect.promise(() =>
-        antigravitySessionProfileDirectory({
-          instanceProfile: directories.profile,
-          threadId: parentThreadId,
-          sessionId: rootSessionId,
-        }),
-      );
+      // On Linux a thread's sessions run in its own profile and nowhere else. The instance's
+      // holds helper sessions, so a thread profile that is missing or not a plain folder is a
+      // failed read, never a reason to look there.
+      const profileDirectory =
+        (yield* HostProcess.Platform) === "linux"
+          ? yield* Effect.promise(() =>
+              antigravitySessionProfileDirectory({
+                instanceProfile: directories.profile,
+                threadId: parentThreadId,
+                sessionId: rootSessionId,
+              }),
+            )
+          : directories.profile;
+      if (profileDirectory === undefined) {
+        return yield* new NativeChildWorkProfileMissing({ sessionId: rootSessionId });
+      }
       const children = yield* readAntigravityChildWork({
         profileDirectory,
         rootSessionId,

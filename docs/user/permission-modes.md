@@ -73,9 +73,9 @@ approvals for actions that support them.
 
 On Linux, Antigravity runs in a sandbox in every mode: its agent sees the thread's workspace
 folders and attachments, and nothing else of your home directory, T3 Code's data or other threads.
-It has no T3 Code tools, and it cannot work in a thread whose folder is your home directory. This
-needs `bubblewrap`; without it Antigravity does not start, and **Sandbox** in the provider's
-settings cannot turn it off. On macOS and Windows, where the sandbox does not exist, Antigravity
+It has no T3 Code tools, and it cannot work in a thread whose folder is your home directory, a
+system folder, or anything under `/tmp`. This needs `bubblewrap`; without it Antigravity does not
+start, and **Sandbox** in the provider's settings cannot turn it off. On macOS and Windows, where the sandbox does not exist, Antigravity
 does not start until you turn **Sandbox** off, which runs it without isolation.
 Outside **Full access**, Antigravity asks before reading files outside the thread's folders.
 At most two Antigravity threads run at once per provider instance; a third fails until one

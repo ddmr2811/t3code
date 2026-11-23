@@ -16,6 +16,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import { readAntigravityDataFile, withAntigravityFolder } from "./antigravitySandbox.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 /** T3 Code names itself; it never presents itself as Google's own client. */
@@ -337,6 +338,20 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     "antigravity-oauth-token",
   );
   const readKeyringSecret = input.readKeyringSecret ?? readCliKeyringSecret(platform, architecture);
+  // On Linux sandboxed helper processes write this folder, so a token is read as a bounded
+  // regular file, never through a link one of them left at its name.
+  const readToken = (tokenFile: string) =>
+    platform === "linux"
+      ? Effect.promise(() =>
+          withAntigravityFolder(path.dirname(tokenFile), (directory) =>
+            readAntigravityDataFile(directory, path.basename(tokenFile)),
+          ).catch(() => undefined),
+        ).pipe(Effect.map((bytes) => bytes && new TextDecoder().decode(bytes)))
+      : fs
+          .exists(tokenFile)
+          .pipe(
+            Effect.flatMap((exists) => (exists ? fs.readFileString(tokenFile) : Effect.undefined)),
+          );
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
@@ -359,14 +374,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let accessToken: string;
     let account: string;
     let projectId: string | undefined;
-    if (!(yield* fs.exists(tokenPath))) {
+    const tokenFile = yield* readToken(tokenPath);
+    if (tokenFile === undefined) {
       cached = undefined;
       // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
-        ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
+      const stored =
+        (yield* readToken(cliTokenPath)) ??
+        (input.authMethod === "oauth-business" ? yield* readKeyringSecret : undefined);
       if (stored === undefined) {
         return makeUnavailableUsageLimits({
           checkedAt,
@@ -393,7 +407,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         Effect.catch(() => sha256(`antigravity-cli\0${token.refresh_token || accessToken}`)),
       );
     } else {
-      const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
+      const token = yield* decodeTokenFile(tokenFile);
       projectId = token.project_id;
       const fingerprint = yield* sha256(
         `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,

@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -32,12 +33,17 @@ import {
   antigravityThreadProfileDirectory,
   copyAntigravityThreadCredentials,
   findUsableBubblewrap,
+  removeAntigravityThreadCredentials,
   sandboxAntigravitySpawn,
   type AntigravitySandboxArea,
 } from "./antigravitySandbox.ts";
 
 const linuxHost = HostProcess.Platform.defaultValue() === "linux";
 const sandboxHost = linuxHost && NodeFS.existsSync("/usr/bin/bwrap");
+// Any file another program keeps under /opt on this machine, if one does.
+const otherProgramFile = linuxHost
+  ? NodeFS.globSync("/opt/*/*").find((path) => NodeFS.statSync(path).isFile())
+  : undefined;
 
 // A stand-in for `agy`: launched exactly as the driver launches it, it uses its own tools on each
 // path it is given, the way the real agent reads and writes the disk without asking T3.
@@ -193,6 +199,8 @@ const launch = Effect.fn("AntigravitySandboxTest.launch")(function* (
       }),
     }),
   );
+  // bwrap runs outside the sandbox and gets no variable; the agent reads its own inside.
+  expect(spawn.env).toEqual({});
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, [...spawn.args], {
       cwd,
@@ -367,6 +375,21 @@ describe("Antigravity sandbox with real bubblewrap", () => {
         expect(variables.get("HOME")).toBe(NodePath.join(home.own, "home"));
         expect(variables.get("LANG")).toBe("C.UTF-8");
         expect(variables.get("GEMINI_HOME")).toBe(home.own);
+        // The file the variables were read from does not outlive the launch.
+        expect(NodeFS.readdirSync(home.runtimeTemp)).toEqual(["keep"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(!sandboxHost || otherProgramFile === undefined)(
+    "shows nothing other programs installed under /opt",
+    () =>
+      Effect.gen(function* () {
+        using home = makeHome();
+        const output = yield* launch(home, {
+          thread: true,
+          environment: { FAKE_AGY_READS: `/etc/hostname ${otherProgramFile}` },
+        });
+        expect(output).toEqual(["read /etc/hostname", `denied ${otherProgramFile}`]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -418,6 +441,20 @@ describe("Antigravity sandbox rules", () => {
       await refuses(home.userHome);
       await refuses(home.root);
       await refuses(NodePath.join(home.cwd, "missing"));
+      // What the sandbox mounts for itself: a workspace there would put the host's back.
+      const temporary = NodePath.dirname(home.forbidden.temporarySocket);
+      for (const reserved of ["/", "/tmp", temporary, "/proc", "/dev", "/sys", "/etc", "/usr"]) {
+        await refuses(reserved);
+        await refuses(home.cwd, [reserved]);
+      }
+      await refuses(home.cwd, ["/usr/share"]);
+      // `agy` has a private HOME only where T3 made that folder; the agent can write its parent.
+      const privateHome = NodePath.join(home.own, "home");
+      NodeFS.symlinkSync(home.userHome, privateHome);
+      await refuses(home.cwd);
+      NodeFS.rmSync(privateHome);
+      NodeFS.writeFileSync(privateHome, "");
+      await refuses(home.cwd);
     },
   );
 
@@ -437,7 +474,7 @@ describe("Antigravity sandbox rules", () => {
           path: yield* Path.Path,
           host: { paths: { attachmentsDir: NodePath.join(home.stateDir, "attachments") } } as never,
           selfInvocation: undefined as never,
-          makeRuntime: () => Effect.die("not spawned in this test"),
+          makeRuntime: () => Effect.succeed({} as never),
           withProcess: (_stop, task) => task,
           defaultModel: Effect.undefined,
           sandbox: {
@@ -458,6 +495,18 @@ describe("Antigravity sandbox rules", () => {
             );
         expect(yield* read(home.cwd, home.allowed.workspace)).toBe("source.ts");
         expect(yield* read(home.cwd, devSecret)).toBe("refused");
+        // A further workspace folder is read once the thread's process was launched with it.
+        expect(yield* read(home.cwd, home.allowed.extraRoot)).toBe("refused");
+        yield* flavor
+          .makeRuntime({
+            threadId: ThreadId.make("thread-own"),
+            cwd: home.cwd,
+            extraRoots: [home.extraRoot],
+            runtimePolicy: {},
+          } as never)
+          .pipe(Effect.provideService(SecureRandom.SecureRandom, undefined as never));
+        expect(yield* read(home.cwd, home.allowed.extraRoot)).toBe("extra.ts");
+        expect(yield* read(home.cwd, home.forbidden.userConfig)).toBe("refused");
         // A session whose working directory is the home directory is never launched; its reads
         // are not served either, least of all T3's own secrets below it.
         expect(yield* read(home.userHome, home.forbidden.secret)).toBe("refused");
@@ -528,6 +577,30 @@ describe("Antigravity sandbox rules", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.skipIf(!linuxHost)(
+    "a sign-out fails while one thread's copy of the sign-in is out of reach, and removes the rest",
+    async () => {
+      using home = makeHome();
+      const other = antigravityThreadProfileDirectory(home.instanceProfile, "thread-other");
+      const copyOf = (profile: string) =>
+        NodePath.join(profile, "antigravity-acp", "antigravity-oauth-token");
+      for (const threadProfile of [home.own, other]) {
+        await copyAntigravityThreadCredentials({
+          instanceProfile: home.instanceProfile,
+          threadProfile,
+        });
+      }
+      // One thread's agent moved its data folder and left a link: its copy cannot be removed.
+      const moved = NodePath.join(home.own, "moved");
+      NodeFS.renameSync(NodePath.dirname(copyOf(home.own)), moved);
+      NodeFS.symlinkSync(moved, NodePath.dirname(copyOf(home.own)));
+
+      await expect(removeAntigravityThreadCredentials(home.instanceProfile)).rejects.toThrow();
+      expect(NodeFS.existsSync(copyOf(other))).toBe(false);
+      expect(NodeFS.existsSync(NodePath.join(moved, "antigravity-oauth-token"))).toBe(true);
+    },
+  );
+
   it("reads a thread's conversations from its own profile, and no folder a link stands in for", async () => {
     using home = makeHome();
     const conversations = (profile: string) =>
@@ -542,9 +615,9 @@ describe("Antigravity sandbox rules", () => {
     expect((await antigravityConversationDirectories(home.instanceProfile)).toSorted()).toEqual(
       [home.instanceProfile, home.own, other].map(conversations).toSorted(),
     );
-    // A session that ran before the thread had its own profile is still read where it ran.
     expect(await profileOf("own")).toBe(home.own);
-    expect(await profileOf("helper")).toBe(home.instanceProfile);
+    // The instance's own profile holds helper sessions: it is never read for a thread.
+    expect(await profileOf("helper")).toBeUndefined();
 
     // The agent points its conversations at another thread's.
     NodeFS.rmSync(conversations(home.own), { recursive: true });
@@ -552,6 +625,6 @@ describe("Antigravity sandbox rules", () => {
     expect((await antigravityConversationDirectories(home.instanceProfile)).toSorted()).toEqual(
       [home.instanceProfile, other].map(conversations).toSorted(),
     );
-    expect(await profileOf("other")).toBe(home.instanceProfile);
+    expect(await profileOf("other")).toBeUndefined();
   });
 });

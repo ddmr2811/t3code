@@ -31,7 +31,11 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
-import { BubblewrapCandidates, antigravityThreadProfileDirectory } from "../antigravitySandbox.ts";
+import {
+  BubblewrapCandidates,
+  antigravityHelperFolder,
+  antigravityThreadProfileDirectory,
+} from "../antigravitySandbox.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -87,7 +91,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const nodePath = yield* HostProcess.ExecutablePath;
   const baseEnv = yield* HostProcess.Environment;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
+  const root = yield* fs.makeTempDirectoryScoped(
+    antigravityHelperFolder(hostPlatform, "t3-antigravity-driver-"),
+  );
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -170,6 +176,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     args: ReadonlyArray<string>;
     /** The sandbox's own arguments, for a launch that went through it. */
     sandbox: ReadonlyArray<string> | undefined;
+    /** Names of the variables the started process itself got: `bwrap`'s, for a sandboxed launch. */
+    ownEnvironment: ReadonlyArray<string>;
     cwd: string | undefined;
     extendEnv: boolean | undefined;
     environment: Record<string, string | undefined>;
@@ -224,19 +232,33 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected process pipeline.");
+      const all = command.args.map(String);
+      const split = command.command === bubblewrap ? all.indexOf("--") : -1;
+      // In the sandbox a shell reads the agent's variables from a file it then removes:
+      // `/bin/sh -c <script> <file> <program> ...`. The sandbox check runs `/bin/sh -c :`.
+      const inner = split === -1 ? [command.command, ...all] : all.slice(split + 1);
+      const wrapped = split !== -1 && inner.length > 4;
+      const [program = command.command, ...args] = wrapped ? inner.slice(4) : inner;
+      const own = command.options.env ?? {};
+      const environment: typeof own = wrapped
+        ? Object.fromEntries(
+            [
+              ...NodeFS.readFileSync(inner[3]!, "utf8").matchAll(
+                /^export (\w+)='((?:[^']|'"'"')*)'$/gmu,
+              ),
+            ].map((line) => [line[1]!, line[2]!.replaceAll(`'"'"'`, "'")]),
+          )
+        : own;
       const handle = yield* spawner.spawn(command);
-      const environment = command.options.env ?? {};
       const env = (name: string) => {
         const value = environment[name];
         return Redacted.isRedacted(value) ? Redacted.value(value) : value;
       };
-      const all = command.args.map(String);
-      const split = command.command === bubblewrap ? all.indexOf("--") : -1;
-      const program = split === -1 ? command.command : all[split + 1]!;
       launches.push({
         command: program,
-        args: split === -1 ? all : all.slice(split + 2),
+        args,
         sandbox: split === -1 ? undefined : all.slice(0, split),
+        ownEnvironment: Object.keys(own),
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
@@ -339,7 +361,9 @@ const openThreadSession = Effect.fn("AntigravityDriverTest.openThreadSession")(f
   extraRoots: ReadonlyArray<string> = [],
 ) {
   const threadId = ThreadId.make(`thread-antigravity-${name}`);
-  const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: `t3-ag-${name}-` });
+  const workspace = yield* h.fs.makeTempDirectoryScoped(
+    antigravityHelperFolder(hostPlatform, `t3-ag-${name}-`),
+  );
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -459,7 +483,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
           })
           .pipe(Effect.ignore);
-        const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-chat-" });
+        const workspace = yield* h.fs.makeTempDirectoryScoped(
+          antigravityHelperFolder(hostPlatform, "t3-ag-chat-"),
+        );
         const threadId = ThreadId.make("thread-antigravity-capabilities");
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "approval-required",
@@ -566,7 +592,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         });
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-environment-" });
+            const workspace = yield* h.fs.makeTempDirectoryScoped(
+              antigravityHelperFolder(hostPlatform, "t3-ag-environment-"),
+            );
             const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "full-access",
               interactionMode: "default",
@@ -596,6 +624,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               (name) =>
                 name in foreign || name.startsWith("T3_ACP_MCP_") || name === "T3CODE_THREAD_ID",
             ),
+          ).toEqual([]);
+        }
+        if (hostPlatform === "linux") {
+          // What runs outside the sandbox gets none of the instance's variables: `bwrap` nothing
+          // at all, the browser check only what makes its Node a Node. The agent reads its own
+          // inside, or it would not have found the request log the next lines read.
+          expect(
+            h.launches
+              .map((launch) => launch.ownEnvironment)
+              .filter((names) => names.some((name) => name !== "ELECTRON_RUN_AS_NODE")),
           ).toEqual([]);
         }
         expect(
@@ -650,7 +688,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         // The stand-in agent's script, its Node and its request log must be in workspace folders.
         const roots = [
           h.path.resolve(h.path.dirname(h.mockAgentPath), "..", "..", ".."),
-          h.path.dirname(h.nodePath),
+          // Already there, read-only, when it is the system's own.
+          ...(h.nodePath.startsWith("/usr/") ? [] : [h.path.dirname(h.nodePath)]),
           h.root,
         ];
         const launched = yield* Effect.scoped(
@@ -736,7 +775,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
         const error = yield* Effect.scoped(
           Effect.gen(function* () {
-            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-old-runtime-" });
+            const workspace = yield* h.fs.makeTempDirectoryScoped(
+              antigravityHelperFolder(hostPlatform, "t3-ag-old-runtime-"),
+            );
             const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "approval-required",
               interactionMode: "default",

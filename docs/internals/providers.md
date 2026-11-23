@@ -54,7 +54,10 @@ temporary folder, the thread's attachment folder read-only, and a HOME of its ow
 profile. The real home directory, `/run`, `/tmp` and T3's state are simply not mounted, so nothing
 has to be listed to stay hidden. A workspace folder is refused, and the launch with it, when it is
 inside T3's state or holds the home directory; a thread's own checkout under T3's worktrees is the
-one exception, and a workspace that holds T3's state (a dev server's) has that state emptied.
+one exception, and a workspace that holds T3's state (a dev server's) has that state emptied. It is
+also refused when it is, holds or lies inside a folder the namespace mounts for itself (`/tmp`,
+`/proc`, `/dev`, the system folders): mounted over one, it would put the host's back. T3's own
+helper processes therefore work in a folder under `/var/tmp`.
 The server answers `fs/read_text_file` from outside the namespace, so it applies the same view.
 
 A thread's sessions get a profile of their own, beside the instance's rather than inside it,
@@ -66,14 +69,18 @@ profile: we do not know how `agy` renews a token, and a copy lets it rewrite its
 way without touching the one other threads start from.
 
 The process inherits only a short list of variables from the server (PATH, locale, proxies), plus
-the ones set on the provider instance. It gets no T3 MCP server, endpoint or credential: those
-tools read other threads and delegate work to agents that run outside the namespace.
+the ones set on the provider instance. `bwrap` and the Node that checks the browser command run
+outside the namespace and get none of them: the agent's variables are read inside, from a file in
+its temporary folder rather than from `bwrap`'s arguments, which any user of the machine can list.
+It gets no T3 MCP server, endpoint or credential: those tools read other threads and delegate work
+to agents that run outside the namespace.
 
 No `agy` process starts unless the namespace can be built, the installer's first run of a
 download included. On Linux the Sandbox setting cannot turn this off; on other platforms, where no
 sandbox exists, turning it off is how the user accepts running without one. The namespace does not
 limit the network or files the agent writes in the workspace for a later process to run, and git
-commands fail in a worktree checkout, whose repository lives outside it. See
+commands fail in a worktree checkout, whose repository lives outside it. Checkpoints are the one
+thing T3 runs there by itself after a turn, so they run with the repository's hooks off. See
 [the sandbox](../../apps/server/src/provider/antigravitySandbox.ts).
 
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives

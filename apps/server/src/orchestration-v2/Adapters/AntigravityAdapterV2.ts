@@ -175,6 +175,8 @@ export function makeAntigravityAcpAdapterFlavor(
   // Roots are compared after resolving links, so the folder must still be the directory this
   // session opened: one swapped for a link elsewhere is no longer a root.
   const openedFolders = new Map<string, { readonly dev: number; readonly ino: number }>();
+  // The folders each thread's process was launched with, which its file reads are served from too.
+  const launchedRoots = new Map<string, ReadonlyArray<string>>();
   // The server reads a session's native files in its thread's profile, where the process wrote
   // them. The thread decides, never the session id: the agent chooses that.
   const profileOf = (threadId: ThreadId) => options.sandbox?.threadProfileDirectory(threadId);
@@ -206,7 +208,11 @@ export function makeAntigravityAcpAdapterFlavor(
         ? undefined
         : yield* Effect.promise(() =>
             // A folder the sandbox refuses as a workspace is not one to read from either.
-            antigravityWorkspaceView({ area, cwd, extraRoots: [] }).catch(() => undefined),
+            antigravityWorkspaceView({
+              area,
+              cwd,
+              extraRoots: launchedRoots.get(threadId) ?? [],
+            }).catch(() => undefined),
           );
     return { roots: [...(view?.roots ?? []), ...own], masks: view?.masks ?? [] };
   });
@@ -224,6 +230,11 @@ export function makeAntigravityAcpAdapterFlavor(
       });
       if (identity === null) openedFolders.delete(input.threadId);
       else openedFolders.set(input.threadId, identity);
+      const extraRoots = [
+        ...(input.extraRoots ?? []),
+        ...(input.runtimePolicy.workspace?.extraRoots ?? []),
+      ];
+      launchedRoots.set(input.threadId, extraRoots);
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
@@ -231,10 +242,7 @@ export function makeAntigravityAcpAdapterFlavor(
             ...input,
             thread: {
               id: input.threadId,
-              extraRoots: [
-                ...(input.extraRoots ?? []),
-                ...(input.runtimePolicy.workspace?.extraRoots ?? []),
-              ],
+              extraRoots,
               attachmentsFolder:
                 identity === null
                   ? null

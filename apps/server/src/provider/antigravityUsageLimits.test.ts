@@ -692,6 +692,23 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "linux")(
+    "reads no sign-in through a link a sandboxed process left at a token's name",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { probe, tokenPath, requests } = yield* fixture();
+        const elsewhere = path.join(path.dirname(path.dirname(tokenPath)), "another-account.json");
+        yield* fs.rename(tokenPath, elsewhere);
+        yield* fs.symlink(elsewhere, tokenPath);
+        yield* fs.symlink(elsewhere, path.join(path.dirname(tokenPath), "antigravity-oauth-token"));
+        const limits = yield* probe;
+        expect(limits.unavailable?.message).toBe("Sign in with Google to see Antigravity limits.");
+        expect(requests).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
