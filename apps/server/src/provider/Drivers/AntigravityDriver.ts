@@ -204,7 +204,8 @@ export const AntigravityDriver: ProviderDriver<
     const profileDirectory = directories.profile;
     for (const directory of [
       directories.runtimeTemp,
-      path.join(profileDirectory, "antigravity-acp", "tmp"),
+      // On Linux the agent writes the profile: a link it left there would be swept through.
+      ...(hostPlatform === "linux" ? [] : [path.join(profileDirectory, "antigravity-acp", "tmp")]),
     ]) {
       const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

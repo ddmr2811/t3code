@@ -909,7 +909,11 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           config.stateDir,
           instanceId,
         );
-        const legacyRoot = path.join(directories.profile, "antigravity-acp", "tmp");
+        // The agent writes its profile, so its data folder may be a link to someone else's.
+        const outside = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(directories.profile, { recursive: true });
+        yield* fs.symlink(outside, path.join(directories.profile, "antigravity-acp"));
+        const legacyRoot = path.join(outside, "tmp");
         for (const root of [directories.runtimeTemp, legacyRoot]) {
           const orphan = path.join(root, "run-orphan", "_MEI123", "google3");
           yield* fs.makeDirectory(orphan, { recursive: true });
@@ -931,7 +935,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ),
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
-        expect(yield* fs.exists(legacyRoot)).toBe(false);
+        // On Linux nothing is swept by a name inside the profile.
+        expect(yield* fs.exists(legacyRoot)).toBe(hostPlatform === "linux");
       }),
   );
 });
