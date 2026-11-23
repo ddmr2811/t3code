@@ -31,10 +31,16 @@ const sandbox = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ade-smoke-"))
 const home = NodePath.join(sandbox, "home");
 const repo = NodePath.join(sandbox, "repo");
 NodeFS.mkdirSync(repo);
-// A hook exports GIT_DIR and GIT_INDEX_FILE, and user or system config can sign or ignore: no
-// git here, the server's included, sees the repository or the config of whoever runs the smoke.
+// A hook exports GIT_DIR and GIT_INDEX_FILE, and user or system config (the default
+// ~/.config/git/ignore too) can sign or ignore: no git here, the server's included, sees the
+// repository or the config of whoever runs the smoke.
 const gitConfig = NodePath.join(sandbox, "gitconfig");
-NodeFS.writeFileSync(gitConfig, "[user]\n\tname = ADE smoke\n\temail = smoke@ade.invalid\n");
+const gitIgnore = NodePath.join(sandbox, "gitignore");
+NodeFS.writeFileSync(gitIgnore, "");
+NodeFS.writeFileSync(
+  gitConfig,
+  `[user]\n\tname = ADE smoke\n\temail = smoke@ade.invalid\n[core]\n\texcludesFile = ${gitIgnore}\n`,
+);
 const childEnv = {
   ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
   GIT_CONFIG_GLOBAL: gitConfig,
