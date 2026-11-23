@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A build plugin, outside any Effect program.
+import * as NodeFS from "node:fs";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
@@ -25,6 +28,17 @@ export default defineConfig({
           injectTo: "head-prepend",
         },
       ],
+      // The fonts' license travels with the fonts (SIL OFL 1.1 asks for it).
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "assets/OFL.txt",
+          source: NodeFS.readFileSync(
+            new URL("../web/src/fork/fonts/OFL.txt", import.meta.url),
+            "utf8",
+          ),
+        });
+      },
     },
   ],
   // Browsers ignore frame-ancestors in a <meta>, so it only works as a header. The rest stays in

@@ -1,11 +1,19 @@
 // The servers the ADE may reach are fixed when it is built (ADE_CONNECT_ORIGINS), so script
 // running in the page cannot widen them. `*.` covers every machine of one tailnet.
-const ENTRY = /^(https?):\/\/((?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d+|\*))?$/i;
+const ENTRY = /^(https?):\/\/(\[::1\]|(?:\*\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d+|\*))?$/i;
+// Plain HTTP carries the session in the clear: only this same computer may use it.
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 export function parseConnectOrigins(raw: string | undefined): ReadonlyArray<string> {
   const entries = (raw ?? "").split(/[\s,]+/).filter((entry) => entry !== "");
   for (const entry of entries) {
-    if (!ENTRY.test(entry)) throw new Error(`ADE_CONNECT_ORIGINS: origen no válido «${entry}»`);
+    const [, scheme, host] = ENTRY.exec(entry) ?? [];
+    if (scheme === undefined || host === undefined) {
+      throw new Error(`ADE_CONNECT_ORIGINS: origen no válido «${entry}»`);
+    }
+    if (scheme.toLowerCase() === "http" && !LOOPBACK.has(host.toLowerCase())) {
+      throw new Error(`ADE_CONNECT_ORIGINS: «${entry}» debe ser https:// (http solo en loopback)`);
+    }
   }
   return entries;
 }

@@ -1,9 +1,11 @@
-// Smoke test of the built ADE against a real T3 dev server, Replay (dev) turns only. Newest thread:
-// a finished Replay `command-output` turn, nothing pending, its project a Git repo (ADE_SMOKE_REPO).
-// T3_URL allows ADE_URL (T3CODE_DEV_ALLOWED_ORIGINS); the ADE is built with ADE_CONNECT_ORIGINS=T3_URL.
-// T3_PAIRING_TOKEN, T3_TERMINAL_PAIRING_TOKEN, T3_READONLY_PAIRING_TOKEN (--scope orchestration:read).
+// Smoke test of the built ADE against a real T3 dev server, Replay (dev) turns only. T3_URL is a
+// loopback dev server on the throwaway data directory T3_HOME, allowing ADE_URL
+// (T3CODE_DEV_ALLOWED_ORIGINS). ADE_CONNECT_ORIGINS holds T3_URL as 127.0.0.1 and as localhost:
+// two addresses of one machine. Repository, project, thread and pairing codes are the smoke's own.
 import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { chromium } from "playwright";
@@ -15,10 +17,67 @@ const env = (name: string) => {
 };
 const adeUrl = env("ADE_URL");
 const t3Url = env("T3_URL");
-const pairingToken = env("T3_PAIRING_TOKEN");
-const readOnlyPairingToken = env("T3_READONLY_PAIRING_TOKEN");
-const terminalPairingToken = env("T3_TERMINAL_PAIRING_TOKEN");
-const repo = env("ADE_SMOKE_REPO");
+const home = NodeFS.realpathSync(env("T3_HOME"));
+const t3Host = new URL(t3Url).hostname;
+NodeAssert.ok(["127.0.0.1", "localhost"].includes(t3Host), "T3_URL must be a loopback server");
+NodeAssert.notEqual(
+  home,
+  NodeFS.realpathSync(NodePath.join(NodeOS.homedir(), ".t3")),
+  "T3_HOME must not be the live T3 Code install",
+);
+// The same server under its other loopback name.
+const otherT3Url = t3Url.replace(t3Host, t3Host === "localhost" ? "127.0.0.1" : "localhost");
+
+// Each run's messages are its own, so an earlier run's rows never satisfy a wait.
+const run = Math.random().toString(36).slice(2, 8);
+// Everything the smoke writes goes into a directory it has just created.
+const sandbox = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ade-smoke-"));
+const repo = NodePath.join(sandbox, "repo");
+NodeFS.mkdirSync(repo);
+const git = (...args: ReadonlyArray<string>) =>
+  NodeChildProcess.execFileSync(
+    "git",
+    ["-C", repo, "-c", "user.name=ADE smoke", "-c", "user.email=smoke@ade.invalid", ...args],
+    { stdio: "ignore" },
+  );
+git("init", "--quiet");
+git("commit", "--quiet", "--allow-empty", "-m", "init");
+const t3 = (command: ReadonlyArray<string>, ...args: ReadonlyArray<string>) =>
+  NodeChildProcess.execFileSync(
+    process.execPath,
+    [
+      NodePath.join(import.meta.dirname, "../server/src/bin.ts"),
+      ...command,
+      "--base-dir",
+      home,
+      ...args,
+    ],
+    { encoding: "utf8" },
+  );
+t3(["project", "add"], repo);
+const title = `Humo ${run}`;
+t3(
+  ["thread", "start"],
+  "--provider",
+  "devReplay",
+  "--model",
+  "command-output",
+  "--title",
+  title,
+  "--wait",
+  repo,
+  `Hola ${run}`,
+);
+// A code lasts five minutes, so each is made when it is used.
+const pairingTokens: Array<string> = [];
+const mintToken = (...scopes: ReadonlyArray<string>) => {
+  const token = /^Token: (\S+)$/m.exec(
+    t3(["pair"], ...scopes.flatMap((scope) => ["--scope", scope])),
+  )?.[1];
+  NodeAssert.ok(token, "the server minted a pairing code");
+  pairingTokens.push(token);
+  return token;
+};
 const shots = process.env.ADE_SMOKE_SHOTS;
 
 const browser = await chromium.launch();
@@ -29,11 +88,12 @@ const granted: Array<{ token_type: string; scope: string; access_token: string }
 const refusedScopes: Array<string> = [];
 // Each page is its own browser profile: its own key, its own session.
 const openPage = async () => {
-  const opened = await browser.newPage({
+  const context = await browser.newContext({
     viewport: { width: 1920, height: 1080 },
     // The terminal is a canvas: the test reads what it shows by copying it.
     permissions: ["clipboard-read", "clipboard-write"],
   });
+  const opened = await context.newPage();
   opened.on("console", (message) => consoleText.push(message.text()));
   opened.on("request", (request) => requestUrls.push(request.url()));
   opened.on("websocket", (socket) => {
@@ -55,12 +115,39 @@ const page = await openPage();
 const shot = async (name: string, of = page) => {
   if (shots) await of.screenshot({ path: `${shots}/${name}.png` });
 };
-const linkFor = (token: string) => `${adeUrl}/?host=${encodeURIComponent(t3Url)}#token=${token}`;
-const pairingLink = linkFor(pairingToken);
+const linkFor = (token: string, host = t3Url) =>
+  `${adeUrl}/?host=${encodeURIComponent(host)}#token=${token}`;
+// The only URLs a code may travel in: the links the test itself opens.
+const openedLinks: Array<string> = [];
+const openLink = (on: typeof page, link: string) => {
+  openedLinks.push(link);
+  return on.goto(link);
+};
+const readCatalog = (on = page) =>
+  on.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        const open = indexedDB.open("ade");
+        open.addEventListener("success", () => {
+          const catalog = open.result.transaction("kv").objectStore("kv").get("catalog");
+          catalog.addEventListener("success", () => resolve(catalog.result));
+        });
+      }),
+  );
 const pair = (on = page) => on.getByRole("button", { name: "Emparejar", exact: true }).click();
 
 try {
-  const opened = await page.goto(pairingLink);
+  // A code in `?token=` already reached whoever serves the page: the ADE does not use it.
+  await page.goto(`${adeUrl}/?host=${encodeURIComponent(t3Url)}&token=NOSIRVE`);
+  NodeAssert.equal(page.url(), `${adeUrl}/`, "a link with ?token= leaves the address bar too");
+  await page.getByRole("alert").waitFor();
+  NodeAssert.equal(
+    await page.getByLabel("Enlace de emparejamiento o dirección").inputValue(),
+    "",
+    "a code that came in the query is not offered for pairing",
+  );
+
+  const opened = await openLink(page, linkFor(mintToken()));
   NodeAssert.match(
     opened?.headers()["content-security-policy"] ?? "",
     /frame-ancestors 'none'/,
@@ -87,12 +174,12 @@ try {
   if (process.env.ADE_SMOKE_SHOT) await page.screenshot({ path: process.env.ADE_SMOKE_SHOT });
 
   // The server needs a thread: the sidebar lists it from the live shell, and choosing it keeps it.
-  const firstThread = page
-    .getByRole("navigation", { name: "Hilos" })
-    .locator(".ade-thread-title")
-    .first();
-  const title = await firstThread.innerText();
-  await firstThread.click();
+  const ownThread = (on = page) =>
+    on
+      .getByRole("navigation", { name: "Hilos" })
+      .locator(".ade-thread-title")
+      .getByText(title, { exact: true });
+  await ownThread().click();
   NodeAssert.match(page.url(), /[?&]hilo=/, "the selected thread is in the address");
   await page.getByRole("heading", { level: 1, name: title, exact: true }).waitFor();
   // The thread's own snapshot and stream arrive over this session: its turn shows both sides.
@@ -108,8 +195,6 @@ try {
   const composer = page.getByRole("region", { name: "Compositor" });
   const message = composer.getByRole("textbox", { name: "Mensaje" });
   const repliesBefore = await conversation.locator(".ade-msg-agent").count();
-  // Each run's messages are its own, so an earlier run's rows never satisfy a wait.
-  const run = Math.random().toString(36).slice(2, 8);
   await shot("compositor-vacio");
   // The model comes from the machine's own list: a short scenario first, then a long one that
   // leaves time to queue and stop.
@@ -173,7 +258,9 @@ try {
   await shot("aprobacion-en-el-hilo");
   // Replay only plays the edit back, so the test makes it: the turn's checkpoint takes it in.
   const written = `escrito por el turno ${run}`;
-  NodeFS.writeFileSync(NodePath.join(repo, ".codex-probe-write-action.txt"), `${written}\n`);
+  NodeFS.writeFileSync(NodePath.join(repo, ".codex-probe-write-action.txt"), `${written}\n`, {
+    flag: "wx",
+  });
   const repliesBeforeApproval = await conversation.locator(".ade-msg-agent").count();
   await approval.getByRole("button", { name: "Aprobar esta vez" }).click();
   await approval.waitFor({ state: "detached" });
@@ -241,15 +328,11 @@ try {
   await sendWith("Write approval", `Solo lectura ${run}`);
   await approval.waitFor();
   const reader = await openPage();
-  await reader.goto(linkFor(readOnlyPairingToken));
+  await openLink(reader, linkFor(mintToken("orchestration:read")));
   await pair(reader);
   await reader.getByText("Conectada", { exact: true }).first().waitFor();
   NodeAssert.equal(granted.at(-1)?.scope, "orchestration:read", "the server granted read only");
-  await reader
-    .getByRole("navigation", { name: "Hilos" })
-    .locator(".ade-thread-title")
-    .first()
-    .click();
+  await ownThread(reader).click();
   const readerComposer = reader.getByRole("region", { name: "Compositor" });
   const readerMessage = readerComposer.getByRole("textbox", { name: "Mensaje" });
   const readerApproval = reader
@@ -297,26 +380,42 @@ try {
   await terminalButton.hover({ force: true });
   await page.getByRole("tooltip").filter({ hasText: "permiso de terminal" }).waitFor();
   await shot("terminal-sin-permiso");
-  await terminalButton.evaluate((button) => {
-    const props = Object.entries(button).find(([name]) => name.startsWith("__reactProps$"))?.[1];
-    props.onClick();
-  });
-  await terminal.getByRole("alert").filter({ hasText: "La máquina rechazó el terminal" }).waitFor();
-  NodeAssert.ok(refusedScopes.includes("terminal:operate"), "the server refused the terminal");
+  const terminalRefusals = () => refusedScopes.filter((scope) => scope === "terminal:operate");
+  const forceTerminalOpen = async () => {
+    const refusedBefore = terminalRefusals().length;
+    await terminalButton.evaluate((button) => {
+      const props = Object.entries(button).find(([name]) => name.startsWith("__reactProps$"))?.[1];
+      props.onClick();
+    });
+    await terminal
+      .getByRole("alert")
+      .filter({ hasText: "La máquina rechazó el terminal" })
+      .waitFor();
+    NodeAssert.ok(terminalRefusals().length > refusedBefore, "the server refused the terminal");
+  };
+  await forceTerminalOpen();
   await shot("terminal-forzado-rechazado");
   await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
   await conversation.waitFor();
 
-  // Pairing again with «Permitir terminal» is what turns it on, for a link that carries it.
-  await page.getByRole("button", { name: "Añadir máquina" }).click();
-  await page.getByLabel("Enlace de emparejamiento o dirección").fill(linkFor(terminalPairingToken));
-  await page.getByLabel(/^Permitir terminal/).check();
-  await pair();
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll("button")].some(
-      (button) => button.textContent === "Terminal" && !button.disabled,
-    ),
-  );
+  // Pairing again with «Permitir terminal» is what turns it on, for a link that carries it. This
+  // one names the machine by its other address.
+  const pairAgain = async (link: string, withTerminal: boolean) => {
+    await page.getByRole("button", { name: "Añadir máquina" }).click();
+    await page.getByLabel("Enlace de emparejamiento o dirección").fill(link);
+    await page.getByLabel(/^Permitir terminal/).setChecked(withTerminal);
+    await pair();
+  };
+  const terminalButtonIs = (on: typeof page, state: "on" | "off") =>
+    on.waitForFunction(
+      (disabled) =>
+        [...document.querySelectorAll("button")].some(
+          (button) => button.textContent === "Terminal" && button.disabled === disabled,
+        ),
+      state === "off",
+    );
+  await pairAgain(linkFor(mintToken(), otherT3Url), true);
+  await terminalButtonIs(page, "on");
   NodeAssert.equal(
     granted.at(-1)?.scope.split(" ").toSorted().join(" "),
     "orchestration:operate orchestration:read terminal:operate",
@@ -371,8 +470,32 @@ try {
   await terminal.getByRole("status").filter({ hasText: "El proceso terminó" }).waitFor();
   await terminal.getByRole("button", { name: "Abrir otro" }).click();
   await terminal.getByRole("status").filter({ hasText: "En marcha" }).waitFor();
-  await terminal.getByRole("button", { name: "Cerrar terminal" }).click();
+  await terminal.getByRole("button", { name: "Cerrar el terminal compartido con la web" }).click();
   await conversation.waitFor();
+
+  // Paired once more without the terminal, at the first address: the grant is gone for good.
+  // Another tab of the same browser follows, and nothing of the older sessions is kept.
+  const tab = await page.context().newPage();
+  await tab.goto(page.url());
+  await terminalButtonIs(tab, "on");
+  await pairAgain(linkFor(mintToken()), false);
+  await page.getByText("Conectada", { exact: true }).first().waitFor();
+  await terminalButtonIs(tab, "off");
+  await tab.close();
+  await conversation.waitFor();
+  await forceTerminalOpen();
+  await terminal.getByRole("button", { name: "Volver a la conversación" }).click();
+  await conversation.waitFor();
+  const repaired = await readCatalog();
+  NodeAssert.equal(
+    repaired.match(/accessToken/g)?.length,
+    1,
+    "a machine paired again keeps one credential, not one per address it was paired at",
+  );
+  NodeAssert.ok(
+    granted.slice(0, -1).every((grant) => !repaired.includes(grant.access_token)),
+    "no earlier session's token is kept",
+  );
 
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(
@@ -429,34 +552,17 @@ try {
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /^Quitar / }).click();
   await page.getByText("Ninguna emparejada").waitFor();
-  const forgotten = await page.evaluate(
-    () =>
-      new Promise<string>((resolve) => {
-        const open = indexedDB.open("ade");
-        open.addEventListener("success", () => {
-          const catalog = open.result.transaction("kv").objectStore("kv").get("catalog");
-          catalog.addEventListener("success", () => resolve(catalog.result));
-        });
-      }),
-  );
+  const forgotten = await readCatalog();
   NodeAssert.doesNotMatch(forgotten, /accessToken/, "removing a machine forgets its credential");
 
-  const secrets = [
-    pairingToken,
-    readOnlyPairingToken,
-    terminalPairingToken,
-    ...granted.map((grant) => grant.access_token),
-  ];
+  const secrets = [...pairingTokens, ...granted.map((grant) => grant.access_token)];
   for (const secret of secrets) {
     NodeAssert.ok(
       !consoleText.some((line) => line.includes(secret)),
       "no token reaches the console",
     );
     NodeAssert.ok(
-      !requestUrls.some(
-        (url) =>
-          url !== pairingLink && url !== linkFor(readOnlyPairingToken) && url.includes(secret),
-      ),
+      !requestUrls.some((url) => !openedLinks.includes(url) && url.includes(secret)),
       "no token travels in a URL",
     );
   }
@@ -467,4 +573,5 @@ try {
   throw error;
 } finally {
   await browser.close();
+  NodeFS.rmSync(sandbox, { recursive: true, force: true });
 }

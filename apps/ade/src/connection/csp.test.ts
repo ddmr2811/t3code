@@ -9,15 +9,16 @@ describe("parseConnectOrigins", () => {
     ["a bare scheme that would allow any host", "https:"],
     ["a wildcard that is not a whole label", "https://*a.ts.net"],
     ["a path", "https://a.ts.net/x"],
+    ["plain http to another machine", "http://10.0.0.2:3773"],
+    ["plain http to a name that only starts like loopback", "http://localhost.evil.net"],
   ])("rejects %s", (_name, raw) => {
     expect(() => parseConnectOrigins(raw)).toThrow();
   });
 
   it("splits on spaces and commas and allows nothing when unset", () => {
-    expect(parseConnectOrigins("https://a.ts.net, http://10.0.0.2:3773")).toEqual([
-      "https://a.ts.net",
-      "http://10.0.0.2:3773",
-    ]);
+    expect(
+      parseConnectOrigins("https://a.ts.net, http://127.0.0.1:3773 http://[::1]:3773"),
+    ).toEqual(["https://a.ts.net", "http://127.0.0.1:3773", "http://[::1]:3773"]);
     expect(parseConnectOrigins(undefined)).toEqual([]);
   });
 });

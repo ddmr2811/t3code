@@ -14,17 +14,20 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { type FormEvent, useContext, useState } from "react";
 
-import { pairMachine } from "./connection/pairing.ts";
+import { pairMachine, TOKEN_IN_QUERY_TEXT, tokenInQuery } from "./connection/pairing.ts";
 import { environmentCatalog, environmentShell } from "./connection/runtime.ts";
 import { machineStatus } from "./connection/status.ts";
+import { machinesChanged } from "./connection/tabs.ts";
 
 // A link that opens the ADE to pair (`?host=…#token=…`) leaves the address bar before anything
-// renders: the one-time token must not stay in the URL, the history, or a later Referer.
-const pairingLinkFromAddressBar = (() => {
+// renders: the one-time token must not stay in the URL, the history, or a later Referer. Only the
+// fragment carries a code: one in `?token=` already reached this page's host, so it is not used.
+const addressBar = (() => {
   const link = window.location.href;
-  if (readHostedPairingRequest(new URL(link)) === null) return "";
+  const refused = tokenInQuery(link);
+  if (!refused && readHostedPairingRequest(new URL(link)) === null) return null;
   window.history.replaceState(null, "", window.location.pathname);
-  return link;
+  return refused ? { link: "", error: TOKEN_IN_QUERY_TEXT } : { link, error: null };
 })();
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -50,11 +53,15 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
         type="button"
         className="ade-icon-button"
         aria-label={`Quitar ${label}`}
-        onClick={() => {
+        onClick={async () => {
           if (
-            window.confirm(`¿Quitar ${label}? Para volver a usarla habrá que emparejarla otra vez.`)
+            !window.confirm(
+              `¿Quitar ${label}? Este navegador olvida su credencial, pero la sesión sigue viva en la máquina: para revocarla, en T3 Code de ${label} ve a Ajustes → Compartir y acceso → Clientes autorizados.`,
+            )
           )
-            void runAtomCommand(registry, environmentCatalog.remove, props.environmentId);
+            return;
+          await runAtomCommand(registry, environmentCatalog.remove, props.environmentId);
+          machinesChanged();
         }}
       >
         <TrashIcon size={14} />
@@ -65,11 +72,11 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
 
 function PairingForm(props: { onDone: () => void }) {
   const registry = useContext(RegistryContext);
-  const [link, setLink] = useState(pairingLinkFromAddressBar);
+  const [link, setLink] = useState(addressBar?.link ?? "");
   const [code, setCode] = useState("");
   const [terminal, setTerminal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(addressBar?.error ?? null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -135,7 +142,7 @@ function PairingForm(props: { onDone: () => void }) {
 
 export function MachinesSidebar() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const [adding, setAdding] = useState(pairingLinkFromAddressBar !== "");
+  const [adding, setAdding] = useState(addressBar !== null);
   const machines = [...catalog.entries];
   return (
     <>

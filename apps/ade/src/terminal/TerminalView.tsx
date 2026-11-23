@@ -12,7 +12,6 @@ import {
   type TerminalBufferState,
 } from "@t3tools/client-runtime/state/terminal";
 import {
-  chunkTerminalWrite,
   DEFAULT_TERMINAL_ID,
   EnvironmentAuthorizationError,
   type ScopedThreadRef,
@@ -27,6 +26,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { GhosttyTerminalSurface } from "../../../web/src/terminal/ghostty/surface.ts";
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
 import { terminalAccessAtom } from "../state.ts";
+import { drainTerminalInput, type QueuedInput } from "./input.logic.ts";
 
 // Here, not in state.ts, so the terminal's transport loads with the first terminal opened.
 const terminalEnvironment = createTerminalEnvironmentAtoms(connectionAtomRuntime);
@@ -122,7 +122,6 @@ function Shell(props: {
     const canOperate = () => registry.get(terminalAccessAtom(environmentId));
     let surface: GhosttyTerminalSurface | null = null;
     let disposed = false;
-    let running = false;
     let cursor = INITIAL_TERMINAL_OUTPUT_CURSOR;
 
     const session = terminalEnvironment.createSession({
@@ -133,50 +132,52 @@ function Shell(props: {
     });
 
     // One write at a time keeps keystrokes in order; what is typed meanwhile travels together.
-    const queue: Array<{ data: string; kind?: "binary" | "reply" }> = [];
+    const queue: Array<QueuedInput> = [];
     let sending = false;
+    // The server refuses input until the shell runs. A restart or a reattachment is another shell.
+    let shell: string | null = null;
+    const liveShell = () => (disposed || !canOperate() ? null : shell);
     const send = async (data: string, kind?: "binary" | "reply") => {
-      // The server refuses input until the shell runs.
-      if (!running || !canOperate()) return;
+      const typedInto = liveShell();
+      if (typedInto === null) return;
       const last = queue.at(-1);
-      if (last !== undefined && last.kind === kind) last.data += data;
-      else queue.push(kind === undefined ? { data } : { data, kind });
+      if (last !== undefined && last.kind === kind && last.shell === typedInto) last.data += data;
+      else queue.push({ data, shell: typedInto, ...(kind === undefined ? {} : { kind }) });
       if (sending) return;
       sending = true;
-      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-        if (disposed) break;
-        for (const chunk of chunkTerminalWrite(next.data)) {
-          const result = await runAtomCommand(
-            registry,
-            terminalEnvironment.write,
-            {
-              environmentId,
-              input: {
-                threadId,
-                terminalId,
-                data: chunk,
-                ...(next.kind === undefined ? {} : { [next.kind]: true }),
-              },
+      await drainTerminalInput(queue, liveShell, async (chunk, chunkKind) => {
+        const result = await runAtomCommand(
+          registry,
+          terminalEnvironment.write,
+          {
+            environmentId,
+            input: {
+              threadId,
+              terminalId,
+              data: chunk,
+              ...(chunkKind === undefined ? {} : { [chunkKind]: true }),
             },
-            { reportFailure: false },
-          );
-          // What was typed into a shell that stopped answering is dropped, not replayed later.
-          if (result._tag === "Failure") queue.length = 0;
-        }
-      }
+          },
+          { reportFailure: false },
+        );
+        return result._tag === "Success";
+      });
       sending = false;
     };
 
     const apply = (result: AsyncResult.AsyncResult<TerminalBufferState, unknown>) => {
       if (result._tag === "Failure") {
-        running = false;
+        shell = null;
         const error = Option.getOrNull(Cause.findErrorOption(result.cause));
         setStatus(isRefusal(error) ? "refused" : "failed");
         return;
       }
       const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
       if (buffer.version === 0) return;
-      running = buffer.status === "running";
+      shell =
+        buffer.status === "running"
+          ? `${buffer.output.generation}:${buffer.lifecycleVersion}`
+          : null;
       setStatus(buffer.status);
       if (surface === null) return;
       surface.setSharedGrid(buffer.grid);
@@ -226,7 +227,7 @@ function Shell(props: {
     void runAtomCommand(
       registry,
       terminalEnvironment.close,
-      { environmentId, input: { threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: true } },
+      { environmentId, input: { threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: false } },
       { reportFailure: false },
     );
     props.onClose();
@@ -251,7 +252,7 @@ function Shell(props: {
           </button>
         ) : problem ? null : (
           <button type="button" className="ade-button-quiet" onClick={close}>
-            Cerrar terminal
+            Cerrar el terminal compartido con la web
           </button>
         )}
         <button type="button" className="ade-button-quiet" onClick={props.onClose}>

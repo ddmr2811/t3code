@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import { originAllowed } from "./csp.ts";
 import { connectionAtomRuntime } from "./runtime.ts";
 import { failureText } from "./status.ts";
+import { machinesChanged } from "./tabs.ts";
 
 // Read threads; answer approvals and questions and send turns. Both of the latter are
 // orchestration commands, and `orchestration:operate` is the only scope that dispatches them.
@@ -52,12 +53,22 @@ export class PairingError extends Schema.TaggedError<PairingError>()("PairingErr
 
 const failed = (message: string) => new PairingError({ message });
 
+/** A link with its code in `?token=` already showed it to whoever serves the page it opens. */
+export const tokenInQuery = (link: string) =>
+  URL.canParse(link) && new URL(link).searchParams.has("token");
+
+export const TOKEN_IN_QUERY_TEXT =
+  "Este enlace lleva el código en «?token=», a la vista del servidor que aloja la página. No se ha usado: crea un enlace nuevo y ábrelo con el código en «#token=».";
+
 /**
  * `ConnectionOnboarding.registerPairing` with two differences the ADE needs: it asks for
  * `ADE_SCOPES` (plus the terminal, when chosen) instead of the link's whole grant, and it never
  * falls back to a bearer token.
  */
 const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
+  if (input.pairingUrl !== undefined && tokenInQuery(input.pairingUrl)) {
+    return yield* failed(TOKEN_IN_QUERY_TEXT);
+  }
   const target = yield* Effect.try({
     try: () => resolveRemotePairingTarget(input),
     catch: () => failed("El enlace o el código de emparejamiento no es válido."),
@@ -117,6 +128,15 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   }
 
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  // A machine paired again starts from nothing: removing it closes the socket its old session
+  // opened before the credential changes, and drops every route and credential it had, also
+  // those of another address.
+  yield* registry.remove(descriptor.environmentId).pipe(
+    Effect.catchTags({
+      EnvironmentNotRegisteredError: () => Effect.void,
+      PlatformEnvironmentRemovalError: () => failed("Esta máquina no se puede volver a emparejar."),
+    }),
+  );
   yield* registry.register(
     new BearerConnectionRegistration({
       ...route,
@@ -127,14 +147,7 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     }),
   );
   yield* registry.setCompatibility(descriptor.environmentId, null);
-  // A machine paired again keeps the socket its old session opened, with the old grants: off and
-  // on makes it connect with the new one.
-  yield* registry
-    .setEnabled(descriptor.environmentId, false)
-    .pipe(
-      Effect.andThen(registry.setEnabled(descriptor.environmentId, true)),
-      Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
-    );
+  machinesChanged();
   return descriptor.environmentId;
 });
 

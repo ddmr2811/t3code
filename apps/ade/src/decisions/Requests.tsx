@@ -33,7 +33,8 @@ import {
   type AnswerDrafts,
   type ApprovalChoice,
   approvalChoices,
-  approvalFile,
+  approvalFiles,
+  approvalMayCoverTurn,
   orphanedAnswerTexts,
 } from "./requests.logic.ts";
 
@@ -75,10 +76,17 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
   const [error, setError] = useState<string | null>(null);
   const choices = approvalChoices(approval.options);
   // As JSON so streaming that changes nothing here re-renders nothing.
-  const fileJson = useAtomValue(environmentThreadDetails.stateAtom(threadRef), (state) =>
-    JSON.stringify(approvalFile(Option.getOrNull(state.data)?.turnItems ?? [], approval.requestId)),
-  );
-  const file = JSON.parse(fileJson) as ReturnType<typeof approvalFile>;
+  const shownJson = useAtomValue(environmentThreadDetails.stateAtom(threadRef), (state) => {
+    const turnItems = Option.getOrNull(state.data)?.turnItems ?? [];
+    return JSON.stringify({
+      files: approvalFiles(turnItems, approval.requestId),
+      coversTurn: approvalMayCoverTurn(turnItems, approval.requestId),
+    });
+  });
+  const { files, coversTurn } = JSON.parse(shownJson) as {
+    files: ReturnType<typeof approvalFiles>;
+    coversTurn: boolean;
+  };
   const respond = async (decision: ProviderApprovalDecision) => {
     setSent(decision);
     setError(null);
@@ -112,14 +120,20 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
       <p className="ade-request-tag">Aprobación · {KIND_TEXT[approval.requestKind]}</p>
       {/* The whole command or path, never cut: it scrolls instead. */}
       <pre className="ade-request-detail">{approval.detail || approval.requestKind}</pre>
-      {file === null ? null : (
+      {files === null ? null : (
         <>
-          <p className="ade-request-note">Fichero:</p>
-          <pre className="ade-request-detail">{file.path}</pre>
-          {file.diff === undefined ? null : (
+          <p className="ade-request-note">
+            {files.paths.length === 1 ? "Fichero:" : `${files.paths.length} ficheros:`}
+          </p>
+          <pre className="ade-request-detail">{files.paths.join("\n")}</pre>
+          {files.diff === undefined ? null : (
             <details>
-              <summary className="ade-request-note">Ver los cambios</summary>
-              <pre className="ade-request-detail">{file.diff}</pre>
+              <summary className="ade-request-note">
+                {files.diffIsPartial
+                  ? "Ver los cambios (parcial: puede faltar el diff de algunos ficheros de la lista)"
+                  : "Ver los cambios"}
+              </summary>
+              <pre className="ade-request-detail">{files.diff}</pre>
             </details>
           )}
         </>
@@ -128,6 +142,12 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
       {approval.reason ? <p className="ade-request-note">{approval.reason}</p> : null}
       {approval.fullAccessOverride ? (
         <p className="ade-request-note">{FULL_ACCESS_TEXT[approval.fullAccessOverride]}</p>
+      ) : null}
+      {coversTurn ? (
+        <p className="ade-request-note">
+          Si este agente ejecuta sus comandos en terminales de T3 (como Devin), «Aprobar esta vez»
+          deja pasar todos los comandos del resto de este turno, no solo este.
+        </p>
       ) : null}
       {approval.responseCapability === "live" ? null : (
         <p className="ade-request-note" role="status">
