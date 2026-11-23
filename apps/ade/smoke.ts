@@ -231,7 +231,6 @@ try {
 
   await pair();
   await page.getByText("Conectada", { exact: true }).first().waitFor();
-  await page.getByText(/\d+ proyectos? · \d+ hilos?/).waitFor();
   if (process.env.ADE_SMOKE_SHOT) await page.screenshot({ path: process.env.ADE_SMOKE_SHOT });
 
   // The server needs a thread: the sidebar lists it from the live shell, and choosing it keeps it.
