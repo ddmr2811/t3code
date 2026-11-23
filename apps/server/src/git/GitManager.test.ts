@@ -6670,7 +6670,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         }
         const gate = {
           matches: (args: ReadonlyArray<string>) =>
-            args[0] === "fetch" &&
+            args.includes("fetch") &&
             args.some((arg) => arg.startsWith("+refs/heads/feature/pr-existing:")),
           reached: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
