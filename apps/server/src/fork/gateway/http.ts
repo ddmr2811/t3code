@@ -149,6 +149,16 @@ const proxy = Effect.gen(function* () {
   const entry = (yield* gateway.manifest).extensions.find((extension) => extension.id === id);
   if (entry === undefined) return text("Not Found", 404);
 
+  // Revoking the session ends the upload, the wait and any stream already flowing.
+  const invalidated = (yield* SessionStore.SessionStore)
+    .awaitInvalidation(session.sessionId)
+    .pipe(
+      Effect.catch((error) => failEnvironmentInternal("internal_error", error).pipe(Effect.ignore)),
+    );
+  const revoked = invalidated.pipe(
+    Effect.andThen(failEnvironmentAuthInvalid("invalid_credential")),
+  );
+
   let body: Uint8Array | undefined;
   if (method !== "GET" && method !== "HEAD") {
     const declared = Number(request.headers["content-length"] ?? "0");
@@ -156,12 +166,15 @@ const proxy = Effect.gen(function* () {
       return text("Payload Too Large", 413);
     }
     // Chunked bodies declare no length, so the reader itself is capped.
-    const read = yield* request.arrayBuffer.pipe(
-      Effect.provideService(
-        HttpIncomingMessage.MaxBodySize,
-        ByteSize.bytes(MAX_REQUEST_BODY_BYTES),
+    const read = yield* Effect.raceFirst(
+      request.arrayBuffer.pipe(
+        Effect.provideService(
+          HttpIncomingMessage.MaxBodySize,
+          ByteSize.bytes(MAX_REQUEST_BODY_BYTES),
+        ),
+        Effect.option,
       ),
-      Effect.option,
+      revoked,
     );
     if (Option.isNone(read)) return text("Payload Too Large", 413);
     body = new Uint8Array(read.value);
@@ -178,12 +191,6 @@ const proxy = Effect.gen(function* () {
     HttpClientRequest.setHeaders(pick(request.headers, FORWARDED_REQUEST_HEADERS)),
     body === undefined ? (self) => self : HttpClientRequest.bodyUint8Array(body, contentType),
   );
-  // Revoking the session ends the wait and any stream already flowing.
-  const invalidated = (yield* SessionStore.SessionStore)
-    .awaitInvalidation(session.sessionId)
-    .pipe(
-      Effect.catch((error) => failEnvironmentInternal("internal_error", error).pipe(Effect.ignore)),
-    );
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const response = yield* Effect.raceFirst(
     client.execute(upstream).pipe(
@@ -192,7 +199,7 @@ const proxy = Effect.gen(function* () {
       Effect.timeout(RESPONSE_HEADERS_TIMEOUT),
       Effect.option,
     ),
-    invalidated.pipe(Effect.andThen(failEnvironmentAuthInvalid("invalid_credential"))),
+    revoked,
   );
   if (Option.isNone(response)) return text("The extension did not answer", 502);
 

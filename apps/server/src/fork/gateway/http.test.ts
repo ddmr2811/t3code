@@ -11,11 +11,13 @@ import {
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 
@@ -246,5 +248,34 @@ it.live("ends a sidecar's stream when the session is revoked", () =>
     expect((yield* Effect.promise(() => reader.read())).done).toBe(false);
     yield* auth.revokeSession(session.sessionId);
     expect((yield* Effect.promise(() => reader.read())).done).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
+it.live("ends an upload when the session is revoked, and sends the sidecar nothing", () =>
+  Effect.gen(function* () {
+    const { auth, fetch, requests } = yield* gateway;
+    const session = yield* auth.issueSession({ scopes: [AuthForkGatewayScope] });
+    const reading = yield* Deferred.make<void>();
+    // Pulled only once the gateway reads the body, and never finished.
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull: (controller) => {
+          controller.enqueue(new TextEncoder().encode("part"));
+          Deferred.doneUnsafe(reading, Effect.void);
+          return new Promise(() => {});
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const response = yield* fetch("/api/fork/ext/panel/upload", {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.token}` },
+      body,
+      duplex: "half",
+    } as RequestInit).pipe(Effect.forkScoped);
+    yield* Deferred.await(reading);
+    yield* auth.revokeSession(session.sessionId);
+    expect((yield* Fiber.join(response)).status).toBe(401);
+    expect(requests).toEqual([]);
   }).pipe(Effect.scoped),
 );
