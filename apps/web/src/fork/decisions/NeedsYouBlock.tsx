@@ -48,7 +48,8 @@ export function NeedsYouBlock() {
           {gt("{count, plural, =1 {needs you} other {need you}}", { count })}
         </span>
         {waiting || open ? (
-          <span className="inline-flex items-center gap-1 font-mono text-2xs uppercase tracking-wider opacity-85">
+          // The canvas pair keeps small text readable on any accent; the accent's own foreground may not.
+          <span className="inline-flex w-fit items-center gap-1 rounded-sm bg-background px-1.5 py-0.5 font-mono text-2xs text-foreground uppercase tracking-wider">
             {open ? (
               <>
                 <ArrowLeftIcon className="size-3" />

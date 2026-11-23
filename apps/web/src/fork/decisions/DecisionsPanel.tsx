@@ -51,26 +51,42 @@ export function DecisionsPanel() {
   const gt = useGT();
   const { threads, open, setOpen } = useDecisionsPanel();
   const toggle = useStableCallback(() => setOpen(!open));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the decisions shortcut with the keyboard dispatcher while the panel host is mounted
-  useEffect(
-    () =>
-      registerCommands({
-        "decisions.toggle": (event) => {
-          event.preventDefault();
-          if (!event.repeat) toggle();
-        },
-      }),
-    [toggle],
-  );
+  const close = useStableCallback(() => setOpen(false));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the decisions shortcut, and Escape while open, with the keyboard dispatcher
+  useEffect(() => {
+    const disposeToggle = registerCommands({
+      "decisions.toggle": (event) => {
+        event.preventDefault();
+        if (!event.repeat) toggle();
+      },
+    });
+    // Observes after every scope, so a dialog, menu or composer that took Escape keeps it.
+    const disposeEscape = open
+      ? registerCommands(
+          {},
+          {
+            observe: (event, consumed) => {
+              if (consumed || event.defaultPrevented || event.repeat || event.isComposing) return;
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              close();
+            },
+          },
+        )
+      : () => {};
+    return () => {
+      disposeToggle();
+      disposeEscape();
+    };
+  }, [open, toggle, close]);
   if (!open) return null;
   return (
+    // Its own column from xl, beside the main view. Narrower, it floats but stops 16rem
+    // short of the bottom so the composer stays visible.
     <aside
       id="fork-decisions-panel"
       aria-label={gt("Decisions")}
-      className="fixed top-(--workspace-topbar-height) right-0 bottom-0 z-40 flex w-full max-w-md flex-col border-l bg-background shadow-2xl"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !event.defaultPrevented) setOpen(false);
-      }}
+      className="fixed top-(--workspace-topbar-height) right-0 z-40 flex max-h-[calc(100dvh-var(--workspace-topbar-height)-16rem)] w-full max-w-md flex-col rounded-bl-xl border-b border-l bg-background shadow-2xl xl:static xl:h-dvh xl:max-h-none xl:w-96 xl:shrink-0 xl:rounded-none xl:border-b-0 xl:pt-(--workspace-topbar-height) xl:shadow-none"
     >
       <header className="flex items-start justify-between gap-3 border-b px-5 pt-4 pb-3">
         <div className="min-w-0">
@@ -130,7 +146,7 @@ function DecisionCard({ thread }: { thread: EnvironmentThreadShell }) {
       className="flex flex-col gap-2 rounded-xl border bg-card p-4 text-card-foreground"
     >
       <div className="flex items-center gap-2">
-        <span className="rounded-sm bg-primary px-1.5 py-0.5 font-mono font-semibold text-2xs text-primary-foreground uppercase tracking-wider">
+        <span className="rounded-sm bg-primary/20 px-1.5 py-0.5 font-mono font-semibold text-2xs text-foreground uppercase tracking-wider">
           {tag}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
