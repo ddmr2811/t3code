@@ -31,6 +31,8 @@ const sandbox = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ade-smoke-"))
 const home = NodePath.join(sandbox, "home");
 const repo = NodePath.join(sandbox, "repo");
 NodeFS.mkdirSync(repo);
+const userHome = NodePath.join(sandbox, "user");
+NodeFS.mkdirSync(userHome);
 // A hook exports GIT_DIR and GIT_INDEX_FILE, and user or system config (the default
 // ~/.config/git/ignore too) can sign or ignore: no git here, the server's included, sees the
 // repository or the config of whoever runs the smoke.
@@ -41,8 +43,12 @@ NodeFS.writeFileSync(
   gitConfig,
   `[user]\n\tname = ADE smoke\n\temail = smoke@ade.invalid\n[core]\n\texcludesFile = ${gitIgnore}\n`,
 );
+// The server, its CLI and git get this and nothing else of the caller's environment: a T3CODE_*
+// or telemetry setting would send the smoke's traces to a real file or put it on Tailscale. With
+// HOME inside the sandbox, what they keep per user stays there too.
 const childEnv = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  PATH: process.env.PATH ?? "",
+  HOME: userHome,
   GIT_CONFIG_GLOBAL: gitConfig,
   GIT_CONFIG_NOSYSTEM: "1",
 };
