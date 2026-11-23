@@ -7,7 +7,6 @@ import {
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -21,7 +20,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { UNATTENDED_GIT_CONFIG_PARAMETERS } from "../vcs/VcsProcess.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -133,6 +132,28 @@ export class ProjectSetupScriptRunner extends Context.Service<
     ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
+
+/**
+ * Git a script runs when nobody asked for the thread runs no repository hook. The setting lives in
+ * a block of the script's own: the user types in this terminal later, and their Git keeps its hooks.
+ * cmd.exe has no such block, so a script there runs unprotected.
+ */
+function scopeUnattendedGit(command: string, shell: CompletionShell | null): string {
+  const policy = UNATTENDED_GIT_CONFIG_PARAMETERS;
+  switch (shell) {
+    case null:
+      return command;
+    case "posix":
+      // The empty line ends a script whose last line is a comment or ends in a backslash.
+      return `(export GIT_CONFIG_PARAMETERS="\${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }${policy}"\n${command}\n\n)`;
+    case "fish":
+      return `begin\nset -lx GIT_CONFIG_PARAMETERS (string join ' ' -- $GIT_CONFIG_PARAMETERS "${policy}")\n${command}\nend`;
+    case "nushell":
+      return `do {\n$env.GIT_CONFIG_PARAMETERS = ([($env.GIT_CONFIG_PARAMETERS? | default "") "${policy}"] | str join " " | str trim)\n${command}\n}`;
+    case "powershell":
+      return `& {\n$__t3g = $env:GIT_CONFIG_PARAMETERS; $env:GIT_CONFIG_PARAMETERS = "$__t3g ${policy}".Trim()\ntry {\n${command}\n} finally { $env:GIT_CONFIG_PARAMETERS = $__t3g }\n}`;
+  }
+}
 
 /** @public */
 // Random per-run tokens prevent script output from spoofing completion.
@@ -267,8 +288,6 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
   const serviceScope = yield* Effect.scope;
-  const hostEnvironment = yield* HostProcess.Environment;
-  const hostPlatform = yield* HostProcess.Platform;
 
   const observeTerminalCompletion = Effect.fn("ProjectSetupScriptRunner.observeTerminalCompletion")(
     function* (input: {
@@ -510,11 +529,8 @@ export const make = Effect.gen(function* () {
       COLORTERM: "",
       // Project scripts keep the default shell; the preference is for interactive terminals only.
       T3CODE_TERMINAL_SHELL: "",
-      // Git a script runs when nobody asked for the thread runs no repository hook.
-      ...((yield* GitVcsDriver.UnattendedGit)
-        ? VcsProcess.unattendedGitEnv(hostEnvironment, hostPlatform)
-        : {}),
     };
+    const unattendedGit = yield* GitVcsDriver.UnattendedGit;
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
     const echoedWrapperLines: string[] = [];
@@ -565,14 +581,17 @@ export const make = Effect.gen(function* () {
         return { completionShell: null, commandLine: null };
       }
       const completionShell = resolveCompletionShell(shell);
-      let commandLine = script.command;
+      const command = unattendedGit
+        ? scopeUnattendedGit(script.command, completionShell)
+        : script.command;
+      let commandLine = command;
       if (observe && completionToken) {
         if (completionShell === null) {
           yield* terminalManager.closeIdle({ threadId: input.threadId, terminalId });
           return yield* new ProjectSetupScriptUnsupportedShellError({ shell });
         }
         commandLine = wrapCommandForCompletion(
-          script.command,
+          command,
           completionShell,
           completionSentinel(completionToken),
         );

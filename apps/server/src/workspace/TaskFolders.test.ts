@@ -3,6 +3,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -697,36 +698,52 @@ it.live("gives every repository one branch name when one of them already has it"
   ),
 );
 
-it.live.each([{ unattended: true }, { unattended: false }])(
-  "runs the repository's hooks in a layout command only when somebody asked, unattended=$unattended",
-  ({ unattended }) =>
-    withState((state) =>
-      Effect.gen(function* () {
-        const { fileSystem, path, tmp, repository } = yield* fixture;
-        const mono = yield* repository("mono");
-        yield* fileSystem.writeFileString(
-          path.join(mono, "t3.json"),
-          JSON.stringify({
-            worktreeLayout: {
-              create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
-            },
-          }),
-        );
-        // A hook an agent could write in the checkout; the command's checkout fires it.
-        const hook = path.join(mono, ".git", "hooks", "post-checkout");
-        const hookRan = path.join(tmp, "layout-hook-ran");
-        yield* fileSystem.writeFileString(hook, `#!/bin/sh\necho ran > '${hookRan}'\n`);
-        yield* fileSystem.chmod(hook, 0o755);
-        state.workspaceRoot = mono;
-        state.trackedFolders = [];
+it.live.each([
+  { unattended: true, inherited: false },
+  { unattended: false, inherited: false },
+  // A server started from Git itself inherits its `-c` settings, which must not bring the hooks back.
+  { unattended: true, inherited: true },
+])(
+  "runs the repository's hooks in a layout command only when somebody asked, unattended=$unattended inherited=$inherited",
+  ({ unattended, inherited }) =>
+    Effect.gen(function* () {
+      const hooks = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+      return yield* withState((state) =>
+        Effect.gen(function* () {
+          const { fileSystem, path, tmp, repository } = yield* fixture;
+          const mono = yield* repository("mono");
+          yield* fileSystem.writeFileString(
+            path.join(mono, "t3.json"),
+            JSON.stringify({
+              worktreeLayout: {
+                create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
+              },
+            }),
+          );
+          // A hook an agent could write in the checkout; the command's checkout fires it.
+          const hook = path.join(
+            inherited ? hooks : path.join(mono, ".git", "hooks"),
+            "post-checkout",
+          );
+          const hookRan = path.join(tmp, "layout-hook-ran");
+          yield* fileSystem.writeFileString(hook, `#!/bin/sh\necho ran > '${hookRan}'\n`);
+          yield* fileSystem.chmod(hook, 0o755);
+          state.workspaceRoot = mono;
+          state.trackedFolders = [];
 
-        yield* create("feature").pipe(
-          Effect.provideService(GitVcsDriver.UnattendedGit, unattended),
-        );
+          yield* create("feature").pipe(
+            Effect.provideService(GitVcsDriver.UnattendedGit, unattended),
+          );
 
-        assert.equal(yield* fileSystem.exists(hookRan), !unattended);
-      }),
-    ),
+          assert.equal(yield* fileSystem.exists(hookRan), !unattended);
+        }),
+      ).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          ...(inherited ? { GIT_CONFIG_PARAMETERS: `'core.hooksPath=${hooks}'` } : {}),
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.live("removes what it created when one repository fails", () =>

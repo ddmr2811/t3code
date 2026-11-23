@@ -20,6 +20,7 @@ import { TestClock } from "effect/testing";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
@@ -258,7 +259,7 @@ describe("ProjectSetupScriptRunner", () => {
 });
 
 const runObservedSetup = Effect.fnUntraced(function* (command: string) {
-  const { writes, outputLines, emit, completion } = yield* setup({ command });
+  const { writes, outputLines, emit, completion, opens } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
   const cwd = yield* HostProcess.WorkingDirectory;
@@ -291,6 +292,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
   yield* emit({ ...event, type: "output", data: child.stdout + child.stderr });
   yield* emit({ ...event, type: "closed" });
   return {
+    opens,
     submitted,
     lines: yield* Queue.clear(outputLines),
     exitCode: (yield* completion).exitCode,
@@ -318,6 +320,20 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
         "done",
       ]);
       assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.live("turns the repository's hooks off for an unasked script, not for its terminal", () =>
+    Effect.gen(function* () {
+      const result = yield* runObservedSetup(
+        "printenv GIT_CONFIG_PARAMETERS\nexit 3 # trailing comment",
+      ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+      assert.deepEqual(result.lines, ["'core.hooksPath=/dev/null' 'core.fsmonitor=false'"]);
+      assert.equal(result.exitCode, 3);
+      assert.deepEqual(
+        Object.keys(result.opens[0]?.env ?? {}).filter((name) => name.startsWith("GIT_")),
+        [],
+      );
     }),
   );
 

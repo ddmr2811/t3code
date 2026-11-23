@@ -145,13 +145,22 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
  * project's layout command: an agent can write the repository's hooks and its fsmonitor command.
  */
 export const UNATTENDED_GIT_CONFIG = ["core.hooksPath=/dev/null", "core.fsmonitor=false"] as const;
+/** In `GIT_CONFIG_PARAMETERS` syntax: appended there it beats inherited entries, which beat `GIT_CONFIG_COUNT`. */
+export const UNATTENDED_GIT_CONFIG_PARAMETERS = UNATTENDED_GIT_CONFIG.map(
+  (setting) => `'${setting}'`,
+).join(" ");
 export const unattendedGitEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) => {
-  const added: NodeJS.ProcessEnv = {};
-  for (const setting of UNATTENDED_GIT_CONFIG) {
-    const [key, value] = setting.split("=") as [string, string];
-    Object.assign(added, gitConfigEnv({ ...env, ...added }, key, value, platform));
-  }
-  return added;
+  // Windows env keys ignore case, and Node may keep any spelling: update each one.
+  const names = Object.keys(env).filter((name) =>
+    platform === "win32"
+      ? name.toUpperCase() === "GIT_CONFIG_PARAMETERS"
+      : name === "GIT_CONFIG_PARAMETERS",
+  );
+  const inherited = env[names.at(-1) ?? "GIT_CONFIG_PARAMETERS"];
+  const value = inherited
+    ? `${inherited} ${UNATTENDED_GIT_CONFIG_PARAMETERS}`
+    : UNATTENDED_GIT_CONFIG_PARAMETERS;
+  return Object.fromEntries([...names, "GIT_CONFIG_PARAMETERS"].map((name) => [name, value]));
 };
 
 const REPOSITORY_SELECTORS = new Set([

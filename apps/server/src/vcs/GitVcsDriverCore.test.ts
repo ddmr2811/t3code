@@ -6057,9 +6057,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     // An agent can write both settings in the checkout's config; each names a command Git runs.
-    it.effect.each([{ setting: "core.fsmonitor" }, { setting: "core.sshCommand" }] as const)(
-      "runs the repository's $setting only in Git somebody asked for",
-      ({ setting }) =>
+    it.effect.each([
+      { setting: "core.fsmonitor", unasked: "statusDetailsLocal", asked: "statusDetailsLocal" },
+      { setting: "core.fsmonitor", unasked: "autoPullProjects", asked: "statusDetailsLocal" },
+      { setting: "core.sshCommand", unasked: "fetch", asked: "fetchRemoteTrackingBranch" },
+      { setting: "core.sshCommand", unasked: "fetch", asked: "fetchWorktreeBaseCommit" },
+    ] as const)(
+      "runs the repository's $setting in $asked somebody asked for, not in $unasked",
+      ({ setting, unasked, asked }) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const fs = yield* FileSystem.FileSystem;
@@ -6074,22 +6079,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* git(cwd, ["config", setting, path.join(scripts, "command")]);
 
           const driver = yield* GitVcsDriver.GitVcsDriver;
-          const run =
-            setting === "core.fsmonitor"
-              ? Effect.asVoid(driver.statusDetailsLocal(cwd))
-              : Effect.asVoid(
-                  driver.execute({
-                    operation: "test.fetch",
-                    cwd,
-                    args: ["fetch", "origin"],
-                    allowNonZeroExit: true,
-                  }),
-                );
-
-          yield* run.pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+          const unattended = Effect.provideService(GitVcsDriver.UnattendedGit, true);
+          if (unasked === "statusDetailsLocal") {
+            yield* driver.statusDetailsLocal(cwd).pipe(unattended);
+          } else if (unasked === "autoPullProjects") {
+            // The check at start-up marks itself: nobody is there to ask for it.
+            const id = ProjectId.make("project-auto-pull");
+            yield* autoPullProjects([{ id, workspaceRoot: cwd }], {
+              ...DEFAULT_SERVER_SETTINGS,
+              projectSettingsOverrides: { [id]: { defaultAutoPull: true } },
+            });
+          } else {
+            yield* driver
+              .execute({
+                operation: "test.fetch",
+                cwd,
+                args: ["fetch", "origin"],
+                allowNonZeroExit: true,
+              })
+              .pipe(unattended);
+          }
           assert.isFalse(yield* fs.exists(ran), `Git nobody asked for ran ${setting}`);
 
-          yield* run;
+          // A pull request's fetch and a new thread's base are asked for, through helpers that
+          // cleanup and schedules share.
+          if (asked === "statusDetailsLocal") yield* driver.statusDetailsLocal(cwd);
+          else if (asked === "fetchRemoteTrackingBranch")
+            yield* Effect.ignore(
+              driver.fetchRemoteTrackingBranch({ cwd, remoteName: "origin", remoteBranch: "pr" }),
+            );
+          else
+            yield* Effect.ignore(
+              driver.fetchWorktreeBaseCommit({
+                cwd,
+                refName: "pr",
+                remote: { remoteName: "origin", branchName: "pr" },
+              }),
+            );
           assert.isTrue(yield* fs.exists(ran));
         }),
     );
@@ -6337,7 +6363,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }).pipe(
           Effect.provideService(HostProcess.Environment, {
             ...(yield* HostProcess.Environment),
-            GIT_SSH: sshWrapperPath,
+            // The status fetch is unattended: its `core.sshCommand` outranks `GIT_SSH`.
+            GIT_SSH_COMMAND: `'${sshWrapperPath}'`,
             GCM_INTERACTIVE: "always",
             GIT_ASKPASS: "git-askpass",
             GIT_TERMINAL_PROMPT: "1",
@@ -8637,6 +8664,35 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             "upstream/feature",
           );
         }),
+    );
+
+    it.effect("runs none of the repository's hooks when a switch takes its new branch back", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* git(cwd, ["remote", "add", "origin", "https://example.invalid/repo.git"]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/feature/taken-back", initialBranch]);
+        // A hook an agent could write in the checkout; it reports a deleted branch only.
+        const ran = path.join(yield* makeTmpDir("git-vcs-driver-hook-ran-"), "ran");
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/reference-transaction",
+          `#!/bin/sh\ngrep -q ' 0\\{40\\} refs/heads/feature' && echo ran >> '${ran}'\nexit 0\n`,
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/reference-transaction"), 0o755);
+        // Never released, so recording the upstream fails and the new branch is taken back.
+        yield* fs.writeFileString(path.join(cwd, ".git", "config.lock"), "");
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* TestClock.withLive(
+          driver.switchRef({ cwd, refName: "origin/feature/taken-back" }),
+        ).pipe(Effect.flip);
+
+        assert.equal(yield* git(cwd, ["branch", "--list", "feature/taken-back"]), "");
+        assert.isFalse(yield* fs.exists(ran), "a rollback nobody asked for ran the hook");
+      }),
     );
 
     it.effect("fetches a remote branch into a tracking branch past another process's lock", () =>

@@ -210,9 +210,11 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
             .map((project) => forkTargetBranchFor(settings, project.id)),
         );
         // Startup checks once, so it waits for the fetch rather than reading the old references.
-        const status = yield* git
-          .statusDetails(cwd)
-          .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
+        const status = yield* git.statusDetails(cwd).pipe(
+          Effect.provideService(GitVcsDriver.AwaitStatusFetch, true),
+          // Nobody asked for the start-up check: no fsmonitor command of the repository runs.
+          Effect.provideService(GitVcsDriver.UnattendedGit, true),
+        );
         const skipReason = forkAutoPullSkipReason(status, targetBranch);
         if (skipReason !== null) {
           yield* Effect.logDebug("Skipped automatic project pull", { cwd, reason: skipReason });
