@@ -12,6 +12,10 @@ import {
   createEnvironmentShellAtoms,
   ShellSnapshotLoader,
 } from "@t3tools/client-runtime/state/shell";
+import {
+  BoundedThreadSnapshotLoader,
+  ThreadHistoryController,
+} from "@t3tools/client-runtime/state/threads";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -94,7 +98,11 @@ const layerRuntime = Layer.mergeAll(
 );
 
 export const connectionAtomRuntime = Atom.runtime(
-  ShellSnapshotLoader.layer.pipe(
+  Layer.mergeAll(
+    ShellSnapshotLoader.layer,
+    BoundedThreadSnapshotLoader.layer,
+    ThreadHistoryController.layer,
+  ).pipe(
     Layer.provideMerge(Connection.layer),
     Layer.provideMerge(Layer.merge(layerRuntime, layerPlatform)),
   ),

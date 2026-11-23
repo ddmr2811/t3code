@@ -29,5 +29,5 @@ export default defineConfig({
   // Browsers ignore frame-ancestors in a <meta>, so it only works as a header. The rest stays in
   // the built page alone: a header computed again here could disagree with what was built.
   preview: { headers: { "Content-Security-Policy": "frame-ancestors 'none'" } },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] },
 });

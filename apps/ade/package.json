@@ -19,7 +19,8 @@
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@types/react": "catalog:",

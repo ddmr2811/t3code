@@ -1,5 +1,5 @@
 // Smoke test of the built ADE against a real T3 server; `vp run --filter @t3tools/ade smoke`.
-// Needs a server with at least one thread, T3_URL (dev server started with T3CODE_DEV_ALLOWED_ORIGINS=<ADE_URL>), ADE_URL (a
+// Needs a server whose newest thread has a finished turn (a Replay `showcase` turn will do), T3_URL (dev server started with T3CODE_DEV_ALLOWED_ORIGINS=<ADE_URL>), ADE_URL (a
 // `preview` of a build made with ADE_CONNECT_ORIGINS=<T3_URL>) and T3_PAIRING_TOKEN (`t3 pair`).
 // ADE_SMOKE_SHOT=<file.png> also saves the connected sidebar.
 import * as NodeAssert from "node:assert/strict";
@@ -65,6 +65,14 @@ try {
   await firstThread.click();
   NodeAssert.match(page.url(), /[?&]hilo=/, "the selected thread is in the address");
   await page.getByRole("heading", { level: 1, name: title, exact: true }).waitFor();
+  // The thread's own snapshot and stream arrive over this session: its turn shows both sides.
+  const conversation = page.getByRole("list", { name: "Conversación" });
+  await conversation.locator(".ade-msg-user").first().waitFor();
+  NodeAssert.notEqual(
+    (await conversation.locator(".ade-msg-agent").first().innerText()).trim(),
+    "",
+    "the agent's reply is shown",
+  );
 
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(

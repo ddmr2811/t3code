@@ -17,6 +17,7 @@ import { memo } from "react";
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import { selectNeedsYouThreads } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
+import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
   environmentProjects,
   environmentThreadShells,
@@ -58,16 +59,25 @@ const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
 
 const needsYouFilterAtom = Atom.make(false).pipe(Atom.keepAlive);
 
-// The selected thread lives in `?hilo=` so a reload, or the timeline later, opens it again.
+// The selected thread lives in `?hilo=`, so a reload opens it again. Each choice is a history
+// entry, so Back returns to the thread before.
 const readSelectedFromUrl = () => new URLSearchParams(window.location.search).get("hilo");
-export const selectedThreadKeyAtom = Atom.make(readSelectedFromUrl()).pipe(Atom.keepAlive);
-
-export function writeSelectedToUrl(key: string | null) {
-  const url = new URL(window.location.href);
-  if (key === null) url.searchParams.delete("hilo");
-  else url.searchParams.set("hilo", key);
-  window.history.replaceState(null, "", url);
-}
+export const selectedThreadKeyAtom = Atom.writable(
+  (get) => {
+    const onPopState = () => get.setSelf(readSelectedFromUrl());
+    window.addEventListener("popstate", onPopState);
+    get.addFinalizer(() => window.removeEventListener("popstate", onPopState));
+    return readSelectedFromUrl();
+  },
+  (ctx, key: string | null) => {
+    if (key === readSelectedFromUrl()) return;
+    const url = new URL(window.location.href);
+    if (key === null) url.searchParams.delete("hilo");
+    else url.searchParams.set("hilo", key);
+    window.history.pushState(null, "", url);
+    ctx.setSelf(key);
+  },
+).pipe(Atom.keepAlive);
 
 export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean }) {
   const { Glyph, text } = STATE_VIEW[props.state];
@@ -155,10 +165,6 @@ export function ThreadTree() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
   const groups = groupThreads(filtering ? needsYou : listed, [...catalog.entries.keys()]);
-  const select = (key: string) => {
-    setSelected(key);
-    writeSelectedToUrl(key);
-  };
   if (groups.length === 0) return null;
   return (
     <nav className="ade-tree" aria-label="Hilos">
@@ -180,7 +186,7 @@ export function ThreadTree() {
                       key={key}
                       thread={thread}
                       selected={key === selected}
-                      onSelect={select}
+                      onSelect={setSelected}
                     />
                   );
                 })}
@@ -195,7 +201,7 @@ export function ThreadTree() {
 
 const NO_THREAD = Atom.make(null);
 
-/** The selected thread's header until the timeline arrives; null with nothing selected. */
+/** The selected thread: its header and its timeline; null with nothing selected. */
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const ref = key === null ? null : parseScopedThreadKey(key);
@@ -206,31 +212,30 @@ export function SelectedThread() {
     ref === null ? null : (catalog.entries.get(ref.environmentId)?.target.label ?? null),
   );
   if (ref === null) return null;
-  const close = () => {
-    setKey(null);
-    writeSelectedToUrl(null);
-  };
   return (
     <section className="ade-thread-view">
-      {thread === null ? (
-        <p className="ade-thread-view-meta">
-          {machine === null
-            ? "Este hilo es de una máquina que ya no está emparejada."
-            : "Cargando el hilo…"}
-        </p>
-      ) : (
-        <>
-          <ThreadStateBadge state={threadState(thread)} withText />
-          <h1>{thread.title}</h1>
+      <header className="ade-thread-view-header">
+        {thread === null ? (
           <p className="ade-thread-view-meta">
-            {machine} ·{" "}
-            <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />
+            {machine === null
+              ? "Este hilo es de una máquina que ya no está emparejada."
+              : "Cargando el hilo…"}
           </p>
-        </>
-      )}
-      <button type="button" className="ade-button-quiet" onClick={close}>
-        Volver al resumen
-      </button>
+        ) : (
+          <div>
+            <ThreadStateBadge state={threadState(thread)} withText />
+            <h1>{thread.title}</h1>
+            <p className="ade-thread-view-meta">
+              {machine} ·{" "}
+              <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />
+            </p>
+          </div>
+        )}
+        <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
+          Volver al resumen
+        </button>
+      </header>
+      {machine === null ? null : <ThreadTimeline key={key} threadRef={ref} />}
     </section>
   );
 }

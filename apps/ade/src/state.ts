@@ -1,9 +1,12 @@
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { createOrchestrationEnvironmentAtoms } from "@t3tools/client-runtime/state/orchestration";
 import { createEnvironmentProjectAtoms } from "@t3tools/client-runtime/state/projects";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import {
+  createEnvironmentThreadDetailAtoms,
   createEnvironmentThreadShellAtoms,
+  createEnvironmentThreadStateAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
@@ -26,7 +29,7 @@ const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
 const threadFamilies = createThreadFamilyAtoms(connectionAtomRuntime, environmentShell.stateAtom);
-const threadEnvironment = createThreadEnvironmentAtoms(
+export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,
 );
@@ -36,6 +39,12 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
+
+export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
+  createEnvironmentThreadStateAtoms(connectionAtomRuntime).stateAtom,
+);
+// For a tool's output the snapshot left out; the timeline asks only when a row is opened.
+export const orchestrationEnvironment = createOrchestrationEnvironmentAtoms(connectionAtomRuntime);
 
 export const environmentProjects = createEnvironmentProjectAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
