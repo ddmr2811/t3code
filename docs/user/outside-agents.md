@@ -144,6 +144,7 @@ without a sign-in:
 id=$(t3 thread start . "Find why the tests are slow")
 t3 thread send "$id" "Now fix it" --wait
 t3 thread show "$id"
+t3 thread answer "$id" "Yes"
 t3 thread list
 ```
 
@@ -161,8 +162,13 @@ Option ids and values depend on the model; `true` and `false` set on/off
 options.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
-2 when the agent waits for an answer you give in the app. Add `--json` for a
-result that always includes the thread id.
+2 when the agent waits for an answer. Add `--json` for a result that always
+includes the thread id.
+
+`answer` replies to the question the agent is waiting on. Text that matches an
+option's label picks that option; other text is a custom answer. When the
+thread waits on several questions, pass `--request <id>`; when one request asks
+several, give each as `--answer <question-id>=<text>`.
 
 ## Remove an agent
 

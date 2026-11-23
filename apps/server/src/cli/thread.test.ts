@@ -180,6 +180,98 @@ it.effect("does not sign in to whatever took over a dead server's port", () =>
   ),
 );
 
+const cliLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NodeCrypto.layer,
+  NetService.layer,
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+);
+
+/** Runs `t3 thread answer` against a live-looking server whose MCP tools answer from `script`. */
+const runAnswer = Effect.fn("test.runAnswer")(function* (
+  args: ReadonlyArray<string>,
+  script: Record<string, Array<unknown>>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-answer-" });
+  yield* persistServerRuntimeState({
+    path: path.join(baseDir, "userdata", "server-runtime.json"),
+    state: yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port: 3_773,
+    }),
+  });
+  const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];
+  using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+    Effect.succeed({
+      call: (tool, input) => {
+        calls.push({ tool, args: input });
+        const next = script[tool]?.shift();
+        return next === undefined
+          ? Effect.die(`unscripted ${tool} call`)
+          : Effect.succeed({ structuredContent: next });
+      },
+    }),
+  );
+  const exit = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+    "answer",
+    threadId,
+    "--base-dir",
+    baseDir,
+    ...args,
+  ]).pipe(Effect.exit);
+  return { exit, calls };
+});
+
+const sizeQuestion = {
+  id: "size",
+  header: "Size",
+  question: "Which size?",
+  options: [
+    { label: "Large", description: "Big", value: "lg" },
+    { label: "Small", description: "Tiny" },
+  ],
+};
+
+it.effect("answer sends a spoken option as that option and other text as a custom answer", () =>
+  Effect.gen(function* () {
+    const requestId = "request-1";
+    for (const [spoken, expected] of [
+      ["  large ", "lg"],
+      ["SMALL", "Small"],
+      ["Something in between", "Something in between"],
+    ] as const) {
+      const { exit, calls } = yield* runAnswer(["--", spoken], {
+        t3_pending_request: [
+          { requestIds: [requestId] },
+          { requestId, questions: [sizeQuestion] },
+          { sequence: 1 },
+        ],
+      });
+      assert.isTrue(exit._tag === "Success", spoken);
+      assert.deepStrictEqual(calls.at(-1), {
+        tool: "t3_pending_request",
+        args: { action: "respond", threadId, requestId, answers: { size: expected } },
+      });
+    }
+  }).pipe(Effect.scoped, Effect.provide(cliLayer)),
+);
+
+it.effect("answer without --request answers nothing when two questions are pending", () =>
+  Effect.gen(function* () {
+    const { exit, calls } = yield* runAnswer(["Large"], {
+      t3_pending_request: [{ requestIds: ["request-1", "request-2"] }],
+    });
+
+    assert.isTrue(exit._tag === "Failure");
+    assert.deepStrictEqual(
+      calls.map((call) => (call.args as { readonly action: string }).action),
+      ["list"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(cliLayer)),
+);
+
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
   const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];

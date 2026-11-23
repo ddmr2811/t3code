@@ -6,6 +6,7 @@ import {
   OrchestratorMcpThreadWaitResult,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadDetail,
@@ -113,7 +114,7 @@ export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputEr
   override readonly [Runtime.errorExitCode] = 2;
 
   override get message(): string {
-    return `Thread ${this.threadId} is waiting for an answer. Open it in T3 Code to respond.`;
+    return `Thread ${this.threadId} is waiting for an answer. Give it with t3 thread answer or in T3 Code.`;
   }
 }
 
@@ -997,6 +998,162 @@ const threadSendCommand = Command.make("send", {
   ),
 );
 
+const PendingRequestList = Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) });
+const PendingQuestion = Schema.Struct({
+  id: Schema.String,
+  question: Schema.String,
+  options: Schema.Array(
+    Schema.Struct({ label: Schema.String, value: Schema.optional(Schema.String) }),
+  ),
+  multiSelect: Schema.optional(Schema.Boolean),
+  allowCustomAnswer: Schema.optional(Schema.Boolean),
+  required: Schema.optional(Schema.Boolean),
+});
+type PendingQuestion = typeof PendingQuestion.Type;
+const PendingRequestRead = Schema.Struct({
+  requestId: RuntimeRequestId,
+  questions: Schema.Array(PendingQuestion),
+});
+
+const pendingRequestId = Effect.fn("cli.thread.pendingRequestId")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  request: Option.Option<string>,
+) {
+  if (Option.isSome(request)) return request.value;
+  const { requestIds } = yield* tools.call(
+    "t3_pending_request",
+    { action: "list", threadId },
+    PendingRequestList,
+  );
+  if (requestIds.length === 1) return requestIds[0]!;
+  return yield* new ThreadUsageError({
+    detail:
+      requestIds.length === 0
+        ? `Thread ${threadId} has no pending question.`
+        : `Thread ${threadId} has ${requestIds.length} pending questions. Pass --request with one of: ${requestIds.join(", ")}.`,
+  });
+});
+
+/** Text naming an option, in any case, picks it, as a click in the app would; other text is a custom answer. */
+const answerFor = (question: PendingQuestion, text: string) => {
+  const wanted = text.trim();
+  const option = question.options.find(
+    (candidate) => candidate.label.trim().toLowerCase() === wanted.toLowerCase(),
+  );
+  if (option !== undefined) {
+    const value = option.value ?? option.label.trim();
+    return Effect.succeed(question.multiSelect === true ? [value] : value);
+  }
+  if (question.allowCustomAnswer === false) {
+    const labels = question.options.map((candidate) => candidate.label).join(", ");
+    return Effect.fail(
+      new ThreadUsageError({
+        detail: `'${wanted}' is not an option for "${question.question}". Choose one of: ${labels}.`,
+      }),
+    );
+  }
+  return Effect.succeed(wanted);
+};
+
+const buildAnswers = Effect.fn("cli.thread.buildAnswers")(function* (
+  questions: ReadonlyArray<PendingQuestion>,
+  text: Option.Option<string>,
+  pairs: ReadonlyArray<string>,
+) {
+  const listed = () => questions.map((question) => `${question.id} (${question.question})`);
+  if (Option.isSome(text) === pairs.length > 0) {
+    return yield* new ThreadUsageError({
+      detail: "Pass the answer text, or --answer <question-id>=<text> for each question.",
+    });
+  }
+  if (Option.isSome(text)) {
+    const [only] = questions;
+    if (only === undefined || questions.length > 1) {
+      return yield* new ThreadUsageError({
+        detail: `This request asks ${questions.length} questions. Answer each with --answer <question-id>=<text>: ${listed().join("; ")}.`,
+      });
+    }
+    return { [only.id]: yield* answerFor(only, text.value) };
+  }
+  const answers: Record<string, string | ReadonlyArray<string>> = {};
+  for (const pair of pairs) {
+    const separator = pair.indexOf("=");
+    const id = separator < 0 ? "" : pair.slice(0, separator).trim();
+    const question = questions.find((candidate) => candidate.id === id);
+    if (question === undefined) {
+      return yield* new ThreadUsageError({
+        detail: `--answer '${pair}' names no question. The questions are: ${listed().join("; ")}.`,
+      });
+    }
+    if (id in answers) {
+      return yield* new ThreadUsageError({ detail: `--answer ${id} is given more than once.` });
+    }
+    answers[id] = yield* answerFor(question, pair.slice(separator + 1));
+  }
+  const missing = questions.filter(
+    (question) => question.required !== false && !(question.id in answers),
+  );
+  if (missing.length > 0) {
+    return yield* new ThreadUsageError({
+      detail: `Answer every question. Missing: ${missing.map((question) => question.id).join(", ")}.`,
+    });
+  }
+  return answers;
+});
+
+const threadAnswerCommand = Command.make("answer", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  answer: Argument.String("answer").pipe(
+    Argument.withDescription(
+      "Answer to a request with one question, or - to read it from stdin. Text matching an option's label picks that option.",
+    ),
+    Argument.optional,
+  ),
+  request: Flag.String("request").pipe(
+    Flag.withDescription("Pending request id. Needed when the thread waits on more than one."),
+    Flag.optional,
+  ),
+  answers: Flag.String("answer").pipe(
+    Flag.withDescription(
+      "Answer to one question as <question-id>=<text>, for a request that asks several. Repeat for each.",
+    ),
+    Flag.atLeast(0),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Answer a question a thread's agent is waiting on."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      const text = Option.isSome(flags.answer)
+        ? Option.some(yield* readMessageArgument(flags.answer.value))
+        : Option.none();
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.answer")(function* (tools) {
+          const requestId = yield* pendingRequestId(tools, threadId, flags.request);
+          const { questions } = yield* tools.call(
+            "t3_pending_request",
+            { action: "read", threadId, requestId },
+            PendingRequestRead,
+          );
+          const answers = yield* buildAnswers(questions, text, flags.answers);
+          yield* tools.call(
+            "t3_pending_request",
+            { action: "respond", threadId, requestId, answers },
+            Schema.Unknown,
+          );
+          yield* flags.json
+            ? printJson({ threadId, requestId, answers })
+            : Console.log("Answered.");
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 const threadShowCommand = Command.make("show", {
   ...projectLocationFlags,
   thread: threadArgument,
@@ -1061,6 +1218,7 @@ export const threadCommand = Command.make("thread").pipe(
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadAnswerCommand,
     threadShowCommand,
   ]),
 );
