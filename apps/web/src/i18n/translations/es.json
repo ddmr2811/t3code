@@ -12973,7 +12973,7 @@
   "d2a324d1fc97a8e7": "Sin color",
   "4facb6bb028b2666": "Color",
   "00a6d0354a69334e": "Decisiones",
-  "d937072ddb177119": "{count, plural, =0 {Nada pendiente} other {{count} pendientes}}",
+  "d937072ddb177119": "{count, plural, =0 {Nada pendiente} one {{count} pendiente} other {{count} pendientes}}",
   "b3ec33adf236d657": "Cerrar decisiones",
   "3682fba88f84145a": "Aprobación",
   "c4061eb46b5d3679": "Pregunta",
