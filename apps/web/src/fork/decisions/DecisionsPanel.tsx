@@ -67,8 +67,12 @@ export function DecisionsPanel() {
           {},
           {
             observe: (event, consumed) => {
-              if (consumed || event.defaultPrevented || event.repeat || event.isComposing) return;
-              if (event.key !== "Escape") return;
+              if (event.key !== "Escape" || event.repeat || event.isComposing) return;
+              // ProseMirror prevents every Escape; when a composer menu takes the key, the
+              // composer also stops it, so one that still arrives from an editor is free.
+              const fromEditor =
+                event.target instanceof Element && event.target.closest(".ProseMirror") !== null;
+              if (consumed && !fromEditor) return;
               event.preventDefault();
               close();
             },

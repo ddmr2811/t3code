@@ -1,6 +1,8 @@
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { createRef, type ReactNode } from "react";
+
 import { render } from "../../../test/render";
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -9,10 +11,11 @@ vi.mock(import("../../state/server"), async (original) => {
   return { ...actual, primaryServerKeybindingsAtom: Atom.make([]) };
 });
 
+import { ComposerPromptEditorTiptap } from "~/components/ComposerPromptEditorTiptap";
 import { DecisionsPanel } from "./DecisionsPanel";
 import { NeedsYouBlock } from "./NeedsYouBlock";
 
-async function renderOpenPanel() {
+async function renderOpenPanel(extra: ReactNode = null) {
   await using stack = new AsyncDisposableStack();
   const screen = stack.use(
     await render(
@@ -20,6 +23,7 @@ async function renderOpenPanel() {
         <NeedsYouBlock />
         <DecisionsPanel />
         <button type="button">Outside</button>
+        {extra}
       </>,
     ),
   );
@@ -54,6 +58,33 @@ describe("decisions panel Escape", () => {
     } finally {
       document.removeEventListener("keydown", takeEscape);
     }
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(panel()).toBeNull());
+  });
+
+  it("closes from the composer unless the composer's own menu takes Escape", async () => {
+    let menuOpen = true;
+    const { screen, panel } = await renderOpenPanel(
+      <ComposerPromptEditorTiptap
+        editorRef={createRef()}
+        value=""
+        cursor={0}
+        richTextEnabled
+        disabled={false}
+        contextRecords={new Map()}
+        skills={[]}
+        placeholder=""
+        onChange={() => {}}
+        onPaste={() => {}}
+        // As ChatComposer does: true only while an @, / or suggestion menu is open.
+        onCommandKeyDown={(key) => key === "Escape" && menuOpen}
+      />,
+    );
+    await using _screen = screen;
+    await userEvent.click(screen.container.querySelector(".tiptap")!);
+    await userEvent.keyboard("{Escape}");
+    expect(panel()).not.toBeNull();
+    menuOpen = false;
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(panel()).toBeNull());
   });

@@ -29,16 +29,6 @@ export function NeedsYouBlock() {
           : "py-2 text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
-      {waiting ? (
-        <DitherFill
-          color="currentColor"
-          edge="right"
-          length={36}
-          from={0.75}
-          to={0}
-          className="-z-10 inset-y-0 right-0 w-2/3 opacity-30"
-        />
-      ) : null}
       <span
         aria-hidden
         className={cn(
@@ -69,6 +59,19 @@ export function NeedsYouBlock() {
           </span>
         ) : null}
       </span>
+      {waiting ? (
+        // Its own slot after the words, out to the block's edges, so it never sits under a letter.
+        <span aria-hidden className="relative -my-3 -me-4 min-w-0 flex-1 self-stretch">
+          <DitherFill
+            color="currentColor"
+            edge="right"
+            length={16}
+            from={0.75}
+            to={0}
+            className="inset-0 opacity-30"
+          />
+        </span>
+      ) : null}
     </button>
   );
 }
