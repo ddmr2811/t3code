@@ -47,7 +47,7 @@ const INTERACTION_MODE_TEXT: Record<ProviderInteractionMode, string> = {
 };
 
 // Kept for the session, so a draft survives moving to another thread and back.
-const draftAtom = Atom.family((_threadKey: string) =>
+export const draftAtom = Atom.family((_threadKey: string) =>
   Atom.make<TurnDraft>({ text: "" }).pipe(Atom.keepAlive),
 );
 
@@ -56,7 +56,7 @@ const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 const NO_PROVIDERS: ReadonlyArray<ProviderChoice> = [];
 
 /** Runs one thread command; the failure comes back as Spanish text, never thrown. */
-async function runCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
+export async function runCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   registry: Parameters<typeof runAtomCommand>[0],
   command: AtomCommand<W, A, E>,
   input: W,

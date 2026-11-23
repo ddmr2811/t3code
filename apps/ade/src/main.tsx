@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 // Shared with apps/web's fork rather than copied: same fonts, same dither code.
 import { gradientFillStyle } from "../../web/src/fork/dither/style.ts";
 import "./ade.css";
+import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
 import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
 import {
   NeedsYouBlock,
@@ -52,6 +53,7 @@ function Shell() {
         />
         <MainContent />
       </main>
+      <DecisionsPanel />
     </div>
   );
 }

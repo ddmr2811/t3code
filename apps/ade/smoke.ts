@@ -1,5 +1,5 @@
 // Smoke test of the built ADE against a real T3 dev server, on Replay (dev) turns only. Needs:
-// a newest thread with a finished Replay `command-output` turn; T3_URL (T3CODE_DEV_ALLOWED_ORIGINS=
+// a newest thread with a finished Replay `command-output` turn and nothing else pending; T3_URL (T3CODE_DEV_ALLOWED_ORIGINS=
 // <ADE_URL>); ADE_URL (built with ADE_CONNECT_ORIGINS=<T3_URL>); T3_PAIRING_TOKEN and, from
 // `t3 pair --scope orchestration:read`, T3_READONLY_PAIRING_TOKEN. ADE_SMOKE_SHOT(S) save captures.
 import * as NodeAssert from "node:assert/strict";
@@ -18,22 +18,28 @@ const readOnlyPairingToken = env("T3_READONLY_PAIRING_TOKEN");
 const shots = process.env.ADE_SMOKE_SHOTS;
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-const shot = async (name: string) => {
-  if (shots) await page.screenshot({ path: `${shots}/${name}.png` });
-};
 const consoleText: Array<string> = [];
 const requestUrls: Array<string> = [];
 const granted: Array<{ token_type: string; scope: string; access_token: string }> = [];
-page.on("console", (message) => consoleText.push(message.text()));
-page.on("request", (request) => requestUrls.push(request.url()));
-page.on("websocket", (socket) => requestUrls.push(socket.url()));
-page.on("response", async (response) => {
-  if (response.url().endsWith("/oauth/token") && response.ok()) granted.push(await response.json());
-});
+// Each page is its own browser profile: its own key, its own session.
+const openPage = async () => {
+  const opened = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  opened.on("console", (message) => consoleText.push(message.text()));
+  opened.on("request", (request) => requestUrls.push(request.url()));
+  opened.on("websocket", (socket) => requestUrls.push(socket.url()));
+  opened.on("response", async (response) => {
+    if (response.url().endsWith("/oauth/token") && response.ok())
+      granted.push(await response.json());
+  });
+  return opened;
+};
+const page = await openPage();
+const shot = async (name: string, of = page) => {
+  if (shots) await of.screenshot({ path: `${shots}/${name}.png` });
+};
 const linkFor = (token: string) => `${adeUrl}/?host=${encodeURIComponent(t3Url)}#token=${token}`;
 const pairingLink = linkFor(pairingToken);
-const pair = () => page.getByRole("button", { name: "Emparejar", exact: true }).click();
+const pair = (on = page) => on.getByRole("button", { name: "Emparejar", exact: true }).click();
 
 try {
   const opened = await page.goto(pairingLink);
@@ -126,6 +132,124 @@ try {
     "a message taken out of the queue never runs",
   );
 
+  // The agent's requests are answered above the composer, and the turn goes on. Replay runs on
+  // the generic ACP driver, as Hermes does: it sends no option list, so no wider grant is offered.
+  const requests = page.getByRole("region", { name: "Peticiones pendientes" });
+  const approval = requests.getByRole("article", { name: /^Aprobación/ });
+  const sendWith = async (scenario: string, text: string) => {
+    await model.click();
+    await composer.getByRole("radio", { name: scenario }).click();
+    await message.fill(text);
+    await message.press("Enter");
+  };
+  // With full access the server answers for the user; asking is a mode of the thread.
+  await composer.locator("summary", { hasText: "Modo:" }).click();
+  await composer.getByRole("radio", { name: "Pedir aprobación" }).click();
+  await sendWith("Write approval", `Pide permiso ${run}`);
+  await approval.getByText(".codex-probe-write-action.txt").waitFor();
+  NodeAssert.deepEqual(
+    await approval.getByRole("button").allInnerTexts(),
+    ["Aprobar esta vez", "Rechazar", "Cancelar"],
+    "an agent that offers allow_always gets no session or always button",
+  );
+  await shot("aprobacion-en-el-hilo");
+  const repliesBeforeApproval = await conversation.locator(".ade-msg-agent").count();
+  await approval.getByRole("button", { name: "Aprobar esta vez" }).click();
+  await approval.waitFor({ state: "detached" });
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".ade-msg-agent").length > count,
+    repliesBeforeApproval,
+  );
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
+  await sendWith("Question", `Pregunta ${run}`);
+  const question = requests.getByRole("form", { name: "Pregunta del agente" });
+  const answer = question.getByRole("button", { name: "Enviar respuesta" });
+  await question
+    .getByText("Should this fixture prefer strict schemas or UI flexibility?")
+    .waitFor();
+  NodeAssert.ok(await answer.isDisabled(), "an unanswered question cannot be sent");
+  await shot("pregunta-con-opciones");
+  await question.getByRole("button", { name: /^Strict schemas/ }).click();
+  await answer.click();
+  await question.waitFor({ state: "detached" });
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
+  // The decisions panel opens from the block, answers in place, and closes with nothing left.
+  await sendWith("Showcase", `Decide en el panel ${run}`);
+  const sidebar = page.getByRole("complementary").first();
+  const panel = page.getByRole("complementary", { name: "Decisiones" });
+  await panel.getByRole("article", { name: /^Aprobación/ }).waitFor();
+  await panel.getByRole("button", { name: "Cerrar" }).click();
+  await panel.waitFor({ state: "detached" });
+  await sidebar.getByRole("button", { name: /1\s*te necesita/ }).click();
+  // The request's own text is only "Changed files": the path comes from the edit it is about.
+  await panel.getByText(/\/src\/math\.ts$/).waitFor();
+  await shot("panel-de-decisiones");
+  await panel.getByRole("button", { name: "Aprobar esta vez" }).click();
+  await panel.waitFor({ state: "detached" });
+  await approval.waitFor({ state: "detached" });
+  NodeAssert.equal(
+    await sidebar.getByRole("button", { name: /te necesita/ }).count(),
+    0,
+    "with nothing pending the block is not a button",
+  );
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+  await shot("bloque-en-cero");
+
+  // A read-only session, in another browser, sees the request but cannot answer it: the ADE
+  // disables it, and an answer that gets past that is refused by the server and shown.
+  await sendWith("Write approval", `Solo lectura ${run}`);
+  await approval.waitFor();
+  const reader = await openPage();
+  await reader.goto(linkFor(readOnlyPairingToken));
+  await pair(reader);
+  await reader.getByText("Conectada", { exact: true }).first().waitFor();
+  NodeAssert.equal(granted.at(-1)?.scope, "orchestration:read", "the server granted read only");
+  await reader
+    .getByRole("navigation", { name: "Hilos" })
+    .locator(".ade-thread-title")
+    .first()
+    .click();
+  const readerComposer = reader.getByRole("region", { name: "Compositor" });
+  const readerMessage = readerComposer.getByRole("textbox", { name: "Mensaje" });
+  const readerApproval = reader
+    .getByRole("region", { name: "Peticiones pendientes" })
+    .getByRole("article", { name: /^Aprobación/ });
+  const readerApprove = readerApproval.getByRole("button", { name: "Aprobar esta vez" });
+  await readerApprove.waitFor();
+  await readerComposer.getByText(/^Solo lectura/).waitFor();
+  NodeAssert.ok(await readerMessage.isDisabled(), "a read-only machine's composer is disabled");
+  NodeAssert.ok(await readerApprove.isDisabled(), "a read-only session cannot approve");
+  NodeAssert.equal(
+    await reader.getByRole("complementary", { name: "Decisiones" }).count(),
+    0,
+    "a session that cannot answer is not asked to",
+  );
+  await shot("solo-lectura", reader);
+  await readerApproval.locator("fieldset").evaluate((field) => field.removeAttribute("disabled"));
+  await readerApprove.click();
+  await readerApproval.getByRole("alert").filter({ hasText: "No se pudo responder" }).waitFor();
+  await approval.waitFor();
+  await readerComposer
+    .locator("fieldset")
+    .first()
+    .evaluate((field) => field.removeAttribute("disabled"));
+  await readerMessage.fill("No debería llegar");
+  await readerMessage.press("Enter");
+  await readerComposer.getByRole("alert").filter({ hasText: "No se pudo" }).waitFor();
+  await shot("solo-lectura-rechazo", reader);
+  // Answered from the first browser, the request leaves the second one too, with no error left.
+  await approval.getByRole("button", { name: "Rechazar" }).click();
+  await readerApproval.waitFor({ state: "detached" });
+  NodeAssert.equal(
+    await reader.getByRole("region", { name: "Peticiones pendientes" }).getByRole("alert").count(),
+    0,
+    "a request answered elsewhere leaves without an error",
+  );
+  await reader.close();
+  await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
+
   NodeAssert.equal(granted[0]?.token_type, "DPoP", "the session is bound to this browser's key");
   NodeAssert.equal(
     granted[0]?.scope.split(" ").toSorted().join(" "),
@@ -193,26 +317,6 @@ try {
   );
   NodeAssert.doesNotMatch(forgotten, /accessToken/, "removing a machine forgets its credential");
 
-  // A read-only session sees threads but cannot send: the ADE disables the composer, and a send
-  // that gets past it anyway is refused by the server and shown.
-  await page.goto(linkFor(readOnlyPairingToken));
-  await pair();
-  await page.getByText("Conectada", { exact: true }).first().waitFor();
-  NodeAssert.equal(granted.at(-1)?.scope, "orchestration:read", "the server granted read only");
-  await firstThread.click();
-  await composer.getByText(/^Solo lectura/).waitFor();
-  await conversation.locator(".ade-msg-user").first().waitFor();
-  NodeAssert.ok(await message.isDisabled(), "a read-only machine's composer is disabled");
-  await shot("compositor-solo-lectura");
-  await composer
-    .locator("fieldset")
-    .first()
-    .evaluate((field) => field.removeAttribute("disabled"));
-  await message.fill("No debería llegar");
-  await message.press("Enter");
-  await composer.getByRole("alert").filter({ hasText: "No se pudo" }).waitFor();
-  await shot("compositor-solo-lectura-rechazo");
-
   const secrets = [
     pairingToken,
     readOnlyPairingToken,
@@ -233,7 +337,7 @@ try {
   }
   console.log("ADE smoke: ok");
 } catch (error) {
-  console.error("Sidebar at failure:", await page.locator("aside").innerText());
+  console.error("Sidebar at failure:", await page.locator("aside").first().innerText());
   await shot("fallo");
   throw error;
 } finally {

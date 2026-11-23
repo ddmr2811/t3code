@@ -383,7 +383,7 @@ body {
   letter-spacing: 0.06em;
 }
 
-.ade-needs-you[aria-pressed="true"] .ade-needs-you-action {
+.ade-needs-you[aria-expanded="true"] .ade-needs-you-action {
   background: var(--ade-text);
   color: var(--ade-bg);
 }
@@ -963,4 +963,224 @@ body {
 
 .ade-queued .ade-error {
   flex-basis: 100%;
+}
+
+/* Decisions: what the agents wait on, above the composer and in the panel. */
+.ade-shell:has(.ade-decisions) {
+  grid-template-columns: 280px 1fr 400px;
+}
+
+.ade-shell > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+.ade-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
+  border-left: 1px solid var(--ade-divider);
+}
+
+.ade-decisions > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ade-decisions > header .ade-label {
+  margin: 0;
+  padding: 0;
+}
+
+.ade-decisions h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ade-decisions > header .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-decision {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+}
+
+.ade-decision h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ade-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ade-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ade-requests {
+  display: grid;
+  grid-template-columns: minmax(0, 696px);
+  justify-content: center;
+  gap: 8px;
+  max-height: 45vh;
+  padding: 0 32px;
+  overflow-y: auto;
+}
+
+.ade-requests:empty {
+  display: none;
+}
+
+.ade-requests > :first-child {
+  margin-top: 12px;
+}
+
+.ade-request-child {
+  display: grid;
+  gap: 8px;
+}
+
+.ade-request {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--ade-accent);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+}
+
+.ade-request fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ade-request-tag {
+  margin: 0;
+  color: var(--ade-accent);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ade-request-detail {
+  max-height: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  font: 13px var(--ade-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ade-request-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ade-request-actions .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-request .ade-button-quiet:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ade-request-broad {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ade-border);
+}
+
+.ade-question {
+  display: grid;
+  gap: 6px;
+}
+
+.ade-question-header {
+  margin: 0;
+  color: var(--ade-text-tertiary);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+}
+
+.ade-question-text {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ade-question-options {
+  display: grid;
+  gap: 6px;
+}
+
+.ade-option {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ade-option[aria-pressed="true"] {
+  border-color: var(--ade-accent);
+  background: color-mix(in srgb, var(--ade-accent) 16%, transparent);
+}
+
+.ade-option:disabled {
+  cursor: default;
+}
+
+.ade-option-description {
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-question-custom {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: inherit;
+  resize: vertical;
 }

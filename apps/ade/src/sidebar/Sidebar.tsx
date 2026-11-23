@@ -15,9 +15,14 @@ import { Atom } from "effect/reactivity";
 import { memo } from "react";
 
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
-import { selectNeedsYouThreads } from "../../../web/src/fork/decisions/decisions.logic.ts";
+import {
+  type DecisionsPanelChoice,
+  isDecisionsPanelOpen,
+  selectNeedsYouThreads,
+} from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer } from "../composer/Composer.tsx";
+import { ThreadRequests } from "../decisions/Requests.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
   environmentProjects,
@@ -58,7 +63,21 @@ const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
   return selectNeedsYouThreads(threads).filter((thread) => operable.has(thread.environmentId));
 });
 
-const needsYouFilterAtom = Atom.make(false).pipe(Atom.keepAlive);
+const decisionsChoiceAtom = Atom.make<DecisionsPanelChoice | null>(null).pipe(Atom.keepAlive);
+
+/** The waiting threads this ADE can answer, and whether their panel is open. */
+export function useDecisionsPanel() {
+  const threads = useAtomValue(needsYouThreadsAtom);
+  const [choice, setChoice] = useAtom(decisionsChoiceAtom);
+  const keys = threads.map((thread) =>
+    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+  );
+  return {
+    threads,
+    open: isDecisionsPanelOpen(choice, keys),
+    setOpen: (open: boolean) => setChoice({ open, seenKeys: keys }),
+  };
+}
 
 // The selected thread lives in `?hilo=`, so a reload opens it again. Each choice is a history
 // entry, so Back returns to the thread before.
@@ -91,11 +110,11 @@ export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean
 }
 
 export function NeedsYouBlock() {
-  const count = useAtomValue(needsYouThreadsAtom).length;
-  const [filtering, setFiltering] = useAtom(needsYouFilterAtom);
+  const { threads, open, setOpen } = useDecisionsPanel();
+  const count = threads.length;
   const words = count === 1 ? "te necesita" : "te necesitan";
   if (count === 0) {
-    // Nothing to filter to, so nothing to press.
+    // Nothing to decide, so nothing to press.
     return (
       <div className="ade-needs-you" data-empty>
         <span className="ade-needs-you-count">0</span>
@@ -107,13 +126,16 @@ export function NeedsYouBlock() {
     <button
       type="button"
       className="ade-needs-you"
-      aria-pressed={filtering}
-      onClick={() => setFiltering(!filtering)}
+      aria-expanded={open}
+      aria-controls="ade-decisions"
+      onClick={() => setOpen(!open)}
     >
       <span className="ade-needs-you-count">{count}</span>
       <span className="ade-needs-you-words">
         {words}
-        <span className="ade-needs-you-action">{filtering ? "Ver todos" : "Ver solo estos"}</span>
+        <span className="ade-needs-you-action">
+          {open ? "Ocultar decisiones" : "Ver decisiones"}
+        </span>
       </span>
       <span
         aria-hidden
@@ -130,7 +152,7 @@ export function NeedsYouBlock() {
   );
 }
 
-function ProjectTitle(props: { environmentId: EnvironmentId; projectId: ProjectId }) {
+export function ProjectTitle(props: { environmentId: EnvironmentId; projectId: ProjectId }) {
   const title = useAtomValue(
     environmentProjects.environmentProjectIndexAtom(props.environmentId),
     (index) => index.get(props.projectId)?.title ?? null,
@@ -160,12 +182,10 @@ const ThreadRow = memo(function ThreadRow(props: {
 });
 
 export function ThreadTree() {
-  const needsYou = useAtomValue(needsYouThreadsAtom);
   const listed = useAtomValue(listedThreadsAtom);
-  const filtering = useAtomValue(needsYouFilterAtom) && needsYou.length > 0;
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
-  const groups = groupThreads(filtering ? needsYou : listed, [...catalog.entries.keys()]);
+  const groups = groupThreads(listed, [...catalog.entries.keys()]);
   if (groups.length === 0) return null;
   return (
     <nav className="ade-tree" aria-label="Hilos">
@@ -238,7 +258,10 @@ export function SelectedThread() {
       </header>
       {machine === null ? null : <ThreadTimeline key={key} threadRef={ref} />}
       {machine === null || thread === null ? null : (
-        <Composer key={key} threadRef={ref} thread={thread} />
+        <>
+          <ThreadRequests key={`requests:${key}`} threadRef={ref} onOpenThread={setKey} />
+          <Composer key={key} threadRef={ref} thread={thread} />
+        </>
       )}
     </section>
   );
