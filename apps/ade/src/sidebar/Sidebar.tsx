@@ -1,4 +1,4 @@
-import { useAtom, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
@@ -70,6 +70,12 @@ const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
 });
 
 const decisionsChoiceAtom = Atom.make<DecisionsPanelChoice | null>(null).pipe(Atom.keepAlive);
+
+/** Controls the mobile sidebar drawer on narrow viewports (≤ 720 px); unused on desktop. */
+export const mobileSidebarOpenAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ade-mobile-sidebar-open"),
+);
 
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
@@ -191,8 +197,13 @@ export function ThreadTree() {
   const listed = useAtomValue(listedThreadsAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
+  const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const groups = groupThreads(listed, [...catalog.entries.keys()]);
   if (groups.length === 0) return null;
+  const selectThread = (key: string) => {
+    setSelected(key);
+    setMobileSidebar(false);
+  };
   return (
     <nav className="ade-tree" aria-label="Hilos">
       {groups.map((machine) => (
@@ -213,7 +224,7 @@ export function ThreadTree() {
                       key={key}
                       thread={thread}
                       selected={key === selected}
-                      onSelect={setSelected}
+                      onSelect={selectThread}
                     />
                   );
                 })}
@@ -354,6 +365,9 @@ export function SelectedThread() {
             <p className="ade-thread-view-meta">
               {machine} ·{" "}
               <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />
+              {thread.branch === null ? null : ` · ${thread.branch}`}
+              {thread.worktreePath === null ? null : " · worktree"}
+              {thread.modelSelection?.model ? ` · ${thread.modelSelection.model}` : null}
             </p>
           </div>
         )}

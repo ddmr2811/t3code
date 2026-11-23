@@ -1,4 +1,5 @@
-import { useAtom, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { KanbanIcon } from "@phosphor-icons/react/dist/csr/Kanban";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
@@ -11,11 +12,14 @@ import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { memo } from "react";
 
+import { allCoordinationEntriesAtom } from "../coordination/coordination.state.ts";
+import { ProjectBoard } from "../coordination/ProjectBoard.tsx";
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
 import { ExtensionPanel, MachineExtensions } from "../extensions/Extensions.tsx";
 import { useMachineStatus } from "../Machines.tsx";
 import {
   listedThreadsAtom,
+  mobileSidebarOpenAtom,
   ProjectTitle,
   selectedThreadKeyAtom,
   ThreadStateBadge,
@@ -24,13 +28,16 @@ import type { ThreadState } from "../sidebar/sidebar.logic.ts";
 import { serverEnvironment } from "../state.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
 
-type View = "resumen" | "tablero";
+export type View = "resumen" | "proyectos" | "tablero";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
-const readView = (): View =>
-  new URLSearchParams(window.location.search).get("vista") === "tablero" ? "tablero" : "resumen";
-const viewAtom = Atom.writable(
+const readView = (): View => {
+  const value = new URLSearchParams(window.location.search).get("vista");
+  if (value === "tablero" || value === "proyectos") return value;
+  return "resumen";
+};
+export const viewAtom = Atom.writable(
   (get) => {
     const onPopState = () => get.setSelf(readView());
     window.addEventListener("popstate", onPopState);
@@ -39,8 +46,8 @@ const viewAtom = Atom.writable(
   },
   (_ctx, view: View) => {
     const url = new URL(window.location.href);
-    if (view === "tablero") url.searchParams.set("vista", view);
-    else url.searchParams.delete("vista");
+    if (view === "resumen") url.searchParams.delete("vista");
+    else url.searchParams.set("vista", view);
     url.searchParams.delete("hilo");
     if (url.href === window.location.href) return;
     window.history.pushState(null, "", url);
@@ -96,13 +103,17 @@ const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as 
 
 export function ViewNav() {
   const [view, setView] = useAtom(viewAtom);
+  const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const link = (target: View, label: string, Icon: typeof KanbanIcon) => (
     <button
       type="button"
       className="ade-view-link"
       aria-current={!threadOpen && view === target ? "page" : undefined}
-      onClick={() => setView(target)}
+      onClick={() => {
+        setView(target);
+        setMobileSidebar(false);
+      }}
     >
       <Icon size={16} aria-hidden />
       {label}
@@ -111,6 +122,7 @@ export function ViewNav() {
   return (
     <nav className="ade-views" aria-label="Vistas">
       {link("resumen", "Resumen", SquaresFourIcon)}
+      {link("proyectos", "Proyectos", FoldersIcon)}
       {link("tablero", "Tablero", KanbanIcon)}
     </nav>
   );
@@ -330,12 +342,58 @@ function Sessions() {
   );
 }
 
+function CoordinationSummaryCard() {
+  const { byEnv } = useAtomValue(allCoordinationEntriesAtom);
+  const setView = useAtomSet(viewAtom);
+  const entries = [...byEnv.values()].flat();
+  const projects = new Set(entries.map((entry) => entry.projectKey)).size;
+  const blocked = entries.filter((entry) => entry.status === "blocked").length;
+  const waiting = entries.filter((entry) => entry.status === "waiting").length;
+  return (
+    <section className="ade-summary-card">
+      <h2 className="ade-label">Tablero por proyecto</h2>
+      <p className="ade-summary-figure" data-level={blocked > 0 ? "full" : undefined}>
+        {entries.length}
+      </p>
+      <p className="ade-summary-caption">
+        {entries.length === 0
+          ? "Sin notas activas · coordina hilos por proyecto"
+          : `${entries.length === 1 ? "nota" : "notas"} en ${projects === 1 ? "1 proyecto" : `${projects} proyectos`}`}
+      </p>
+      {entries.length === 0 ? null : (
+        <ul className="ade-summary-rows">
+          <li>
+            <span className="ade-summary-name">Bloqueados</span>
+            <span className="ade-summary-aside" data-level={blocked > 0 ? "full" : undefined}>
+              {blocked}
+            </span>
+          </li>
+          <li>
+            <span className="ade-summary-name">Esperando</span>
+            <span className="ade-summary-aside" data-level={waiting > 0 ? "high" : undefined}>
+              {waiting}
+            </span>
+          </li>
+        </ul>
+      )}
+      <button
+        type="button"
+        className="ade-button-quiet ade-summary-action"
+        onClick={() => setView("proyectos")}
+      >
+        Abrir proyectos
+      </button>
+    </section>
+  );
+}
+
 function Summary() {
   return (
     <div className="ade-summary">
       <h1>Resumen</h1>
       <div className="ade-summary-cards">
         <MachinesCard />
+        <CoordinationSummaryCard />
         <UsageCard />
         <PullRequestsCard />
       </div>
@@ -377,14 +435,23 @@ function Board() {
 export function Overview() {
   const paired = useAtomValue(environmentCatalog.catalogValueAtom).entries.size > 0;
   const view = useAtomValue(viewAtom);
+  const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   if (!paired) {
     return (
       <section className="ade-empty">
         <PlugsIcon size={28} />
         <h1>Sin conectar</h1>
         <p>Empareja una máquina con T3 Code desde la barra lateral para empezar.</p>
+        <button
+          type="button"
+          className="ade-button ade-empty-mobile-action"
+          onClick={() => setMobileSidebar(true)}
+        >
+          Emparejar máquina
+        </button>
       </section>
     );
   }
+  if (view === "proyectos") return <ProjectBoard />;
   return view === "tablero" ? <Board /> : <Summary />;
 }
