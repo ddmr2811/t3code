@@ -380,6 +380,28 @@ describe("Antigravity sandbox with real bubblewrap", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.skipIf(!sandboxHost)(
+    "the file the agent's variables are read from is gone even when reading it fails",
+    async () => {
+      using home = makeHome();
+      const spawn = await sandboxAntigravitySpawn({
+        bubblewrapPath: "/usr/bin/bwrap",
+        spawn: { command: home.executablePath, args: [], cwd: home.cwd, env: { SECRET: "s" } },
+        spec: antigravityProcessSandboxSpec({
+          area: home.area,
+          profile: home.own,
+          runtimeTempDirectory: home.runtimeTemp,
+        }),
+      });
+      const [file] = NodeFS.readdirSync(home.runtimeTemp).filter((name) => name !== "keep");
+      // A launch that stops while the variables are being read.
+      NodeFS.appendFileSync(NodePath.join(home.runtimeTemp, file!), "exit 3\n");
+      const { status } = NodeChildProcess.spawnSync(spawn.command, spawn.args, { env: {} });
+      expect(status).toBe(3);
+      expect(NodeFS.readdirSync(home.runtimeTemp)).toEqual(["keep"]);
+    },
+  );
+
   it.live.skipIf(!sandboxHost || otherProgramFile === undefined)(
     "shows nothing other programs installed under /opt",
     () =>
@@ -415,14 +437,14 @@ describe("Antigravity sandbox rules", () => {
       using home = makeHome();
       const link = NodePath.join(home.cwd, "innocent");
       NodeFS.symlinkSync(NodePath.join(home.stateDir, "secrets"), link);
-      const refuses = (cwd: string, extraRoots: ReadonlyArray<string> = []) =>
+      const refuses = (cwd: string, extraRoots: ReadonlyArray<string> = [], area = home.area) =>
         expect(
           sandboxAntigravitySpawn({
             bubblewrapPath: "/usr/bin/bwrap",
             spawn: { command: home.executablePath, args: [], cwd },
             spec: {
               ...antigravityProcessSandboxSpec({
-                area: home.area,
+                area,
                 profile: home.own,
                 runtimeTempDirectory: home.runtimeTemp,
               }),
@@ -448,6 +470,13 @@ describe("Antigravity sandbox rules", () => {
         await refuses(home.cwd, [reserved]);
       }
       await refuses(home.cwd, ["/usr/share"]);
+      // Where setup and helper processes work: a folder holding it would show every one of them.
+      // This test's home is in there too, so it is named elsewhere for that rule not to answer.
+      const elsewhere = { ...home.area, state: [], homeDirectory: "/home/t3-nobody" };
+      for (const helpers of ["/var", "/var/tmp"]) {
+        await refuses(helpers, [], elsewhere);
+        await refuses(home.cwd, [helpers], elsewhere);
+      }
       // `agy` has a private HOME only where T3 made that folder; the agent can write its parent.
       const privateHome = NodePath.join(home.own, "home");
       NodeFS.symlinkSync(home.userHome, privateHome);

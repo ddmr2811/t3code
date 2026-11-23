@@ -89,10 +89,13 @@ const EXECUTABLE_DIRECTORIES = ["/opt", "/nix"];
 // would put the host's back: its /tmp sockets, its /proc, a writable piece of the system.
 const RESERVED_DIRECTORIES = [...SYSTEM_DIRECTORIES, "/dev", "/proc", "/tmp"];
 
+// Setup and helper processes work in folders T3 makes here, so no workspace folder may hold it.
+const HELPER_DIRECTORY = "/var/tmp";
+
 /** Where T3 makes a setup or helper process's working folder: one under /tmp is refused. */
 export const antigravityHelperFolder = (platform: NodeJS.Platform, prefix: string) => ({
   prefix,
-  ...(platform === "linux" ? { directory: "/var/tmp" } : {}),
+  ...(platform === "linux" ? { directory: HELPER_DIRECTORY } : {}),
 });
 
 function isWithin(path: string, parent: string): boolean {
@@ -149,8 +152,11 @@ export async function antigravityWorkspaceView(input: {
   const named = [...RESERVED_DIRECTORIES, ...(input.reserved ?? [])];
   // `/bin` is often a link into `/usr`; a root is compared with both names.
   const reserved = [...named, ...(await canonicalAll(named))];
+  const helpers = (await canonical(HELPER_DIRECTORY)) ?? HELPER_DIRECTORY;
   for (const root of roots) {
-    const taken = reserved.find((mount) => isWithin(root, mount) || isWithin(mount, root));
+    const taken =
+      reserved.find((mount) => isWithin(root, mount) || isWithin(mount, root)) ??
+      (isWithin(helpers, root) ? helpers : undefined);
     if (taken !== undefined) {
       throw new AntigravityWorkspaceRefused({
         detail: `Antigravity cannot work in ${root}: its sandbox keeps ${taken} for itself. Use a project folder elsewhere.`,
@@ -518,7 +524,9 @@ export async function sandboxAntigravitySpawn(input: {
       ...antigravitySandboxArgs({ ...view, grants }, cwd, executableDirectories),
       "/bin/sh",
       "-c",
-      '. "$0" && rm -f "$0" && exec "$@"',
+      // Removed before it is read, through a descriptor the agent does not inherit: a launch
+      // that fails anywhere after this leaves no file behind.
+      'exec 3<"$0" && rm -f "$0" && . /dev/fd/3 && exec "$@" 3<&-',
       NodePath.join(temp, environmentFile),
       executable,
       ...spawn.args,
