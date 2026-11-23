@@ -1674,3 +1674,68 @@ body {
   border-radius: 3px;
   background: var(--ade-border);
 }
+
+.ade-extensions {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ade-text);
+  font-size: 13px;
+}
+
+.ade-extensions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ade-extensions .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-extensions-problem {
+  padding-top: 12px;
+  font-size: 12px;
+}
+
+.ade-extension-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100% - 32px);
+  height: min(640px, 70vh);
+  margin: 0 auto 32px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  overflow: hidden;
+}
+
+.ade-extension-panel header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ade-divider);
+}
+
+.ade-extension-panel h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ade-extension-panel .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-extension-panel iframe {
+  flex: 1;
+  border: 0;
+  background: #fff;
+}

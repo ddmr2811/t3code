@@ -18,6 +18,7 @@ import { pairMachine, TOKEN_IN_QUERY_TEXT, tokenInQuery } from "./connection/pai
 import { environmentCatalog, environmentShell } from "./connection/runtime.ts";
 import { machineStatus } from "./connection/status.ts";
 import { machinesChanged } from "./connection/tabs.ts";
+import { MachineExtensions } from "./extensions/Extensions.tsx";
 
 // A link that opens the ADE to pair (`?host=…#token=…`) leaves the address bar before anything
 // renders: the one-time token must not stay in the URL, the history, or a later Referer. Only the
@@ -196,6 +197,7 @@ function MachineCard(props: { environmentId: EnvironmentId; entry: ConnectionCat
           {count(snapshot.projects.length, "proyecto")} · {count(snapshot.threads.length, "hilo")}
         </p>
       )}
+      <MachineExtensions environmentId={props.environmentId} />
     </section>
   );
 }

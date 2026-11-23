@@ -13,6 +13,7 @@ import {
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type EnvironmentId,
@@ -79,6 +80,16 @@ export const terminalAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     const session = AsyncResult.getOrElse(result, () => null);
     return session !== null && sessionGrantsScope(session, AuthTerminalOperateScope);
   }).pipe(Atom.withLabel(`ade-terminal-access:${environmentId}`)),
+);
+
+/** Whether this ADE's session may reach a machine's extension sidecars. */
+export const gatewayAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    if (result._tag === "Failure") return false;
+    const session = AsyncResult.getOrElse(result, () => null);
+    return session !== null && sessionGrantsScope(session, AuthForkGatewayScope);
+  }).pipe(Atom.withLabel(`ade-gateway-access:${environmentId}`)),
 );
 
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();

@@ -18,6 +18,7 @@ import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthTerminalOperateScope,
@@ -40,9 +41,11 @@ import { machinesChanged } from "./tabs.ts";
 
 // Read threads; answer approvals and questions and send turns. Both of the latter are
 // orchestration commands, and `orchestration:operate` is the only scope that dispatches them.
+// Also the extension sidecars, which only a link that carries `fork:gateway` grants.
 export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
+  AuthForkGatewayScope,
 ];
 
 export interface PairingInput {

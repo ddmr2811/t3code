@@ -11,6 +11,7 @@ import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
+import { ExtensionPanel } from "./extensions/Extensions.tsx";
 import { ConnectionSummary, MachineCards, MachinesSidebar } from "./Machines.tsx";
 import {
   NeedsYouBlock,
@@ -29,6 +30,7 @@ function Overview() {
         <h1>Sin conectar</h1>
         <p>Empareja una máquina con T3 Code desde la barra lateral para empezar.</p>
       </section>
+      <ExtensionPanel />
     </>
   );
 }

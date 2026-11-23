@@ -1,5 +1,6 @@
 import {
   AuthDiagnosticsReadScope,
+  AuthForkGatewayScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
   FORK_WS_METHODS,
@@ -26,6 +27,8 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkInsightsLimitHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.forkInsightsActivity]: AuthDiagnosticsReadScope,
   [WS_METHODS.forkActivityFeed]: AuthDiagnosticsReadScope,
+  // Listing the sidecars is for whoever may reach them, and only them.
+  [WS_METHODS.forkGatewayList]: AuthForkGatewayScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

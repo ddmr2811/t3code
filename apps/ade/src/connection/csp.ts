@@ -45,6 +45,11 @@ export function connectSrc(origins: ReadonlyArray<string>): string {
   );
 }
 
+/** Panels from the extension gateway, on the same servers and nowhere else. */
+export function frameSrc(origins: ReadonlyArray<string>): string {
+  return origins.length === 0 ? "'none'" : origins.join(" ");
+}
+
 /** Mirrors how the browser matches a CSP host source, so the UI can refuse before the fetch. */
 export function originAllowed(url: string, origins: ReadonlyArray<string>): boolean {
   let target: URL;

@@ -1,6 +1,8 @@
 import * as Layer from "effect/Layer";
 import * as ForkActivity from "./activity/ForkActivity.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
+import * as ForkGateway from "./gateway/ForkGateway.ts";
+import * as ForkGatewayHttp from "./gateway/http.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
 import * as ForkTailnet from "./tailnet/ForkTailnet.ts";
@@ -17,4 +19,9 @@ export const ForkLayer = Layer.mergeAll(
   ForkInsights.layer,
   // Every open activity card shares one cached read.
   ForkActivity.layer,
+  // Reads its manifest on each request, so it holds nothing.
+  ForkGateway.layer,
 );
+
+/** Every fork HTTP route; `server.ts` merges this beside its own routes. */
+export const ForkRoutes = ForkGatewayHttp.routeLayer;

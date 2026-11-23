@@ -45,6 +45,8 @@ export const FORK_WS_METHODS = {
   forkInsightsActivity: "forkInsights.activity",
   // Fork: the Dashboard's "What the AI did".
   forkActivityFeed: "forkActivity.feed",
+  // Fork: the sidecars declared in the extension gateway's manifest.
+  forkGatewayList: "forkGateway.list",
 } as const;
 
 // Fork: Extensions settings page.
@@ -142,6 +144,28 @@ const WsForkActivityFeedRpc = Rpc.make(FORK_WS_METHODS.forkActivityFeed, {
   error: EnvironmentAuthorizationError,
 });
 
+/** A sidecar as clients see it: never its port, which only the gateway needs. */
+export const ForkGatewayExtension = Schema.Struct({
+  id: Schema.String,
+  title: Schema.optionalKey(Schema.String),
+  /** Where its panel lives below `/api/fork/ext/<id>`; absent when it has none. */
+  panelPath: Schema.optionalKey(Schema.String),
+});
+export type ForkGatewayExtension = typeof ForkGatewayExtension.Type;
+
+export const ForkGatewayList = Schema.Struct({
+  extensions: Schema.Array(ForkGatewayExtension),
+  /** Why the manifest was refused; it then lists nothing. */
+  problem: Schema.optionalKey(Schema.String),
+});
+export type ForkGatewayList = typeof ForkGatewayList.Type;
+
+const WsForkGatewayListRpc = Rpc.make(FORK_WS_METHODS.forkGatewayList, {
+  payload: Schema.Struct({}),
+  success: ForkGatewayList,
+  error: EnvironmentAuthorizationError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -157,6 +181,7 @@ export const FORK_RPCS = [
   WsForkInsightsLimitHistoryRpc,
   WsForkInsightsActivityRpc,
   WsForkActivityFeedRpc,
+  WsForkGatewayListRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */

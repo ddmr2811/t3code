@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as ForkActivity from "./activity/ForkActivity.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
+import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
 import * as ForkTailnet from "./tailnet/ForkTailnet.ts";
@@ -16,6 +17,7 @@ export const forkRpcHandlers = Effect.gen(function* () {
   const forkMachines = yield* ForkMachines.ForkMachines;
   const forkInsights = yield* ForkInsights.ForkInsights;
   const forkActivity = yield* ForkActivity.ForkActivity;
+  const forkGateway = yield* ForkGateway.ForkGateway;
   return ForkRpcGroup.of({
     // Extensions settings page.
     [WS_METHODS.forkExtensionsSnapshot]: () => forkExtensions.snapshot,
@@ -34,5 +36,7 @@ export const forkRpcHandlers = Effect.gen(function* () {
     [WS_METHODS.forkInsightsLimitHistory]: (input) => forkInsights.limitHistory(input),
     [WS_METHODS.forkInsightsActivity]: (input) => forkInsights.activity(input),
     [WS_METHODS.forkActivityFeed]: (input) => forkActivity.feed(input),
+    // Extension gateway.
+    [WS_METHODS.forkGatewayList]: () => forkGateway.list,
   });
 });

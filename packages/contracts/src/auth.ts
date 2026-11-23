@@ -48,6 +48,8 @@ export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
 export const AuthRelayConfigureScope = "relay:configure" as const;
+/** Fork: reach the local sidecars behind the extension gateway. Never in a default grant. */
+export const AuthForkGatewayScope = "fork:gateway" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -67,6 +69,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthRelayConfigureScope,
+  AuthForkGatewayScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -118,7 +121,10 @@ export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentSco
     requiredScope:
       requiredPermission === AuthRelayConfigureScope
         ? AuthRelayWriteScope
-        : (legacyParents[requiredPermission] ?? requiredPermission),
+        : // Fork: only for display to old clients; operate never implies the gateway.
+          requiredPermission === AuthForkGatewayScope
+          ? AuthOrchestrationOperateScope
+          : (legacyParents[requiredPermission] ?? requiredPermission),
     requiredPermission,
   };
 }
