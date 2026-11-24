@@ -125,7 +125,11 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
         className="ade-memory-new"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (await save({ text: draft, inclusion: draftInclusion })) setDraft("");
+          const submitted = draft;
+          // Typing may go on while the save is in flight; only what was saved is cleared.
+          if (await save({ text: submitted, inclusion: draftInclusion })) {
+            setDraft((current) => (current === submitted ? "" : current));
+          }
         }}
       >
         <textarea
@@ -180,7 +184,7 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
                   <textarea
                     value={editing.text}
                     onChange={(event) => setEditing({ id: note.id, text: event.target.value })}
-                    aria-label="Editar nota"
+                    aria-label="Texto de la nota"
                     rows={3}
                     maxLength={FORK_MEMORY_NOTE_MAX_LENGTH}
                   />

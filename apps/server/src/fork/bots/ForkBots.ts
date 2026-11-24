@@ -46,12 +46,7 @@ import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
-import {
-  decodeStoredBotDirectory,
-  EMPTY_BOT_DIRECTORY,
-  listBots,
-  serializeBotDirectory,
-} from "./store.ts";
+import { decodeStoredBotDirectory, EMPTY_BOT_DIRECTORY, listBots } from "./store.ts";
 
 export class ForkBots extends Context.Service<
   ForkBots,
@@ -186,7 +181,6 @@ const make = Effect.gen(function* () {
     maxBytes: FORK_BOTS_MAX_FILE_BYTES,
     empty: EMPTY_BOT_DIRECTORY,
     decode: decodeStoredBotDirectory,
-    serialize: serializeBotDirectory,
     makeError: (reason, message) => new ForkBotsError({ reason, message }),
   });
   const storeLock = yield* Semaphore.make(1);
@@ -284,15 +278,13 @@ const make = Effect.gen(function* () {
             });
           }
           const coordinator = parsed.coordinator ?? existing?.coordinator ?? false;
-          if (
-            coordinator &&
-            directory.bots.some(
-              (bot) => bot.id !== id && bot.coordinator && bot.projectId === parsed.projectId,
-            )
-          ) {
+          const otherCoordinator = directory.bots.find(
+            (bot) => bot.id !== id && bot.coordinator && bot.projectId === parsed.projectId,
+          );
+          if (coordinator && otherCoordinator !== undefined) {
             return yield* new ForkBotsError({
               reason: "conflict",
-              message: "This project already has a coordinator.",
+              message: `Project ${parsed.projectId} already has a coordinator: ${otherCoordinator.id}.`,
             });
           }
           if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
@@ -462,7 +454,11 @@ const make = Effect.gen(function* () {
         const essentials = bot.coordinator
           ? yield* memory
               .essentials(bot.projectId)
-              .pipe(Effect.mapError(() => unavailable("Could not read the project memory.")))
+              .pipe(
+                Effect.mapError((error) =>
+                  unavailable(`Could not read the memory for bot ${bot.id}: ${error.message}`),
+                ),
+              )
           : [];
         const hash = memoryHash(essentials);
         // A new thread has seen nothing yet; an existing one gets the block only when it changed.

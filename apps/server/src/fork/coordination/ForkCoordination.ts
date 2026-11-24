@@ -24,7 +24,6 @@ import {
   EMPTY_COORDINATION_BOARD,
   listBoardEntries,
   removeBoardEntry,
-  serializeBoard,
   upsertBoardEntry,
 } from "./store.ts";
 
@@ -60,7 +59,6 @@ export const make = Effect.gen(function* () {
     maxBytes: FORK_COORDINATION_MAX_FILE_BYTES,
     empty: EMPTY_COORDINATION_BOARD,
     decode: decodeStoredCoordinationBoard,
-    serialize: serializeBoard,
     makeError: (reason, message) => new ForkCoordinationError({ reason, message }),
   });
 

@@ -58,6 +58,7 @@ import {
   decodeStoredFailoverState,
   EMPTY_FAILOVER_STATE,
   serializeFailoverState,
+  type StoredFailoverState,
   toPublicFailoverState,
   validateFailoverConfigBytes,
   withAppendedEvent,
@@ -179,8 +180,13 @@ export const make = Effect.gen(function* () {
     maxBytes: FORK_FAILOVER_MAX_FILE_BYTES,
     empty: EMPTY_FAILOVER_STATE,
     decode: decodeStoredFailoverState,
-    serialize: serializeFailoverState,
     makeError: (reason, message) => new ForkFailoverError({ reason, message }),
+  });
+  // Old events are dropped first, so a long history never blocks a config change.
+  const writeState = Effect.fn("ForkFailover.writeState")(function* (state: StoredFailoverState) {
+    const pruned = serializeFailoverState(state);
+    if (!pruned.ok) return yield* pruned.error;
+    yield* store.write(pruned.state);
   });
 
   const rememberHandledRun = (key: string) => {
@@ -233,7 +239,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const state = yield* store.read();
         const updated = withAppendedEvent(state, event, event.occurredAt);
-        yield* store.write(updated);
+        yield* writeState(updated);
       }),
     );
   });
@@ -514,7 +520,7 @@ export const make = Effect.gen(function* () {
         const nowMs = yield* Clock.currentTimeMillis;
         const nowIso = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
         const next = withUpdatedConfig(current, parsed.config, nowIso);
-        yield* store.write(next);
+        yield* writeState(next);
         return next.config;
       }),
     );

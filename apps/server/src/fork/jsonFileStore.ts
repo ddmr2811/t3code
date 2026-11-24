@@ -86,6 +86,9 @@ async function syncDirectoryBestEffort(dirPath: string): Promise<void> {
   }
 }
 
+// The stored values are plain schema-decoded data, so stringify cannot throw here.
+const prettyJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+
 type ForkStoreFailureReason = "storageFailed" | "limitExceeded";
 
 /**
@@ -100,9 +103,6 @@ export const makeForkJsonFileStore = Effect.fn("ForkJsonFileStore.make")(functio
   readonly maxBytes: number;
   readonly empty: S;
   readonly decode: (text: string) => Effect.Effect<S, Schema.SchemaError>;
-  readonly serialize: (
-    value: S,
-  ) => { readonly ok: true; readonly json: string } | { readonly ok: false; readonly error: E };
   readonly makeError: (reason: ForkStoreFailureReason, message: string) => E;
 }) {
   const { fileName, label, maxBytes, makeError } = options;
@@ -231,8 +231,13 @@ export const makeForkJsonFileStore = Effect.fn("ForkJsonFileStore.make")(functio
   });
 
   const write = Effect.fn("ForkJsonFileStore.write")(function* (value: S) {
-    const serialized = options.serialize(value);
-    if (!serialized.ok) return yield* Effect.fail(serialized.error);
+    const bytes = new TextEncoder().encode(prettyJson(value));
+    if (bytes.byteLength > maxBytes) {
+      yield* Effect.logWarning(`${logPrefix} write refused: ${bytes.byteLength} bytes`);
+      return yield* Effect.fail(
+        makeError("limitExceeded", `${label} exceeds the ${maxBytes}-byte limit.`),
+      );
+    }
     yield* ensureSafeForkDir(true);
     const existingFile = yield* attemptFs(() => NodeFSP.lstat(filePath)).pipe(
       Effect.catch((error) =>
@@ -254,7 +259,6 @@ export const makeForkJsonFileStore = Effect.fn("ForkJsonFileStore.make")(functio
     }
 
     const tempPath = path.join(forkDir, `.${fileName}.${SecureRandom.uuidV4Unsafe()}.tmp`);
-    const bytes = new TextEncoder().encode(serialized.json);
     const persistFailed = `Could not persist ${lowerLabel}.`;
     let renamed = false;
     yield* Effect.ensuring(

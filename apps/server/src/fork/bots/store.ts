@@ -1,9 +1,7 @@
 import {
   FORK_BOTS_MAX_COUNT,
-  FORK_BOTS_MAX_FILE_BYTES,
   FORK_BOTS_PROTOCOL_VERSION,
   ForkBot,
-  ForkBotsError,
   type ForkBotListResult,
   IsoDateTime,
 } from "@t3tools/contracts";
@@ -48,22 +46,4 @@ export function listBots(directory: StoredBotDirectory): ForkBotListResult {
     ),
     updatedAt: directory.updatedAt,
   };
-}
-
-export function serializeBotDirectory(
-  directory: StoredBotDirectory,
-):
-  | { readonly ok: true; readonly json: string }
-  | { readonly ok: false; readonly error: ForkBotsError } {
-  const json = `${JSON.stringify(directory, null, 2)}\n`;
-  if (new TextEncoder().encode(json).byteLength > FORK_BOTS_MAX_FILE_BYTES) {
-    return {
-      ok: false,
-      error: new ForkBotsError({
-        reason: "limitExceeded",
-        message: `Bot directory exceeds the ${FORK_BOTS_MAX_FILE_BYTES}-byte limit.`,
-      }),
-    };
-  }
-  return { ok: true, json };
 }

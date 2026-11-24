@@ -92,16 +92,6 @@ const invalidInput = (message: string) => new ForkMemoryError({ reason: "invalid
 const limitExceeded = (message: string) =>
   new ForkMemoryError({ reason: "limitExceeded", message });
 
-function serializeMemory(memory: StoredMemory) {
-  const json = `${JSON.stringify(memory, null, 2)}\n`;
-  return new TextEncoder().encode(json).byteLength > FORK_MEMORY_MAX_FILE_BYTES
-    ? ({
-        ok: false,
-        error: limitExceeded(`Memory store exceeds the ${FORK_MEMORY_MAX_FILE_BYTES}-byte limit.`),
-      } as const)
-    : ({ ok: true, json } as const);
-}
-
 const byNewest = (left: ForkMemoryNote, right: ForkMemoryNote) =>
   right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
 const byOldest = (left: ForkMemoryNote, right: ForkMemoryNote) =>
@@ -114,7 +104,6 @@ const make = Effect.gen(function* () {
     maxBytes: FORK_MEMORY_MAX_FILE_BYTES,
     empty: EMPTY_MEMORY,
     decode: decodeStoredMemory,
-    serialize: serializeMemory,
     makeError: (reason, message) => new ForkMemoryError({ reason, message }),
   });
   const lock = yield* Semaphore.make(1);
@@ -144,7 +133,10 @@ const make = Effect.gen(function* () {
         const existing =
           parsed.id === undefined ? undefined : memory.notes.find((note) => note.id === parsed.id);
         if (parsed.id !== undefined && existing?.projectId !== parsed.projectId) {
-          return yield* new ForkMemoryError({ reason: "notFound", message: "Note was not found." });
+          return yield* new ForkMemoryError({
+            reason: "notFound",
+            message: `Note ${parsed.id} was not found in project ${parsed.projectId}.`,
+          });
         }
         const dropped = new Set(replaces.filter((id) => id !== parsed.id));
         for (const id of dropped) {
@@ -152,7 +144,7 @@ const make = Effect.gen(function* () {
           if (note?.projectId !== parsed.projectId) {
             return yield* new ForkMemoryError({
               reason: "notFound",
-              message: `Note ${id} was not found in this project.`,
+              message: `Note ${id} to replace was not found in project ${parsed.projectId}.`,
             });
           }
         }
@@ -174,12 +166,12 @@ const make = Effect.gen(function* () {
         const project = notes.filter((candidate) => candidate.projectId === parsed.projectId);
         if (project.length > FORK_MEMORY_MAX_NOTES_PER_PROJECT) {
           return yield* limitExceeded(
-            `A project holds at most ${FORK_MEMORY_MAX_NOTES_PER_PROJECT} notes.`,
+            `Project ${parsed.projectId} already holds ${FORK_MEMORY_MAX_NOTES_PER_PROJECT} notes, the limit.`,
           );
         }
         if (forkMemoryEssentialBytes(project) > FORK_MEMORY_ESSENTIAL_MAX_BYTES) {
           return yield* limitExceeded(
-            `Essential notes of a project may total at most ${FORK_MEMORY_ESSENTIAL_MAX_BYTES} bytes. Save it as searchable, or make another essential note searchable first.`,
+            `Essential notes of project ${parsed.projectId} may total at most ${FORK_MEMORY_ESSENTIAL_MAX_BYTES} bytes. Save it as searchable, or make another essential note searchable first.`,
           );
         }
         yield* store.write({ ...memory, notes, updatedAt: now });

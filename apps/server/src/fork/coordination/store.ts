@@ -1,6 +1,5 @@
 import {
   FORK_COORDINATION_MAX_ENTRIES,
-  FORK_COORDINATION_MAX_FILE_BYTES,
   FORK_COORDINATION_PROTOCOL_VERSION,
   ForkCoordinationEntry,
   ForkCoordinationError,
@@ -28,8 +27,6 @@ export const EMPTY_COORDINATION_BOARD: StoredCoordinationBoard = {
 export const decodeStoredCoordinationBoard = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredCoordinationBoard),
 );
-
-const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
 
 function sortCoordinationEntries(
   entries: ReadonlyArray<ForkCoordinationEntry>,
@@ -121,22 +118,4 @@ export function removeBoardEntry(
     },
     removed: true,
   };
-}
-
-export function serializeBoard(
-  board: StoredCoordinationBoard,
-):
-  | { readonly ok: true; readonly json: string }
-  | { readonly ok: false; readonly error: ForkCoordinationError } {
-  const json = `${JSON.stringify(board, null, 2)}\n`;
-  if (utf8ByteLength(json) > FORK_COORDINATION_MAX_FILE_BYTES) {
-    return {
-      ok: false,
-      error: new ForkCoordinationError({
-        reason: "limitExceeded",
-        message: `Coordination board exceeds the ${FORK_COORDINATION_MAX_FILE_BYTES}-byte limit.`,
-      }),
-    };
-  }
-  return { ok: true, json };
 }
