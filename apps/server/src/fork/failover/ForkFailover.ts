@@ -630,7 +630,8 @@ export const make = Effect.gen(function* () {
           detail: sanitizeSingleLine(decision.detail, FORK_FAILOVER_DETAIL_MAX_LENGTH),
           occurredAt: nowIso,
         };
-        recordMemoryEvent(skippedEvent);
+        // Do not push `skipped` events into the in-memory anti-loop ring so repeated skips cannot
+        // evict real `switched`/`failed` records when disk persistence is degraded.
         yield* appendEventLocked(skippedEvent).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("fork failover failed to record skipped event", {
