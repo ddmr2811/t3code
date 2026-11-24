@@ -72,6 +72,11 @@ export const ForkCoordinationModelLabel = TrimmedNonEmptyString.check(
 );
 export type ForkCoordinationModelLabel = typeof ForkCoordinationModelLabel.Type;
 
+const ForkCoordinationThreadId = ThreadId.check(
+  Schema.isMaxLength(FORK_COORDINATION_ID_MAX_LENGTH),
+  noSingleLineControl,
+);
+
 export const ForkCoordinationShortText = TrimmedString.check(
   Schema.isMaxLength(FORK_COORDINATION_SHORT_TEXT_MAX_LENGTH),
   noMultilineControl,
@@ -91,7 +96,7 @@ export const ForkCoordinationEntry = Schema.Struct({
   id: ForkCoordinationEntryId,
   projectKey: ForkCoordinationProjectKey,
   projectName: ForkCoordinationProjectName,
-  threadId: Schema.optionalKey(ThreadId),
+  threadId: Schema.optionalKey(ForkCoordinationThreadId),
   agentName: ForkCoordinationAgentName,
   status: ForkCoordinationStatus,
   workingOn: ForkCoordinationShortText,
@@ -117,7 +122,7 @@ export const ForkCoordinationUpsertInput = Schema.Struct({
   id: Schema.optionalKey(ForkCoordinationEntryId),
   projectKey: ForkCoordinationProjectKey,
   projectName: ForkCoordinationProjectName,
-  threadId: Schema.optionalKey(ThreadId),
+  threadId: Schema.optionalKey(ForkCoordinationThreadId),
   agentName: ForkCoordinationAgentName,
   status: ForkCoordinationStatus,
   workingOn: ForkCoordinationShortText,

@@ -13,7 +13,9 @@ import * as Schema from "effect/Schema";
 export const StoredCoordinationBoard = Schema.Struct({
   version: Schema.Literal(FORK_COORDINATION_PROTOCOL_VERSION),
   updatedAt: Schema.NullOr(IsoDateTime),
-  entries: Schema.Array(ForkCoordinationEntry),
+  entries: Schema.Array(ForkCoordinationEntry).check(
+    Schema.isMaxLength(FORK_COORDINATION_MAX_ENTRIES),
+  ),
 });
 export type StoredCoordinationBoard = typeof StoredCoordinationBoard.Type;
 
