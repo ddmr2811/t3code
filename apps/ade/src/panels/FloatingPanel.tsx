@@ -1,7 +1,7 @@
 import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { useShortcut } from "@ui-sdk/react/shortcuts";
 import { Atom } from "effect/reactivity";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import type { ToolPanel } from "./panels.logic.ts";
 
@@ -36,23 +36,27 @@ export function FloatingPanel(props: {
   children: ReactNode;
 }) {
   const ref = useRef<HTMLElement>(null);
-  // Where focus was when the panel opened; closing gives it back if it had moved inside.
+  // Where focus was when the panel opened; however it closes, focus goes back if it was inside.
   const [before] = useState(() => document.activeElement);
   const focusIsOurs = () =>
     document.activeElement === document.body ||
     (ref.current?.contains(document.activeElement) ?? false);
-  const close = () => {
-    if (focusIsOurs()) {
+  // Layout cleanup runs before the panel leaves the page, while focus may still be inside it.
+  useLayoutEffect(() => {
+    const panel = ref.current;
+    return () => {
+      const active = document.activeElement;
+      if (active !== document.body && !(panel?.contains(active) ?? false)) return;
       const target =
         before instanceof HTMLElement && before.isConnected
           ? before
-          : document.querySelector<HTMLElement>(".ade-composer textarea, .ade-main");
+          : (document.querySelector<HTMLElement>(".ade-composer textarea:not(:disabled)") ??
+            document.querySelector<HTMLElement>(".ade-main"));
       target?.focus();
-    }
-    props.onClose();
-  };
+    };
+  }, [before]);
   // Escape belongs to whatever has focus outside the panel: the composer, a menu, a search field.
-  useShortcut("escape", close, {
+  useShortcut("escape", props.onClose, {
     when: () => shortcutsFree() && focusIsOurs(),
     allowInInput: true,
     description: `Cerrar ${props.label}`,
@@ -73,7 +77,7 @@ export function FloatingPanel(props: {
           type="button"
           className="ade-icon-button"
           aria-label={`Cerrar ${props.label.toLowerCase()}`}
-          onClick={close}
+          onClick={props.onClose}
         >
           <XIcon size={16} aria-hidden />
         </button>

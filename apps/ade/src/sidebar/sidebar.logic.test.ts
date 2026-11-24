@@ -6,6 +6,7 @@ import {
   groupThreads,
   listedThreads,
   projectMonogram,
+  lineageKey,
   railProjects,
   readSidebarExpanded,
   threadState,
@@ -201,10 +202,20 @@ describe("railProjects", () => {
       ...stateInput({ hasPendingApprovals: true }),
       ...thread("b-wait", machineB, "api", "2026-11-23T12:00:00.000Z"),
     };
+    // Its only waiting thread is a subagent, which is not listed.
+    const subagentParent = {
+      ...stateInput(),
+      ...thread("a-docs", machineA, "docs", "2026-11-21T09:00:00.000Z"),
+    };
+    const docsNewer = {
+      ...stateInput(),
+      ...thread("a-docs-new", machineA, "docs", "2026-11-23T09:00:00.000Z"),
+    };
     const projects = railProjects(
-      [newer, waiting, readOnlyWaiting],
+      [newer, waiting, readOnlyWaiting, subagentParent, docsNewer],
       [machineA, machineB],
       new Set([machineA]),
+      new Set([lineageKey(subagentParent)]),
     );
     expect(
       projects.map((project) => ({
@@ -214,6 +225,7 @@ describe("railProjects", () => {
       })),
     ).toEqual([
       { projectId: "web", hasPendingDecision: true, primaryId: "a-wait" },
+      { projectId: "docs", hasPendingDecision: true, primaryId: "a-docs" },
       { projectId: "api", hasPendingDecision: false, primaryId: "b-wait" },
     ]);
   });

@@ -54,13 +54,16 @@ const readView = (): View => {
 };
 export const viewAtom = Atom.writable(
   (get) => {
-    const onPopState = () => get.setSelf(readView());
+    const onPopState = () => {
+      closePanelsOnPhone((atom, value) => get.set(atom, value));
+      get.setSelf(readView());
+    };
     window.addEventListener("popstate", onPopState);
     get.addFinalizer(() => window.removeEventListener("popstate", onPopState));
     return readView();
   },
   (ctx, view: View) => {
-    closePanelsOnPhone(ctx);
+    closePanelsOnPhone((atom, value) => ctx.set(atom, value));
     const url = new URL(window.location.href);
     if (view === "inicio") url.searchParams.delete("vista");
     else url.searchParams.set("vista", view);

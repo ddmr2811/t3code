@@ -106,15 +106,23 @@ export const mobileSidebarOpenAtom = Atom.make(false).pipe(
   Atom.withLabel("ade-mobile-sidebar-open"),
 );
 
+const PHONE_QUERY = "(max-width: 720px)";
+
+const viewportAtom = (query: string, label: string) =>
+  Atom.make((get) => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+    const media = window.matchMedia(query);
+    const onChange = () => get.setSelf(media.matches);
+    media.addEventListener("change", onChange);
+    get.addFinalizer(() => media.removeEventListener("change", onChange));
+    return media.matches;
+  }).pipe(Atom.keepAlive, Atom.withLabel(label));
+
 /** Tracks narrow mobile viewports (<= 720 px) so the pending tray stays non-blocking on phones. */
-export const narrowViewportAtom = Atom.make((get) => {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  const media = window.matchMedia("(max-width: 720px)");
-  const onChange = () => get.setSelf(media.matches);
-  media.addEventListener("change", onChange);
-  get.addFinalizer(() => media.removeEventListener("change", onChange));
-  return media.matches;
-}).pipe(Atom.keepAlive, Atom.withLabel("ade-narrow-viewport"));
+export const narrowViewportAtom = viewportAtom(PHONE_QUERY, "ade-narrow-viewport");
+
+/** A desktop window too narrow for the expanded sidebar, the reading column and a panel at once. */
+export const crowdedViewportAtom = viewportAtom("(max-width: 1199px)", "ade-crowded-viewport");
 
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
@@ -151,11 +159,13 @@ export function useDecisionsPanel() {
   };
 }
 
-/** On a phone a panel covers the screen: going to a thread or a view closes it. */
-export function closePanelsOnPhone<A>(ctx: Atom.WriteContext<A>) {
-  if (!ctx.get(narrowViewportAtom)) return;
-  ctx.set(toolPanelAtom, null);
-  ctx.set(decisionsChoiceAtom, null);
+type SetAtom = <R, W>(atom: Atom.Writable<R, W>, value: W) => void;
+
+/** On a phone a panel covers the screen: going to a thread or a view, Back included, closes it. */
+export function closePanelsOnPhone(set: SetAtom) {
+  if (typeof window === "undefined" || !window.matchMedia(PHONE_QUERY).matches) return;
+  set(toolPanelAtom, null);
+  set(decisionsChoiceAtom, null);
 }
 
 // The selected thread lives in `?hilo=`, so a reload opens it again. Each choice is a history
@@ -163,13 +173,16 @@ export function closePanelsOnPhone<A>(ctx: Atom.WriteContext<A>) {
 const readSelectedFromUrl = () => new URLSearchParams(window.location.search).get("hilo");
 export const selectedThreadKeyAtom = Atom.writable(
   (get) => {
-    const onPopState = () => get.setSelf(readSelectedFromUrl());
+    const onPopState = () => {
+      closePanelsOnPhone((atom, value) => get.set(atom, value));
+      get.setSelf(readSelectedFromUrl());
+    };
     window.addEventListener("popstate", onPopState);
     get.addFinalizer(() => window.removeEventListener("popstate", onPopState));
     return readSelectedFromUrl();
   },
   (ctx, key: string | null) => {
-    closePanelsOnPhone(ctx);
+    closePanelsOnPhone((atom, value) => ctx.set(atom, value));
     if (key === readSelectedFromUrl()) return;
     const url = new URL(window.location.href);
     if (key === null) url.searchParams.delete("hilo");
@@ -314,7 +327,14 @@ export function ProjectRail() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const operable = useAtomValue(operableEnvironmentIdsAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
-  const projects = railProjects(listed, [...catalog.entries.keys()], operable);
+  const needsYou = useAtomValue(needsYouThreadsAtom);
+  const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  const projects = railProjects(
+    listed,
+    [...catalog.entries.keys()],
+    operable,
+    new Set(decisionsByRow(needsYou, allShells, listed).keys()),
+  );
   if (projects.length === 0) return null;
   const selectedRef = selected === null ? null : parseScopedThreadKey(selected);
   return (
@@ -361,6 +381,8 @@ const ThreadRow = memo(function ThreadRow(props: {
   );
 });
 
+const CARDS_PER_PROJECT = 3;
+
 export function ThreadTree() {
   const listed = useAtomValue(listedThreadsAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -369,6 +391,7 @@ export function ThreadTree() {
   const needsYou = useAtomValue(needsYouThreadsAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
   const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+  const decisions = useDecisionsPanel();
   const groups = groupThreads(listed, [...catalog.entries.keys()]);
   if (groups.length === 0) return null;
   // The same waiting threads as the panel, each under the row that shows it. Phones have the
@@ -393,6 +416,18 @@ export function ThreadTree() {
           </h2>
           {machine.projects.map((project) => {
             const waiting = project.threads.some((thread) => rows.has(lineageKey(thread)));
+            // A few cards per project; the rest wait in the decisions panel.
+            let shown = 0;
+            let hidden = 0;
+            const cardsOf = (thread: EnvironmentThreadShell) =>
+              (rows.get(lineageKey(thread)) ?? []).filter(() => {
+                if (shown === CARDS_PER_PROJECT) {
+                  hidden += 1;
+                  return false;
+                }
+                shown += 1;
+                return true;
+              });
             return (
               <div
                 key={project.projectId}
@@ -415,7 +450,7 @@ export function ThreadTree() {
                           selected={key === selected}
                           onSelect={selectThread}
                         />
-                        {rows.get(lineageKey(thread))?.map((waiting) => (
+                        {cardsOf(thread).map((waiting) => (
                           <li key={waiting.id} className="ade-tree-decision">
                             {waiting.id === thread.id ? null : (
                               <p className="ade-request-note">Del subagente «{waiting.title}»</p>
@@ -430,6 +465,15 @@ export function ThreadTree() {
                     );
                   })}
                 </ul>
+                {hidden === 0 ? null : (
+                  <button
+                    type="button"
+                    className="ade-link ade-tree-more"
+                    onClick={() => decisions.setOpen(true)}
+                  >
+                    {hidden === 1 ? "1 más" : `${hidden} más`} en «te necesitan»
+                  </button>
+                )}
               </div>
             );
           })}
