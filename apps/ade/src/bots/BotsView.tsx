@@ -21,6 +21,7 @@ import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { listedThreadsAtom, selectedThreadKeyAtom } from "../sidebar/Sidebar.tsx";
 import { serverEnvironment } from "../state.ts";
 import { botThreadState, type BotDraft, validateBotDraft } from "./bots.logic.ts";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
 import {
   allBotsAtom,
@@ -165,6 +166,40 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
     refreshBots(registry, environmentId);
   };
 
+  const chatPanel = (selectedBot: ForkBot) => (
+    <>
+      <p className="ade-bot-meta">
+        {selectedBot.threadId === null
+          ? "Tu primer mensaje abre su hilo real en el proyecto."
+          : "Los mensajes van a su hilo real; ahí ves la respuesta."}
+      </p>
+      <textarea
+        value={messageText}
+        onChange={(event) => setMessageText(event.target.value)}
+        placeholder={`Mensaje para @${selectedBot.handle}`}
+        rows={3}
+        maxLength={FORK_BOTS_MESSAGE_MAX_LENGTH}
+        disabled={selectedBot.archived}
+      />
+      <button
+        type="button"
+        className="ade-button"
+        onClick={() => void sendMessage()}
+        disabled={sending || canSend !== true || selectedBot.archived || messageText.trim() === ""}
+      >
+        <PaperPlaneTiltIcon size={16} aria-hidden /> Enviar
+      </button>
+      {selectedBot.archived ? (
+        <p className="ade-bot-meta">Restaura el bot para escribirle.</p>
+      ) : null}
+      {chatError === null ? null : (
+        <p className="ade-error" role="alert">
+          {chatError}
+        </p>
+      )}
+    </>
+  );
+
   return (
     <>
       <div className="ade-projects-toolbar">
@@ -276,56 +311,18 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
             <>
               <h2>{selectedBot.name}</h2>
               {selectedBot.coordinator ? (
-                <div className="ade-bots-tabs" role="group" aria-label="Panel del coordinador">
-                  {(["chat", "memory"] as const).map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className="ade-button-quiet ade-alert-toggle"
-                      aria-pressed={panel === value}
-                      onClick={() => setPanel(value)}
-                    >
-                      {value === "chat" ? "Chat" : "Memoria"}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
-          {selectedBot !== null && selectedBot.coordinator && panel === "memory" ? (
-            <ProjectMemory environmentId={environmentId} bot={selectedBot} />
-          ) : selectedBot === null ? null : (
-            <>
-              <p className="ade-bot-meta">
-                {selectedBot.threadId === null
-                  ? "Tu primer mensaje abre su hilo real en el proyecto."
-                  : "Los mensajes van a su hilo real; ahí ves la respuesta."}
-              </p>
-              <textarea
-                value={messageText}
-                onChange={(event) => setMessageText(event.target.value)}
-                placeholder={`Mensaje para @${selectedBot.handle}`}
-                rows={3}
-                maxLength={FORK_BOTS_MESSAGE_MAX_LENGTH}
-                disabled={selectedBot.archived}
-              />
-              <button
-                type="button"
-                className="ade-button"
-                onClick={() => void sendMessage()}
-                disabled={
-                  sending || canSend !== true || selectedBot.archived || messageText.trim() === ""
-                }
-              >
-                <PaperPlaneTiltIcon size={16} aria-hidden /> Enviar
-              </button>
-              {selectedBot.archived ? (
-                <p className="ade-bot-meta">Restaura el bot para escribirle.</p>
-              ) : null}
-              {chatError === null ? null : (
-                <p className="ade-error" role="alert">
-                  {chatError}
-                </p>
+                <Tabs value={panel} onValueChange={(value) => setPanel(value as typeof panel)}>
+                  <TabsList aria-label="Panel del coordinador">
+                    <TabsTab value="chat">Chat</TabsTab>
+                    <TabsTab value="memory">Memoria</TabsTab>
+                  </TabsList>
+                  <TabsPanel value="chat">{chatPanel(selectedBot)}</TabsPanel>
+                  <TabsPanel value="memory">
+                    <ProjectMemory environmentId={environmentId} bot={selectedBot} />
+                  </TabsPanel>
+                </Tabs>
+              ) : (
+                chatPanel(selectedBot)
               )}
             </>
           )}
