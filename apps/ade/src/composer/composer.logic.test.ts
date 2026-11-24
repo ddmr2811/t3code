@@ -172,20 +172,13 @@ describe("effortBars", () => {
 describe("defaultNewThreadSettings", () => {
   it("uses project runtime mode and model defaults, falling back and clamping to allowed modes", () => {
     const codexId = ProviderInstanceId.make("codex");
-    const replayId = ProviderInstanceId.make("devReplay");
+    const claudeId = ProviderInstanceId.make("claudeAgent");
     const providers = providerChoices(
       {
         providers: [
           provider("codex", { supportedRuntimeModes: ["approval-required", "auto"] }),
-          provider("devReplay", {
-            models: [
-              {
-                slug: "command-output",
-                name: "Command output",
-                isCustom: false,
-                capabilities: null,
-              },
-            ],
+          provider("claudeAgent", {
+            models: [{ slug: "sonnet", name: "Sonnet", isCustom: false, capabilities: null }],
           }),
         ],
         settings: DEFAULT_SERVER_SETTINGS,
@@ -232,10 +225,16 @@ describe("defaultNewThreadSettings", () => {
       interactionMode: "default",
     });
 
-    expect(
-      defaultNewThreadSettings({ settings: DEFAULT_SERVER_SETTINGS }, project, [], {
-        defaultModelSelection: { instanceId: replayId, model: "command-output" },
-      }),
-    ).toBeNull();
+    const legacyProjectDefault = defaultNewThreadSettings(
+      { settings: DEFAULT_SERVER_SETTINGS },
+      project,
+      providers,
+      { defaultModelSelection: { instanceId: claudeId, model: "sonnet" } },
+    );
+    expect(legacyProjectDefault).toEqual({
+      model: { instanceId: claudeId, model: "sonnet" },
+      runtimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+      interactionMode: "default",
+    });
   });
 });

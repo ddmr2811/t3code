@@ -25,6 +25,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  CommandId,
   EnvironmentAuthorizationError,
   type EnvironmentId,
   type ChatImageAttachment,
@@ -901,19 +902,32 @@ const homePromptAtom = Atom.make<Pick<TurnDraft, "text" | "images">>({ text: "" 
 const homeOverridesAtom = Atom.family((_projectKey: string) =>
   Atom.make<Partial<TurnSettings>>({}).pipe(Atom.keepAlive),
 );
+interface PendingLaunch {
+  readonly projectKey: string;
+  readonly threadId: ThreadId;
+  readonly commandId: CommandId;
+  readonly messageId: MessageId;
+}
+// Reused on retry so a lost response replays the same launch instead of creating a duplicate thread.
+const homePendingLaunchAtom = Atom.make<PendingLaunch | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ade-home-pending-launch"),
+);
 
 /** Composer for Inicio: creates a new thread in the chosen machine & project and opens it. */
 export function NewThreadComposer(props: {
   environmentId: EnvironmentId;
   machineLabel: string;
   project: OrchestrationProjectShell;
+  onEngage?: (() => void) | undefined;
   onThreadCreated: (threadKey: string) => void;
 }) {
-  const { environmentId, machineLabel, project, onThreadCreated } = props;
+  const { environmentId, machineLabel, project, onEngage, onThreadCreated } = props;
+  const projectKey = `${environmentId}:${project.id}`;
   const registry = useContext(RegistryContext);
   const access = useAtomValue(operateAccessAtom(environmentId));
   const [prompt, setPrompt] = useAtom(homePromptAtom);
-  const [overrides, setOverrides] = useAtom(homeOverridesAtom(`${environmentId}:${project.id}`));
+  const [overrides, setOverrides] = useAtom(homeOverridesAtom(projectKey));
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const providers = useMemo(
     () => (config === null ? NO_PROVIDERS : providerChoices(config, project.id)),
@@ -927,9 +941,18 @@ export function NewThreadComposer(props: {
   const draft: TurnDraft = { ...overrides, ...prompt };
   const setDraft = (update: (current: TurnDraft) => TurnDraft) => {
     const next = update({
-      ...registry.get(homeOverridesAtom(`${environmentId}:${project.id}`)),
+      ...registry.get(homeOverridesAtom(projectKey)),
       ...registry.get(homePromptAtom),
     });
+    if (
+      next.text !== "" ||
+      (next.images?.length ?? 0) > 0 ||
+      next.model !== undefined ||
+      next.runtimeMode !== undefined ||
+      next.interactionMode !== undefined
+    ) {
+      onEngage?.();
+    }
     setPrompt({ text: next.text, ...(next.images === undefined ? {} : { images: next.images }) });
     setOverrides({
       ...(next.model === undefined ? {} : { model: next.model }),
@@ -957,7 +980,17 @@ export function NewThreadComposer(props: {
         placeholder="¿Qué hacemos?"
         submitLabel="Crear hilo"
         onSend={async ({ typed, text, attachments, settings }) => {
-          const threadId = ThreadId.make(SecureRandom.uuidV4Unsafe());
+          const existing = registry.get(homePendingLaunchAtom);
+          const attempt: PendingLaunch =
+            existing !== null && existing.projectKey === projectKey
+              ? existing
+              : {
+                  projectKey,
+                  threadId: ThreadId.make(SecureRandom.uuidV4Unsafe()),
+                  commandId: CommandId.make(SecureRandom.uuidV4Unsafe()),
+                  messageId: MessageId.make(SecureRandom.uuidV4Unsafe()),
+                };
+          if (existing !== attempt) registry.set(homePendingLaunchAtom, attempt);
           const createdAt = DateTime.formatIso(DateTime.nowUnsafe());
           const title = deriveInitialThreadTitle(typed);
           return await runCommand(
@@ -966,9 +999,10 @@ export function NewThreadComposer(props: {
             {
               environmentId,
               input: {
-                threadId,
+                commandId: attempt.commandId,
+                threadId: attempt.threadId,
                 message: {
-                  messageId: MessageId.make(SecureRandom.uuidV4Unsafe()),
+                  messageId: attempt.messageId,
                   role: "user",
                   text,
                   attachments,
@@ -993,7 +1027,10 @@ export function NewThreadComposer(props: {
               },
             },
             "No se pudo crear el hilo",
-            () => onThreadCreated(scopedThreadKey(scopeThreadRef(environmentId, threadId))),
+            () => {
+              registry.set(homePendingLaunchAtom, null);
+              onThreadCreated(scopedThreadKey(scopeThreadRef(environmentId, attempt.threadId)));
+            },
           );
         }}
       />

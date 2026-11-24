@@ -99,6 +99,9 @@ export function Home() {
               environmentId={selected.environmentId}
               machineLabel={selected.machineLabel}
               project={selected.project}
+              onEngage={() => {
+                if (selectedKey === null) setSelectedKey(selected.key);
+              }}
               onThreadCreated={openThread}
             />
             <ToggleGroup

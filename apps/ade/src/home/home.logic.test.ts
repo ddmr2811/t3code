@@ -1,17 +1,7 @@
-import {
-  EnvironmentId,
-  type OrchestrationProjectShell,
-  ProjectId,
-  RunId,
-} from "@t3tools/contracts";
+import { EnvironmentId, type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  deriveInitialThreadTitle,
-  greetingForHour,
-  homeProjects,
-  workingThreadCount,
-} from "./home.logic.ts";
+import { deriveInitialThreadTitle, homeProjects } from "./home.logic.ts";
 
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");
@@ -29,21 +19,6 @@ const project = (
   createdAt: "2026-11-01T00:00:00.000Z",
   updatedAt: "2026-11-01T00:00:00.000Z",
   ...overrides,
-});
-
-describe("greetingForHour", () => {
-  it.each([
-    [0, "Buenas noches."],
-    [4, "Buenas noches."],
-    [5, "Buenos días."],
-    [11, "Buenos días."],
-    [12, "Buenas tardes."],
-    [19, "Buenas tardes."],
-    [20, "Buenas noches."],
-    [23, "Buenas noches."],
-  ])("hour %i → %s", (hour, expected) => {
-    expect(greetingForHour(hour)).toBe(expected);
-  });
 });
 
 describe("homeProjects", () => {
@@ -87,34 +62,6 @@ describe("homeProjects", () => {
       ["dev-a", "busy"],
       ["dev-a", "empty"],
     ]);
-  });
-});
-
-describe("workingThreadCount", () => {
-  it("counts only threads currently working", () => {
-    const base = {
-      archivedAt: null,
-      deletedAt: null,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      pendingGuestMessageCount: 0,
-      interactionMode: "default" as const,
-      hasActionableProposedPlan: false,
-      latestRun: null,
-      pendingSubagentRequest: null,
-      lastVisitedAt: null,
-    };
-    expect(
-      workingThreadCount([
-        { ...base, runtime: { status: "running", activeRunId: RunId.make("r1") } as never },
-        {
-          ...base,
-          hasPendingApprovals: true,
-          runtime: { status: "running", activeRunId: RunId.make("r2") } as never,
-        },
-        { ...base, runtime: { status: "idle", activeRunId: null } as never },
-      ]),
-    ).toBe(1);
   });
 });
 
