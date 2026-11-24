@@ -12,7 +12,9 @@ import {
   type ForkFailoverChain,
   type ForkFailoverConfig,
   type ForkFailoverTarget,
+  type ProjectId,
   type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   type ServerConfig,
 } from "@t3tools/contracts";
 
@@ -47,18 +49,26 @@ export function failoverTargetKey(
   return `${target.instanceId}\u0000${target.model}`;
 }
 
+export type MachineProviderCatalog = ReadonlyMap<ProviderInstanceId, ReadonlySet<string> | null>;
+
+function isProviderSelectable(provider: ServerConfig["providers"][number]): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.status !== "disabled" &&
+    provider.status !== "error" &&
+    provider.availability !== "unavailable" &&
+    provider.auth.status !== "unauthenticated"
+  );
+}
+
 export function availableMachineModelOptions(
   config: Pick<ServerConfig, "providers"> | null,
 ): ReadonlyArray<MachineModelOption> {
   if (config === null) return [];
   const options: MachineModelOption[] = [];
   for (const provider of config.providers) {
-    if (
-      !provider.enabled ||
-      !provider.installed ||
-      provider.status === "disabled" ||
-      provider.availability === "unavailable"
-    ) {
+    if (!isProviderSelectable(provider)) {
       continue;
     }
     const providerLabel = provider.displayName ?? provider.instanceId;
@@ -75,22 +85,39 @@ export function availableMachineModelOptions(
   return options;
 }
 
-export function availableMachineInstanceIds(
-  config: Pick<ServerConfig, "providers"> | null,
-): ReadonlySet<ProviderInstanceId> {
-  const ids = new Set<ProviderInstanceId>();
-  if (config === null) return ids;
+export function availableMachineProviderCatalog(
+  config: Pick<ServerConfig, "providers" | "settings"> | null,
+  projectId?: ProjectId,
+): MachineProviderCatalog {
+  const catalog = new Map<ProviderInstanceId, ReadonlySet<string> | null>();
+  if (config === null) return catalog;
   for (const provider of config.providers) {
+    if (!isProviderSelectable(provider)) continue;
     if (
-      provider.enabled &&
-      provider.installed &&
-      provider.status !== "disabled" &&
-      provider.availability !== "unavailable"
+      projectId !== undefined &&
+      !resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
     ) {
-      ids.add(provider.instanceId);
+      continue;
     }
+    const knownModels =
+      provider.models.length === 0
+        ? null
+        : new Set(
+            provider.models.filter((model) => model.isLegacy !== true).map((model) => model.slug),
+          );
+    catalog.set(provider.instanceId, knownModels);
   }
-  return ids;
+  return catalog;
+}
+
+function isTargetInCatalog(
+  target: Pick<ForkFailoverTarget, "instanceId" | "model">,
+  availableProviders: MachineProviderCatalog,
+): boolean {
+  if (!availableProviders.has(target.instanceId)) return false;
+  const knownModels = availableProviders.get(target.instanceId);
+  if (knownModels === null || knownModels === undefined) return true;
+  return knownModels.has(target.model);
 }
 
 function chainSpecificity(
@@ -111,7 +138,7 @@ function chainSpecificity(
 export function findBackupCandidateForThread(
   config: ForkFailoverConfig | null,
   current: Pick<ForkFailoverTarget, "instanceId" | "model">,
-  availableInstances: ReadonlySet<ProviderInstanceId>,
+  availableProviders: MachineProviderCatalog,
 ): ForkFailoverTarget | null {
   if (config === null || config.chains.length === 0) return null;
   let bestChain: ForkFailoverChain | null = null;
@@ -135,7 +162,7 @@ export function findBackupCandidateForThread(
   return (
     ordered.find(
       (target) =>
-        failoverTargetKey(target) !== currentKey && availableInstances.has(target.instanceId),
+        failoverTargetKey(target) !== currentKey && isTargetInCatalog(target, availableProviders),
     ) ?? null
   );
 }

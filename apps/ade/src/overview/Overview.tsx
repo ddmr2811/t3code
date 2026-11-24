@@ -412,6 +412,11 @@ function FailoverSummaryCard() {
           ? "Sin cadenas configuradas ante límites de cuota"
           : `${totalChains === 1 ? "1 cadena" : `${totalChains} cadenas`} · ${switchedEvents} ${switchedEvents === 1 ? "relevo reciente" : "relevos recientes"}`}
       </p>
+      {errors.length > 0 ? (
+        <p className="ade-summary-caption" data-level="high">
+          Error al leer {errors.length} {errors.length === 1 ? "máquina" : "máquinas"}
+        </p>
+      ) : null}
       <button
         type="button"
         className="ade-button-quiet ade-summary-action"

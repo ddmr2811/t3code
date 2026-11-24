@@ -1,6 +1,8 @@
 import {
   DEFAULT_FORK_FAILOVER_CONFIG,
+  DEFAULT_SERVER_SETTINGS,
   type ForkFailoverConfig,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerConfig,
@@ -8,8 +10,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  availableMachineInstanceIds,
   availableMachineModelOptions,
+  availableMachineProviderCatalog,
   buildSafeChainId,
   findBackupCandidateForThread,
   formatFailoverTargetLabel,
@@ -20,8 +22,20 @@ import {
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
 const cursor = ProviderInstanceId.make("cursor");
+const grok = ProviderInstanceId.make("grok");
+const projectA = ProjectId.make("proj-a");
 
-const mockServerConfig: Pick<ServerConfig, "providers"> = {
+const mockServerConfig: Pick<ServerConfig, "providers" | "settings"> = {
+  settings: {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: {
+      [projectA]: {
+        providerInstances: {
+          [claude]: { enabled: false },
+        },
+      },
+    },
+  },
   providers: [
     {
       instanceId: codex,
@@ -65,13 +79,27 @@ const mockServerConfig: Pick<ServerConfig, "providers"> = {
       instanceId: cursor,
       driver: ProviderDriverKind.make("cursor"),
       displayName: "Cursor",
-      enabled: false,
+      enabled: true,
       installed: true,
       version: "1.0.0",
-      status: "disabled",
+      status: "ready",
       auth: { status: "unauthenticated" },
       checkedAt: "2026-11-24T00:00:00.000Z",
       models: [{ slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    },
+    {
+      instanceId: grok,
+      driver: ProviderDriverKind.make("grok"),
+      displayName: "Grok",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "error",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-24T00:00:00.000Z",
+      models: [{ slug: "grok-build", name: "Grok Build", isCustom: false, capabilities: null }],
       slashCommands: [],
       skills: [],
     },
@@ -79,7 +107,7 @@ const mockServerConfig: Pick<ServerConfig, "providers"> = {
 };
 
 describe("failover.logic", () => {
-  it("lists only enabled, installed, non-legacy models for a machine", () => {
+  it("lists only enabled, authenticated, non-error, non-legacy models for a machine", () => {
     const options = availableMachineModelOptions(mockServerConfig);
     expect(options).toEqual([
       { instanceId: codex, providerLabel: "Codex", model: "gpt-5.4", modelName: "GPT-5.4" },
@@ -90,13 +118,14 @@ describe("failover.logic", () => {
         modelName: "Claude Sonnet 4.6",
       },
     ]);
-    expect(availableMachineInstanceIds(mockServerConfig)).toEqual(new Set([codex, claude]));
+    const catalog = availableMachineProviderCatalog(mockServerConfig);
+    expect([...catalog.keys()]).toEqual([codex, claude]);
     expect(
       formatFailoverTargetLabel({ instanceId: claude, model: "claude-sonnet-4-6" }, options),
     ).toBe("Claude · Claude Sonnet 4.6");
   });
 
-  it("picks the next eligible backup candidate for a thread skipping current and disabled instances", () => {
+  it("skips unauthenticated, error, project-disabled providers and unknown model slugs", () => {
     const config: ForkFailoverConfig = {
       ...DEFAULT_FORK_FAILOVER_CONFIG,
       enabled: true,
@@ -107,17 +136,31 @@ describe("failover.logic", () => {
           targets: [
             { instanceId: codex, model: "gpt-5.4" },
             { instanceId: cursor, model: "composer-2" },
+            { instanceId: grok, model: "grok-build" },
+            { instanceId: claude, model: "unknown-model" },
             { instanceId: claude, model: "claude-sonnet-4-6" },
           ],
         },
       ],
     };
-    const candidate = findBackupCandidateForThread(
-      config,
-      { instanceId: codex, model: "gpt-5.4" },
-      availableMachineInstanceIds(mockServerConfig),
-    );
-    expect(candidate).toEqual({ instanceId: claude, model: "claude-sonnet-4-6" });
+
+    // Without project override, skips unauthenticated cursor, error grok, and unknown claude slug.
+    expect(
+      findBackupCandidateForThread(
+        config,
+        { instanceId: codex, model: "gpt-5.4" },
+        availableMachineProviderCatalog(mockServerConfig),
+      ),
+    ).toEqual({ instanceId: claude, model: "claude-sonnet-4-6" });
+
+    // With projectA override disabling claude, no backup candidate remains.
+    expect(
+      findBackupCandidateForThread(
+        config,
+        { instanceId: codex, model: "gpt-5.4" },
+        availableMachineProviderCatalog(mockServerConfig, projectA),
+      ),
+    ).toBeNull();
   });
 
   it("reorders chain targets and generates safe deduplicated chain IDs", () => {

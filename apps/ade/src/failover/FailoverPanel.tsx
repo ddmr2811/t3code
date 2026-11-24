@@ -341,6 +341,12 @@ function MachineFailoverEditor(props: {
                         }}
                       >
                         <option value="">Cualquier instancia (por defecto)</option>
+                        {chain.matchInstanceId !== undefined &&
+                        !uniqueInstances.some(([id]) => id === chain.matchInstanceId) ? (
+                          <option value={chain.matchInstanceId}>
+                            {chain.matchInstanceId} (no disponible)
+                          </option>
+                        ) : null}
                         {uniqueInstances.map(([id, label]) => (
                           <option key={id} value={id}>
                             {label}

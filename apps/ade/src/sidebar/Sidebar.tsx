@@ -29,7 +29,7 @@ import { ThreadRequests } from "../decisions/Requests.tsx";
 import { isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import {
-  availableMachineInstanceIds,
+  availableMachineProviderCatalog,
   findBackupCandidateForThread,
 } from "../failover/failover.logic.ts";
 import {
@@ -334,9 +334,9 @@ function ThreadFailoverButton(props: {
       findBackupCandidateForThread(
         failoverState?.config ?? null,
         props.thread.modelSelection,
-        availableMachineInstanceIds(serverConfig),
+        availableMachineProviderCatalog(serverConfig, props.thread.projectId),
       ),
-    [failoverState?.config, props.thread.modelSelection, serverConfig],
+    [failoverState?.config, props.thread.modelSelection, props.thread.projectId, serverConfig],
   );
 
   if (!canSwitch || candidate === null) return null;
@@ -478,6 +478,7 @@ export function SelectedThread() {
         <div className="ade-thread-view-actions">
           {machine === null || thread === null || key === null ? null : (
             <ThreadFailoverButton
+              key={key}
               threadRef={ref}
               thread={thread}
               onError={(message) => setFailoverError(message === null ? null : { key, message })}
