@@ -14,6 +14,7 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { isThreadManagementError, threadManagementFailure } from "../../OrchestratorMcpService.ts";
 import { dispatchFailure, newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { refuseBotToBot } from "../botHandoff/refuseBotToBot.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -89,6 +90,7 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
+            yield* refuseBotToBot(input.threadId);
             const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
