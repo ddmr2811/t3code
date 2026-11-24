@@ -1,6 +1,7 @@
 import {
   CommandId,
   FORK_BOTS_MAX_COUNT,
+  FORK_BOTS_MAX_FILE_BYTES,
   type ForkBot,
   ForkBotListInput,
   type ForkBotListResult,
@@ -39,8 +40,13 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { makeBotFileStore } from "./fileStore.ts";
-import { listBots } from "./store.ts";
+import { makeForkJsonFileStore } from "../jsonFileStore.ts";
+import {
+  decodeStoredBotDirectory,
+  EMPTY_BOT_DIRECTORY,
+  listBots,
+  serializeBotDirectory,
+} from "./store.ts";
 
 export class ForkBots extends Context.Service<
   ForkBots,
@@ -132,7 +138,15 @@ function providerIsSelectable(provider: ServerProvider): boolean {
 }
 
 const make = Effect.gen(function* () {
-  const fileStore = yield* makeBotFileStore;
+  const fileStore = yield* makeForkJsonFileStore({
+    fileName: "bots.json",
+    label: "Bot store",
+    maxBytes: FORK_BOTS_MAX_FILE_BYTES,
+    empty: EMPTY_BOT_DIRECTORY,
+    decode: decodeStoredBotDirectory,
+    serialize: serializeBotDirectory,
+    makeError: (reason, message) => new ForkBotsError({ reason, message }),
+  });
   const storeLock = yield* Semaphore.make(1);
   const botLocks = yield* KeyedLock.make<ForkBot["id"]>();
   const projects = yield* ProjectService.ProjectService;

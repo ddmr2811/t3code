@@ -1,21 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- O_NOFOLLOW, O_NONBLOCK, lstat, realpath, and O_CREAT|O_EXCL 0600 require direct fs flags.
+// Fork-only: one bounded JSON document per file in `<stateDir>/fork/`, written atomically with 0600/0700.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 
-import { FORK_BOTS_MAX_FILE_BYTES, ForkBotsError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import {
-  decodeStoredBotDirectory,
-  EMPTY_BOT_DIRECTORY,
-  serializeBotDirectory,
-  type StoredBotDirectory,
-} from "./store.ts";
+import * as ServerConfig from "../config.ts";
 
 const READ_FLAGS =
   NodeFS.constants.O_RDONLY |
@@ -27,9 +21,7 @@ const WRITE_TEMP_FLAGS =
   NodeFS.constants.O_WRONLY |
   (NodeFS.constants.O_NOFOLLOW ?? 0);
 
-const storageFailed = (message: string) => new ForkBotsError({ reason: "storageFailed", message });
-
-class BotFsError extends Schema.TaggedError<BotFsError>()("BotFsError", {
+class ForkFsError extends Schema.TaggedError<ForkFsError>()("ForkFsError", {
   code: Schema.UndefinedOr(Schema.String),
   cause: Schema.Defect(),
 }) {}
@@ -44,21 +36,12 @@ const errnoCode = (error: unknown): string | undefined =>
 const attemptFs = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
-    catch: (cause) => new BotFsError({ code: errnoCode(cause), cause }),
+    catch: (cause) => new ForkFsError({ code: errnoCode(cause), cause }),
   });
-
-const failStorageWithLog = (publicMessage: string, logMessage: string, cause: unknown) =>
-  Effect.logWarning(logMessage, { cause }).pipe(
-    Effect.andThen(Effect.fail(storageFailed(publicMessage))),
-  );
-
-const tryFs = <A>(run: () => Promise<A>, publicMessage: string, logMessage: string) =>
-  attemptFs(run).pipe(
-    Effect.catch((error) => failStorageWithLog(publicMessage, logMessage, error.cause)),
-  );
 
 async function readRegularBounded(
   handle: NodeFSP.FileHandle,
+  maxBytes: number,
 ): Promise<
   | { readonly kind: "ok"; readonly text: string }
   | { readonly kind: "notFile" }
@@ -66,16 +49,16 @@ async function readRegularBounded(
 > {
   const info = await handle.stat();
   if (!info.isFile()) return { kind: "notFile" };
-  if (info.size > FORK_BOTS_MAX_FILE_BYTES) return { kind: "tooLarge" };
-  // One byte past the reported size catches a file that grew after the stat.
-  const buffer = new Uint8Array(info.size + 1);
+  if (info.size > maxBytes) return { kind: "tooLarge" };
+  // Read up to maxBytes + 1 so concurrent growth past the cap is caught without trusting stat alone.
+  const buffer = new Uint8Array(maxBytes + 1);
   let total = 0;
   while (total < buffer.length) {
     const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
     if (bytesRead === 0) break;
     total += bytesRead;
   }
-  if (total > FORK_BOTS_MAX_FILE_BYTES || total > info.size) return { kind: "tooLarge" };
+  if (total > maxBytes) return { kind: "tooLarge" };
   return { kind: "ok", text: new TextDecoder("utf-8").decode(buffer.subarray(0, total)) };
 }
 
@@ -83,7 +66,7 @@ async function writeAll(handle: NodeFSP.FileHandle, bytes: Uint8Array): Promise<
   let offset = 0;
   while (offset < bytes.byteLength) {
     const { bytesWritten } = await handle.write(bytes, offset, bytes.byteLength - offset);
-    if (bytesWritten <= 0) throw new Error("Short write while persisting bot directory.");
+    if (bytesWritten <= 0) throw new Error("Short write while persisting fork store.");
     offset += bytesWritten;
   }
 }
@@ -103,160 +86,183 @@ async function syncDirectoryBestEffort(dirPath: string): Promise<void> {
   }
 }
 
-export const makeBotFileStore = Effect.gen(function* () {
+type ForkStoreFailureReason = "storageFailed" | "limitExceeded";
+
+/**
+ * Callers keep their own lock around read-modify-write; this only guarantees each read and
+ * write is bounded, symlink-safe, and atomic. Public error messages never include paths.
+ */
+export const makeForkJsonFileStore = Effect.fn("ForkJsonFileStore.make")(function* <S, E>(options: {
+  /** File name inside `<stateDir>/fork/`, e.g. `bots.json`. */
+  readonly fileName: string;
+  /** Capitalized noun for public errors, e.g. `Bot store`. */
+  readonly label: string;
+  readonly maxBytes: number;
+  readonly empty: S;
+  readonly decode: (text: string) => Effect.Effect<S, Schema.SchemaError>;
+  readonly serialize: (
+    value: S,
+  ) => { readonly ok: true; readonly json: string } | { readonly ok: false; readonly error: E };
+  readonly makeError: (reason: ForkStoreFailureReason, message: string) => E;
+}) {
+  const { fileName, label, maxBytes, makeError } = options;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
+  const logPrefix = `fork ${fileName}`;
+  const lowerLabel = label.toLowerCase();
+
+  const failStorage = (publicMessage: string, logMessage: string, cause: unknown) =>
+    Effect.logWarning(`${logPrefix} ${logMessage}`, { cause }).pipe(
+      Effect.andThen(Effect.fail(makeError("storageFailed", publicMessage))),
+    );
+  const tryFs = <A>(run: () => Promise<A>, publicMessage: string, logMessage: string) =>
+    attemptFs(run).pipe(
+      Effect.catch((error) => failStorage(publicMessage, logMessage, error.cause)),
+    );
+
   const resolvedStateDir = path.resolve(config.stateDir);
   const forkDir = path.resolve(resolvedStateDir, "fork");
-  const filePath = path.resolve(forkDir, "bots.json");
+  const filePath = path.resolve(forkDir, fileName);
   if (path.dirname(filePath) !== forkDir || path.dirname(forkDir) !== resolvedStateDir) {
-    return yield* storageFailed("Bot store path is invalid.");
+    return yield* Effect.fail(makeError("storageFailed", `${label} path is invalid.`));
   }
 
-  const ensureSafeForkDir = Effect.fn("ForkBots.ensureSafeForkDir")(function* (options: {
-    readonly create: boolean;
-  }) {
+  const ensureSafeForkDir = Effect.fn("ForkJsonFileStore.ensureSafeForkDir")(function* (
+    create: boolean,
+  ) {
     const existing = yield* attemptFs(() => NodeFSP.lstat(forkDir)).pipe(
       Effect.catch((error) =>
         error.code === "ENOENT"
           ? Effect.succeed(null)
-          : failStorageWithLog(
-              "Could not access bot store directory.",
-              "fork bots lstat failed on fork directory",
+          : failStorage(
+              `Could not access ${lowerLabel} directory.`,
+              "lstat failed on fork directory",
               error.cause,
             ),
       ),
     );
     if (existing === null) {
-      if (!options.create) return false;
+      if (!create) return false;
       yield* tryFs(
         () => NodeFSP.mkdir(resolvedStateDir, { recursive: true }),
-        "Could not prepare bot store directory.",
-        "fork bots mkdir failed on stateDir",
+        `Could not prepare ${lowerLabel} directory.`,
+        "mkdir failed on stateDir",
       );
       yield* attemptFs(() => NodeFSP.mkdir(forkDir, { mode: 0o700 })).pipe(
         Effect.catch((error) =>
           error.code === "EEXIST"
             ? Effect.void
-            : failStorageWithLog(
-                "Could not prepare bot store directory.",
-                "fork bots mkdir failed on fork directory",
+            : failStorage(
+                `Could not prepare ${lowerLabel} directory.`,
+                "mkdir failed on fork directory",
                 error.cause,
               ),
         ),
       );
     }
-
     const dirInfo = yield* tryFs(
       () => NodeFSP.lstat(forkDir),
-      "Could not inspect bot store directory.",
-      "fork bots lstat failed after preparing fork directory",
+      `Could not inspect ${lowerLabel} directory.`,
+      "lstat failed after preparing fork directory",
     );
     if (dirInfo.isSymbolicLink() || !dirInfo.isDirectory()) {
-      return yield* failStorageWithLog(
-        "Bot store directory is invalid.",
-        "fork bots refused non-directory or symlink fork directory",
+      return yield* failStorage(
+        `${label} directory is invalid.`,
+        "refused non-directory or symlink fork directory",
         { isSymlink: dirInfo.isSymbolicLink(), isDirectory: dirInfo.isDirectory() },
       );
     }
     const [realState, realFork] = yield* tryFs(
       () => Promise.all([NodeFSP.realpath(resolvedStateDir), NodeFSP.realpath(forkDir)]),
-      "Could not verify bot store directory.",
-      "fork bots realpath check failed",
+      `Could not verify ${lowerLabel} directory.`,
+      "realpath check failed",
     );
     if (path.dirname(realFork) !== realState || path.basename(realFork) !== "fork") {
-      return yield* failStorageWithLog(
-        "Bot store directory is invalid.",
-        "fork bots resolved fork directory escaped state directory",
+      return yield* failStorage(
+        `${label} directory is invalid.`,
+        "resolved fork directory escaped state directory",
         { realState, realFork },
       );
     }
-    if (options.create && platform !== "win32") {
+    if (create && platform !== "win32") {
       yield* tryFs(
         () => NodeFSP.chmod(forkDir, 0o700),
-        "Could not secure bot store directory.",
-        "fork bots chmod 0700 failed on fork directory",
+        `Could not secure ${lowerLabel} directory.`,
+        "chmod 0700 failed on fork directory",
       );
     }
     return true;
   });
 
-  const read = Effect.fn("ForkBots.readDirectory")(function* () {
-    const dirExists = yield* ensureSafeForkDir({ create: false });
-    if (!dirExists) return EMPTY_BOT_DIRECTORY;
+  const read = Effect.fn("ForkJsonFileStore.read")(function* () {
+    if (!(yield* ensureSafeForkDir(false))) return options.empty;
     const opened = yield* attemptFs(() => NodeFSP.open(filePath, READ_FLAGS)).pipe(
       Effect.catch((error) =>
         error.code === "ENOENT"
           ? Effect.succeed(null)
-          : failStorageWithLog(
-              "Could not read bot store.",
-              "fork bots open failed for read",
-              error.cause,
-            ),
+          : failStorage(`Could not read ${lowerLabel}.`, "open failed for read", error.cause),
       ),
     );
-    if (opened === null) return EMPTY_BOT_DIRECTORY;
+    if (opened === null) return options.empty;
     const result = yield* Effect.ensuring(
       tryFs(
-        () => readRegularBounded(opened),
-        "Could not read bot store.",
-        "fork bots bounded read failed",
+        () => readRegularBounded(opened, maxBytes),
+        `Could not read ${lowerLabel}.`,
+        "bounded read failed",
       ),
       Effect.promise(() => opened.close().catch(() => {})),
     );
     if (result.kind === "notFile") {
-      return yield* failStorageWithLog(
-        "Bot store is not a regular file.",
-        "fork bots refused non-regular file on read",
+      return yield* failStorage(
+        `${label} is not a regular file.`,
+        "refused non-regular file on read",
         { kind: result.kind },
       );
     }
     if (result.kind === "tooLarge") {
-      return yield* new ForkBotsError({
-        reason: "limitExceeded",
-        message: `Bot store exceeds the ${FORK_BOTS_MAX_FILE_BYTES}-byte limit.`,
-      });
+      return yield* Effect.fail(
+        makeError("limitExceeded", `${label} exceeds the ${maxBytes}-byte limit.`),
+      );
     }
-    return yield* decodeStoredBotDirectory(result.text).pipe(
-      Effect.catch((error) =>
-        failStorageWithLog("Bot store is invalid.", "fork bots store decode failed", error),
-      ),
-    );
+    return yield* options
+      .decode(result.text)
+      .pipe(Effect.catch((error) => failStorage(`${label} is invalid.`, "decode failed", error)));
   });
 
-  const write = Effect.fn("ForkBots.writeDirectory")(function* (directory: StoredBotDirectory) {
-    const serialized = serializeBotDirectory(directory);
-    if (!serialized.ok) return yield* serialized.error;
-    yield* ensureSafeForkDir({ create: true });
+  const write = Effect.fn("ForkJsonFileStore.write")(function* (value: S) {
+    const serialized = options.serialize(value);
+    if (!serialized.ok) return yield* Effect.fail(serialized.error);
+    yield* ensureSafeForkDir(true);
     const existingFile = yield* attemptFs(() => NodeFSP.lstat(filePath)).pipe(
       Effect.catch((error) =>
         error.code === "ENOENT"
           ? Effect.succeed(null)
-          : failStorageWithLog(
-              "Could not inspect bot store.",
-              "fork bots lstat failed on target file",
+          : failStorage(
+              `Could not inspect ${lowerLabel}.`,
+              "lstat failed on target file",
               error.cause,
             ),
       ),
     );
     if (existingFile !== null && (existingFile.isSymbolicLink() || !existingFile.isFile())) {
-      return yield* failStorageWithLog(
-        "Bot store target is not a regular file.",
-        "fork bots refused symlink or non-regular file on write",
+      return yield* failStorage(
+        `${label} target is not a regular file.`,
+        "refused symlink or non-regular file on write",
         { isSymlink: existingFile.isSymbolicLink(), isFile: existingFile.isFile() },
       );
     }
 
-    const tempPath = path.join(forkDir, `.bots.${SecureRandom.uuidV4Unsafe()}.tmp`);
+    const tempPath = path.join(forkDir, `.${fileName}.${SecureRandom.uuidV4Unsafe()}.tmp`);
     const bytes = new TextEncoder().encode(serialized.json);
+    const persistFailed = `Could not persist ${lowerLabel}.`;
     let renamed = false;
     yield* Effect.ensuring(
       Effect.gen(function* () {
         const handle = yield* tryFs(
           () => NodeFSP.open(tempPath, WRITE_TEMP_FLAGS, 0o600),
-          "Could not persist bot store.",
-          "fork bots open temp file failed",
+          persistFailed,
+          "open temp file failed",
         );
         yield* Effect.ensuring(
           tryFs(
@@ -265,15 +271,15 @@ export const makeBotFileStore = Effect.gen(function* () {
               await writeAll(handle, bytes);
               await handle.sync();
             },
-            "Could not persist bot store.",
-            "fork bots temp file write/sync failed",
+            persistFailed,
+            "temp file write/sync failed",
           ),
           Effect.promise(() => handle.close().catch(() => {})),
         );
         yield* tryFs(
           () => NodeFSP.rename(tempPath, filePath),
-          "Could not persist bot store.",
-          "fork bots atomic rename failed",
+          persistFailed,
+          "atomic rename failed",
         );
         renamed = true;
         if (platform !== "win32") {
