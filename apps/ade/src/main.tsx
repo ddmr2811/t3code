@@ -166,8 +166,9 @@ function Shell() {
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const narrowViewport = useAtomValue(narrowViewportAtom);
   const crowdedViewport = useAtomValue(crowdedViewportAtom);
-  const toolPanelOpen = useAtomValue(toolPanelAtom) !== null;
-  const decisionsOpen = useDecisionsPanel().open;
+  const [toolPanel, setToolPanel] = useAtom(toolPanelAtom);
+  const toolPanelOpen = toolPanel !== null;
+  const { open: decisionsOpen, setOpen: setDecisionsOpen } = useDecisionsPanel();
   const panelOpen = toolPanelOpen || decisionsOpen;
   const hasMachines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size > 0;
   // Start collapsed on desktop unless a pairing link arrived in the URL and needs the form.
@@ -178,7 +179,19 @@ function Shell() {
     setSidebarExpanded(next);
     writeSidebarExpanded(next);
   };
-  const toggleSidebar = () => setExpanded(!sidebarExpanded);
+  // Keep the sidebar expanded while there are no machines so the pairing UI stays reachable.
+  // A panel on a window under 1200 px folds the sidebar to its rail while it is open, so the
+  // reading column keeps its room; the saved choice stays as it was.
+  const collapsed =
+    !narrowViewport && hasMachines && (!sidebarExpanded || (crowdedViewport && panelOpen));
+  // Expanding a sidebar folded only by a panel closes the panel instead of flipping the choice.
+  const expandSidebar = () => {
+    if (sidebarExpanded) {
+      setToolPanel(null);
+      setDecisionsOpen(false);
+    } else setExpanded(true);
+  };
+  const toggleSidebar = () => (collapsed ? expandSidebar() : setExpanded(false));
   const openHome = () => {
     setDrawerOpen(false);
     setView("inicio");
@@ -186,7 +199,7 @@ function Shell() {
   // Machines and pairing live in the expanded sidebar (the drawer on a phone).
   const showMachines = () => {
     if (narrowViewport) setDrawerOpen(true);
-    else setExpanded(true);
+    else expandSidebar();
     requestAnimationFrame(() => document.getElementById("ade-add-machine")?.focus());
   };
   useShortcut("mod+b", toggleSidebar, {
@@ -199,11 +212,6 @@ function Shell() {
   });
   const toggleHint = useShortcutHint("mod+b");
   const newThreadHint = useShortcutHint("mod+shift+o");
-  // Keep the sidebar expanded while there are no machines so the pairing UI stays reachable.
-  // A panel on a window under 1200 px folds the sidebar to its rail while it is open, so the
-  // reading column keeps its room; the saved choice stays as it was.
-  const collapsed =
-    !narrowViewport && hasMachines && (!sidebarExpanded || (crowdedViewport && panelOpen));
   const shortcutLabel = toggleHint.text || "Ctrl+B";
   const newThreadShortcutLabel = newThreadHint.text || "Ctrl+Shift+O";
   const isHome = hasMachines && !threadOpen && view === "inicio";
@@ -306,7 +314,7 @@ function Shell() {
               <span className="ade-rail-sep" aria-hidden />
               <ProjectRail />
               <div className="ade-rail-footer">
-                <RailConnectionIndicator onExpand={() => setExpanded(true)} />
+                <RailConnectionIndicator onExpand={expandSidebar} />
                 <BackgroundPicker compact {...background} />
               </div>
             </div>

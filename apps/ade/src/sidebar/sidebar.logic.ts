@@ -161,27 +161,30 @@ export interface RailProject<T> {
 
 /**
  * Projects for the collapsed rail, in recency order, flagging any with an operable pending
- * decision. `waitingProjectKeys` adds the projects whose only waiting thread is not listed, such
+ * decision. `waitingRowKeys` (`lineageKey`s) adds the listed rows whose waiting thread is not listed, such
  * as a subagent's: the same list the decisions panel counts.
  */
 export function railProjects<T extends GroupInput & StateInput>(
   threads: ReadonlyArray<T>,
   machineIds: ReadonlyArray<EnvironmentId>,
   operableIds: ReadonlySet<EnvironmentId>,
-  waitingProjectKeys: ReadonlySet<string>,
+  waitingRowKeys: ReadonlySet<string>,
 ): RailProject<T>[] {
   return groupThreads(threads, machineIds).flatMap((machine) => {
     const canAnswer = operableIds.has(machine.environmentId);
     return machine.projects.map((project) => {
       const pending = canAnswer
-        ? project.threads.find((thread) => threadState(thread) === "needs-you")
+        ? project.threads.find(
+            (thread) =>
+              threadState(thread) === "needs-you" || waitingRowKeys.has(lineageKey(thread)),
+          )
         : undefined;
       const key = `${machine.environmentId}:${project.projectId}`;
       return {
         key,
         environmentId: machine.environmentId,
         projectId: project.projectId,
-        hasPendingDecision: pending !== undefined || waitingProjectKeys.has(key),
+        hasPendingDecision: pending !== undefined,
         primaryThread: pending ?? project.threads[0]!,
         threads: project.threads,
       };

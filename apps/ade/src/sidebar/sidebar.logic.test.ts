@@ -6,6 +6,7 @@ import {
   groupThreads,
   listedThreads,
   projectMonogram,
+  lineageKey,
   railProjects,
   readSidebarExpanded,
   threadState,
@@ -206,11 +207,15 @@ describe("railProjects", () => {
       ...stateInput(),
       ...thread("a-docs", machineA, "docs", "2026-11-21T09:00:00.000Z"),
     };
+    const docsNewer = {
+      ...stateInput(),
+      ...thread("a-docs-new", machineA, "docs", "2026-11-23T09:00:00.000Z"),
+    };
     const projects = railProjects(
-      [newer, waiting, readOnlyWaiting, subagentParent],
+      [newer, waiting, readOnlyWaiting, subagentParent, docsNewer],
       [machineA, machineB],
       new Set([machineA]),
-      new Set([`${machineA}:docs`]),
+      new Set([lineageKey(subagentParent)]),
     );
     expect(
       projects.map((project) => ({

@@ -328,11 +328,12 @@ export function ProjectRail() {
   const operable = useAtomValue(operableEnvironmentIdsAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
   const needsYou = useAtomValue(needsYouThreadsAtom);
+  const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const projects = railProjects(
     listed,
     [...catalog.entries.keys()],
     operable,
-    new Set(needsYou.map((thread) => `${thread.environmentId}:${thread.projectId}`)),
+    new Set(decisionsByRow(needsYou, allShells, listed).keys()),
   );
   if (projects.length === 0) return null;
   const selectedRef = selected === null ? null : parseScopedThreadKey(selected);
