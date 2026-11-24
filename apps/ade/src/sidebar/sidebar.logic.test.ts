@@ -215,7 +215,7 @@ describe("railProjects", () => {
       [newer, waiting, readOnlyWaiting, subagentParent, docsNewer],
       [machineA, machineB],
       new Set([machineA]),
-      new Set([lineageKey(subagentParent)]),
+      new Set([lineageKey(waiting), lineageKey(readOnlyWaiting), lineageKey(subagentParent)]),
     );
     expect(
       projects.map((project) => ({

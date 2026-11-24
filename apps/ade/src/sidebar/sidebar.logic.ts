@@ -161,8 +161,8 @@ export interface RailProject<T> {
 
 /**
  * Projects for the collapsed rail, in recency order, flagging any with an operable pending
- * decision. `waitingRowKeys` (`lineageKey`s) adds the listed rows whose waiting thread is not listed, such
- * as a subagent's: the same list the decisions panel counts.
+ * decision. `waitingRowKeys` (`lineageKey`s) are the listed rows that wait now, a subagent's under
+ * its row and without what «Luego» set aside: the same list the decisions panel counts.
  */
 export function railProjects<T extends GroupInput & StateInput>(
   threads: ReadonlyArray<T>,
@@ -174,10 +174,7 @@ export function railProjects<T extends GroupInput & StateInput>(
     const canAnswer = operableIds.has(machine.environmentId);
     return machine.projects.map((project) => {
       const pending = canAnswer
-        ? project.threads.find(
-            (thread) =>
-              threadState(thread) === "needs-you" || waitingRowKeys.has(lineageKey(thread)),
-          )
+        ? project.threads.find((thread) => waitingRowKeys.has(lineageKey(thread)))
         : undefined;
       const key = `${machine.environmentId}:${project.projectId}`;
       return {

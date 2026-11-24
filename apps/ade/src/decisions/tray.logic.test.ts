@@ -1,4 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,8 +9,13 @@ import {
   classifyPendingKinds,
   countPendingByKind,
   filterPendingItems,
+  isSnoozed,
+  waitingIds,
   isTrayOpenForViewport,
+  readSnoozes,
   reconcileTrayChoice,
+  snoozeUntilTomorrow,
+  writeSnoozes,
   type PendingSeenByEnvironment,
   type PendingThreadInput,
 } from "./tray.logic.ts";
@@ -167,5 +173,56 @@ describe("tray.logic", () => {
     // Desktop keeps auto-opening behavior unchanged.
     expect(reconcileTrayChoice(opened, [], false)).toBe(opened);
     expect(isTrayOpenForViewport(null, ["env-a:t1"], false)).toBe(true);
+  });
+
+  it("brings a «Luego» back tomorrow at 08:00, across a month end, and forgets it once due", () => {
+    const local = (month: number, day: number, hours: number, minutes: number) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month, day, hour: hours, minute: minutes },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    const until = snoozeUntilTomorrow(local(1, 31, 23, 30));
+    expect(until).toBe(DateTime.toEpochMillis(local(2, 1, 8, 0)));
+    const snooze = { until, requestIds: ["r1"] };
+    expect(isSnoozed(snooze, ["r1"], until - 60_000)).toBe(true);
+    expect(isSnoozed(snooze, ["r1"], until)).toBe(false);
+
+    const saved = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => void saved.set(key, value),
+    };
+    writeSnoozes(
+      {
+        "env-a:t1": snooze,
+        "env-a:old": { until: until - 86_400_000, requestIds: [] },
+        "env-a:far": { until: 1e20, requestIds: [] },
+      },
+      storage,
+    );
+    expect(readSnoozes(until - 1, storage)).toEqual({ "env-a:t1": snooze });
+    expect(readSnoozes(until, storage)).toEqual({});
+  });
+
+  it("brings a snoozed approval back when a guest message arrives on the same thread", () => {
+    const thread = pendingThread("t1", envA, { hasPendingApprovals: true });
+    const requests = { approvals: [{ requestId: "approval-1" }], userInputs: [] };
+    const snooze = { until: 2_000, requestIds: waitingIds(thread, requests) ?? [] };
+    expect(isSnoozed(snooze, waitingIds(thread, requests), 1_000)).toBe(true);
+    const withGuest = { ...thread, pendingGuestMessageCount: 1 };
+    expect(isSnoozed(snooze, waitingIds(withGuest, requests), 1_000)).toBe(false);
+  });
+
+  it("brings a snoozed thread back as soon as it asks something it did not ask when snoozed", () => {
+    const snooze = { until: 2_000, requestIds: ["approval-1"] };
+    expect(isSnoozed(snooze, ["approval-1"], 1_000)).toBe(true);
+    // Still loading its requests: kept hidden rather than flashing back.
+    expect(isSnoozed(snooze, null, 1_000)).toBe(false);
+    expect(isSnoozed(snooze, ["approval-1", "question-2"], 1_000)).toBe(false);
+    expect(isSnoozed(snooze, ["question-2"], 1_000)).toBe(false);
+    // Answered elsewhere, then waiting on something with no request (a plan): it ends.
+    expect(isSnoozed(snooze, [], 1_000)).toBe(false);
+    // Nothing recorded at snooze time never hides anything.
+    expect(isSnoozed({ until: 2_000, requestIds: [] }, [], 1_000)).toBe(false);
   });
 });

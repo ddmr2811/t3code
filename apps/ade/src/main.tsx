@@ -51,7 +51,12 @@ function MobileBottomNav() {
   const [view, setView] = useAtom(viewAtom);
   const [drawerOpen, setDrawerOpen] = useAtom(mobileSidebarOpenAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
-  const { count: pendingCount, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
+  const {
+    count: pendingCount,
+    snoozedCount,
+    open: trayOpen,
+    setOpen: setTrayOpen,
+  } = useDecisionsPanel();
 
   const setSearchOpen = useAtomSet(searchOpenAtom);
   const goView = (target: "inicio" | "proyectos" | "bots") => {
@@ -125,7 +130,7 @@ function MobileBottomNav() {
         className="ade-mobile-nav-item"
         data-has-pending={pendingCount > 0 ? "" : undefined}
         aria-pressed={trayOpen}
-        disabled={pendingCount === 0}
+        disabled={pendingCount === 0 && snoozedCount === 0}
         onClick={() => {
           setDrawerOpen(false);
           setTrayOpen(!trayOpen);

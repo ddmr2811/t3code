@@ -1,6 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   type DecisionsPanelChoice,
@@ -206,4 +207,129 @@ export function buildPendingNotificationEvent(
     body,
     threadKeys,
   };
+}
+
+/** «Luego»: when a decision comes back, and the requests it had then. Nothing leaves the server. */
+export interface Snooze {
+  readonly until: number;
+  readonly requestIds: ReadonlyArray<string>;
+}
+export type Snoozes = Readonly<Record<string, Snooze>>;
+
+const SNOOZES_STORAGE_KEY = "ade.decisions.snoozed";
+// Tomorrow at 08:00 is at most ~32 h away; anything further was not written by this code.
+const MAX_SNOOZE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Tomorrow at 08:00 local time, whatever the hour it is snoozed at. */
+export function snoozeUntilTomorrow(now: DateTime.DateTime): number {
+  const local = DateTime.makeZonedUnsafe(now, { timeZone: DateTime.zoneMakeLocal() });
+  const tomorrow = DateTime.add(local, { days: 1 });
+  return DateTime.toEpochMillis(
+    DateTime.setParts(tomorrow, { hour: 8, minute: 0, second: 0, millisecond: 0 }),
+  );
+}
+
+/**
+ * Hidden until its time, and only while the thread still waits on just what it waited on when
+ * snoozed: something new, or nothing of that left, ends it. `pendingIds` is null while loading.
+ */
+export function isSnoozed(
+  snooze: Snooze | undefined,
+  pendingIds: ReadonlyArray<string> | null,
+  now: number,
+): boolean {
+  // While its requests load nothing is hidden: a new one must never wait on a slow read.
+  if (snooze === undefined || snooze.until <= now || snooze.requestIds.length === 0) return false;
+  if (pendingIds === null) return false;
+  return pendingIds.length > 0 && pendingIds.every((id) => snooze.requestIds.includes(id));
+}
+
+/**
+ * What a waiting thread waits on: its request ids, plus a marker for guest messages and plans,
+ * which carry no id, so a new one ends a «Luego». Null while its requests load.
+ */
+export function waitingIds(
+  thread: Pick<
+    PendingThreadInput,
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingGuestMessageCount"
+    | "hasActionableProposedPlan"
+    | "updatedAt"
+  >,
+  requests: {
+    readonly approvals: ReadonlyArray<{ readonly requestId: string }>;
+    readonly userInputs: ReadonlyArray<{ readonly requestId: string }>;
+  } | null,
+): ReadonlyArray<string> | null {
+  const others = [
+    ...((thread.pendingGuestMessageCount ?? 0) > 0
+      ? [`invitados:${thread.pendingGuestMessageCount}`]
+      : []),
+    ...(thread.hasActionableProposedPlan ? [`plan@${thread.updatedAt}`] : []),
+  ];
+  if (!thread.hasPendingApprovals && !thread.hasPendingUserInput)
+    return others.length > 0 ? others : [`sin-peticion@${thread.updatedAt}`];
+  if (requests === null) return null;
+  return [
+    ...[...requests.approvals, ...requests.userInputs].map((request) => request.requestId),
+    ...others,
+  ];
+}
+
+/** Drops what is due and what no longer waits, so a later wait on the same thread starts fresh. */
+export function pruneSnoozes(
+  snoozes: Snoozes,
+  waitingKeys: ReadonlyArray<string>,
+  now: number,
+): Snoozes {
+  return Object.fromEntries(
+    Object.entries(snoozes).filter(
+      ([key, snooze]) => snooze.until > now && waitingKeys.includes(key),
+    ),
+  );
+}
+
+/** The nearest return time still ahead, for the one timer that brings it back. */
+export function nextSnoozeReturn(snoozes: Snoozes, now: number): number | null {
+  const ahead = Object.values(snoozes)
+    .map((snooze) => snooze.until)
+    .filter((until) => until > now);
+  return ahead.length === 0 ? null : Math.min(...ahead);
+}
+
+const isSnooze = (value: unknown, now: number): value is Snooze => {
+  if (typeof value !== "object" || value === null) return false;
+  const { until, requestIds } = value as Record<string, unknown>;
+  return (
+    typeof until === "number" &&
+    Number.isFinite(until) &&
+    until > now &&
+    until <= now + MAX_SNOOZE_MS &&
+    Array.isArray(requestIds) &&
+    requestIds.every((id) => typeof id === "string")
+  );
+};
+
+/** What this browser has snoozed and is not due yet; a damaged entry is ignored. */
+export function readSnoozes(now: number, storage?: Pick<Storage, "getItem">): Snoozes {
+  try {
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    const parsed: unknown = JSON.parse(store?.getItem(SNOOZES_STORAGE_KEY) ?? "{}");
+    if (typeof parsed !== "object" || parsed === null) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, Snooze] => isSnooze(entry[1], now)),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function writeSnoozes(snoozes: Snoozes, storage?: Pick<Storage, "setItem">): void {
+  try {
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    store?.setItem(SNOOZES_STORAGE_KEY, JSON.stringify(snoozes));
+  } catch {
+    // Private browsing may refuse storage; the snooze then lasts until the page reloads.
+  }
 }
