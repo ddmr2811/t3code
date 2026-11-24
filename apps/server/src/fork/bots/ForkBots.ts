@@ -87,10 +87,10 @@ function toModelSelection(bot: ForkBot): ModelSelection {
 const COORDINATOR_INSTRUCTIONS = [
   "--- PAPEL DE COORDINADOR DEL PROYECTO ---",
   "Coordinas este proyecto. En cada encargo:",
-  "1. Lee la memoria del proyecto: las notas esenciales llegan en <project_memory> cuando cambian; el resto lo buscas con project_memory_search cuando te haga falta.",
+  "1. Al empezar cada tarea, consulta la memoria del proyecto con project_memory_search. Las notas esenciales llegan además en <project_memory> cuando cambian.",
   "2. Reparte el trabajo en hilos hijos con las herramientas de delegación (delegate_task) y no lo hagas tú todo.",
   "3. Recoge sus resultados y comprueba que responden al encargo.",
-  "4. Actualiza la memoria con project_memory_save sin que te lo pidan, solo con lo importante y duradero (decisiones, convenciones, datos que costó averiguar), y deja el estado del trabajo en el tablero de coordinación del proyecto.",
+  "4. Guarda en la memoria con project_memory_save, sin que te lo pidan, solo lo importante y duradero: decisiones, convenciones, datos que costó averiguar.",
   "--- FIN DEL PAPEL DE COORDINADOR ---",
 ].join("\n");
 
@@ -110,11 +110,17 @@ function initialBotMessage(bot: ForkBot, text: string): string {
   ].join("\n");
 }
 
-/** Null when there is nothing to inject, so an empty memory never sends an empty block. */
-function memoryHash(notes: ReadonlyArray<ForkMemoryNote>): string | null {
+/**
+ * Null when there is nothing to inject, so an empty memory never sends an empty block. The
+ * thread's model is part of it: after a failover or a model switch the new provider has not seen it.
+ */
+function memoryHash(
+  notes: ReadonlyArray<ForkMemoryNote>,
+  model: Pick<ModelSelection, "instanceId" | "model">,
+): string | null {
   if (notes.length === 0) return null;
   return NodeCrypto.createHash("sha256")
-    .update(JSON.stringify(notes.map((note) => note.text)))
+    .update(JSON.stringify([model.instanceId, model.model, notes.map((note) => note.text)]))
     .digest("hex");
 }
 
@@ -466,6 +472,7 @@ const make = Effect.gen(function* () {
         if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
 
         let existingThread: ThreadId | null = null;
+        let threadModel: Pick<ModelSelection, "instanceId" | "model"> = bot.modelSelection;
         if (bot.threadId !== null) {
           const outcome = yield* threads
             .getThreadRecords(bot.threadId, ["runs"])
@@ -480,6 +487,7 @@ const make = Effect.gen(function* () {
                 return yield* dispatchFailed("A bot cannot use a provider-native subagent thread.");
               }
               existingThread = bot.threadId;
+              threadModel = thread.modelSelection;
             }
           } else if (!isThreadNotFoundError(outcome.failure)) {
             return yield* dispatchFailed("Could not load the bot thread.");
@@ -495,7 +503,7 @@ const make = Effect.gen(function* () {
                 ),
               )
           : [];
-        const hash = memoryHash(essentials);
+        const hash = memoryHash(essentials, threadModel);
         // A new thread has seen nothing yet; an existing one gets the block only when it changed.
         const injects = existingThread === null ? hash !== null : hash !== bot.memoryHash;
         const withMemory = (text: string) =>

@@ -20,7 +20,7 @@ export function TabsTab({ className, ...props }: ComponentProps<typeof TabsTabRo
   return (
     <TabsTabRoot
       className={cn(
-        "cursor-pointer rounded-sm border border-border px-2.5 py-1 text-[13px] text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring data-selected:border-primary data-selected:text-primary",
+        "cursor-pointer rounded-sm border max-[720px]:min-h-11 max-[720px]:px-4 border-border px-2.5 py-1 text-[13px] text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring data-selected:border-primary data-selected:text-primary",
         className,
       )}
       {...props}

@@ -23,9 +23,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ProjectService from "../../project/ProjectService.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 
 /** At most this many notes come back from one search. */
@@ -107,6 +109,7 @@ const make = Effect.gen(function* () {
     makeError: (reason, message) => new ForkMemoryError({ reason, message }),
   });
   const lock = yield* Semaphore.make(1);
+  const projects = yield* ProjectService.ProjectService;
   const projectNotes = (projectId: ProjectId) =>
     lock
       .withPermits(1)(store.read())
@@ -127,6 +130,23 @@ const make = Effect.gen(function* () {
     const parsed = yield* decodeUpsertInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid memory note.")),
     );
+    if (parsed.id === undefined) {
+      const project = yield* projects.getById(parsed.projectId).pipe(
+        Effect.mapError(
+          () =>
+            new ForkMemoryError({
+              reason: "storageFailed",
+              message: `Could not verify project ${parsed.projectId}.`,
+            }),
+        ),
+      );
+      if (Option.isNone(project)) {
+        return yield* new ForkMemoryError({
+          reason: "notFound",
+          message: `Project ${parsed.projectId} was not found.`,
+        });
+      }
+    }
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const memory = yield* store.read();

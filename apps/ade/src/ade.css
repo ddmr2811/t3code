@@ -3114,6 +3114,11 @@ body {
 }
 
 @media (max-width: 720px) {
+  .ade-icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
   html,
   body,
   #root {

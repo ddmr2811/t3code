@@ -11,6 +11,8 @@ import {
   type ScheduledTask,
   forkMemoryEssentialBytes,
 } from "@t3tools/contracts";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import * as Cause from "effect/Cause";
 import { useContext, useState } from "react";
 
 import { runCommand } from "../composer/Composer.tsx";
@@ -30,8 +32,10 @@ import {
   forkMemoryUpsertCommand,
 } from "./bots.state.ts";
 
+// Touch targets grow to 44 px on phones.
+const TOUCH = "max-[720px]:min-h-11";
 const FIELD =
-  "box-border w-full min-w-0 resize-y rounded-sm border border-border bg-background px-2.5 py-2 text-[13px] leading-snug text-foreground";
+  "box-border w-full min-w-0 max-[720px]:min-h-11 resize-y rounded-sm border border-border bg-background px-2.5 py-2 text-[13px] leading-snug text-foreground";
 const CARD = "grid gap-1.5 rounded-md border border-border bg-background p-2.5";
 const HINT = "m-0 text-xs text-muted-foreground";
 
@@ -106,6 +110,7 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
       confirmLabel: "Borrar",
     });
     if (!agreed) return;
+    setBusy(true);
     setError(null);
     const failure = await runCommand(
       registry,
@@ -113,13 +118,17 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
       { environmentId, input: { projectId: bot.projectId, id: note.id } },
       "No se pudo borrar la nota",
     );
+    setBusy(false);
     if (failure !== null) return setError(failure);
     registry.refresh(query);
   };
 
   if (result._tag !== "Success") {
     return result._tag === "Failure" ? (
-      <p className="ade-error">No se pudo leer la memoria del proyecto.</p>
+      <p className="ade-error" role="alert">
+        No se pudo leer la memoria del proyecto
+        {`: ${errorDisplayMessage(Cause.squash(result.cause)) ?? "error desconocido"}`}
+      </p>
     ) : (
       <p className={HINT}>Cargando memoria…</p>
     );
@@ -158,7 +167,12 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
           disabled={!canWrite}
         />
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <label className="mr-auto flex items-center gap-2 text-[13px] text-muted-foreground">
+          <label
+            className={cn(
+              "mr-auto flex items-center gap-2 text-[13px] text-muted-foreground",
+              TOUCH,
+            )}
+          >
             <Switch
               checked={draftEssential}
               onCheckedChange={setDraftEssential}
@@ -225,13 +239,15 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
               )}
               <div className="flex flex-wrap items-center gap-3">
                 <span className="ade-chip">{note.origin === "agent" ? "Agente" : "Usuario"}</span>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <label
+                  className={cn("flex items-center gap-2 text-xs text-muted-foreground", TOUCH)}
+                >
                   <Switch
                     checked={note.inclusion === "essential"}
                     onCheckedChange={(essential) =>
                       void save({ ...note, inclusion: essential ? "essential" : "searchable" })
                     }
-                    disabled={busy || !canWrite}
+                    disabled={busy || !canWrite || editing?.id === note.id}
                   />
                   Esencial
                 </label>
@@ -249,7 +265,7 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
                     type="button"
                     className="ade-icon-button"
                     onClick={() => void removeNote(note)}
-                    disabled={!canWrite}
+                    disabled={busy || !canWrite}
                     aria-label="Borrar nota"
                   >
                     <TrashIcon size={16} aria-hidden />
@@ -297,12 +313,14 @@ function CoordinatorRoutines(props: {
   const [busy, setBusy] = useState(false);
 
   const threadId = bot.threadId;
+  // Until the list arrives, a second nightly routine could not be told apart from the first.
+  const loaded = tasksResult._tag === "Success";
   const tasks =
-    tasksResult._tag === "Success" && threadId !== null
+    loaded && threadId !== null
       ? tasksResult.value.tasks.filter((task) => task.threadId === threadId)
       : [];
   const hasNightly = tasks.some((task) => task.prompt === NIGHTLY_CONSOLIDATION_PROMPT);
-  const disabled = busy || !canSchedule || threadId === null;
+  const disabled = busy || !loaded || !canSchedule || threadId === null;
 
   const create = async (routine: CoordinatorRoutine) => {
     if (threadId === null) return;
@@ -332,6 +350,7 @@ function CoordinatorRoutines(props: {
       confirmLabel: "Quitar",
     });
     if (!agreed) return;
+    setBusy(true);
     setError(null);
     const failure = await runCommand(
       registry,
@@ -339,6 +358,7 @@ function CoordinatorRoutines(props: {
       { environmentId, input: { id: task.id } },
       "No se pudo quitar la rutina",
     );
+    setBusy(false);
     if (failure !== null) setError(failure);
   };
 
@@ -353,18 +373,26 @@ function CoordinatorRoutines(props: {
           ? "Escríbele primero al coordinador: las rutinas continúan su hilo."
           : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados y propone qué bajar de esenciales."}
       </p>
+      {tasksResult._tag === "Failure" ? (
+        <p className="ade-error" role="alert">
+          No se pudieron leer las rutinas
+          {`: ${errorDisplayMessage(Cause.squash(tasksResult.cause)) ?? "error desconocido"}`}
+        </p>
+      ) : loaded ? null : (
+        <p className={HINT}>Cargando rutinas…</p>
+      )}
       {tasks.length === 0 ? null : (
         <ul className="m-0 grid list-none gap-2 p-0">
           {tasks.map((task) => (
             <li key={task.id} className={CARD}>
               <p className="m-0 text-[13px] break-words">{task.title}</p>
               <div className="flex items-center gap-2">
-                <span className={HINT}>{scheduleLabel(task)}</span>
+                <span className={cn(HINT, "min-w-0 break-all")}>{scheduleLabel(task)}</span>
                 <button
                   type="button"
                   className="ade-icon-button ml-auto"
                   onClick={() => void remove(task)}
-                  disabled={!canSchedule}
+                  disabled={busy || !canSchedule}
                   aria-label={`Quitar ${task.title}`}
                 >
                   <TrashIcon size={16} aria-hidden />
@@ -419,7 +447,7 @@ function CoordinatorRoutines(props: {
           />
           <div className="flex flex-wrap items-center justify-end gap-2">
             <select
-              className={cn(FIELD, "w-auto flex-[1_1_140px]")}
+              className={cn(FIELD, "w-auto flex-[1_1_100%] sm:flex-[1_1_200px]")}
               value={form.kind}
               onChange={(event) =>
                 setForm(

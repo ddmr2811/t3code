@@ -62,6 +62,8 @@ const withBots = <A, E, R>(
     readonly sentTo: Array<ThreadId>;
     /** Every message text the provider received, launches and sends alike, in order. */
     readonly texts: Array<string>;
+    /** Each live thread's model, which a failover or the composer may change under the bot. */
+    readonly threadModels: Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>;
     readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
     /** A fresh service over the same state directory, as after a server restart. */
     readonly reopen: Effect.Effect<ForkBots.ForkBots["Service"], never, Scope.Scope>;
@@ -73,6 +75,7 @@ const withBots = <A, E, R>(
       const sentTo: Array<ThreadId> = [];
       const texts: Array<string> = [];
       const liveThreads = new Set<ThreadId>();
+      const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
       const mocks = Layer.mergeAll(
@@ -89,6 +92,7 @@ const withBots = <A, E, R>(
               const threadId = ThreadId.make(`thread-bot-${launched.length + 1}`);
               launched.push(threadId);
               liveThreads.add(threadId);
+              threadModels.set(threadId, input.modelSelection);
               return { threadId } as never;
             }),
         }),
@@ -99,6 +103,7 @@ const withBots = <A, E, R>(
                   thread: {
                     id: threadId,
                     projectId: projectA,
+                    modelSelection: threadModels.get(threadId),
                     archivedAt: null,
                     deletedAt: null,
                     lineage: { parentThreadId: null, relationshipToParent: null },
@@ -159,6 +164,7 @@ const withBots = <A, E, R>(
           routines,
           sentTo,
           texts,
+          threadModels,
           memory: yield* ForkProjectMemory.ForkProjectMemory,
           reopen: Layer.build(
             services.pipe(
@@ -321,7 +327,7 @@ describe("ForkBots", () => {
   it.effect(
     "sends the coordinator's essential memory again only when it changed or a new thread starts",
     () =>
-      withBots(({ service, memory, texts }) =>
+      withBots(({ service, memory, texts, threadModels }) =>
         Effect.gen(function* () {
           const essential = yield* memory.upsert(
             { projectId: projectA, text: "Despliega solo los viernes.", inclusion: "essential" },
@@ -341,8 +347,15 @@ describe("ForkBots", () => {
           expect(texts.at(-1)).toContain("Despliega solo los viernes.");
           expect(texts.at(-1)).not.toContain("Nota que se busca.");
 
-          yield* service.sendMessage({ id: coordinator.id, text: "dos" });
+          const second = yield* service.sendMessage({ id: coordinator.id, text: "dos" });
           expect(texts.at(-1)).toBe("dos");
+
+          // A failover moved the same thread to another model, which has not seen the memory.
+          threadModels.set(second.threadId, { instanceId: codex, model: "gpt-5.5" });
+          yield* service.sendMessage({ id: coordinator.id, text: "dos-b" });
+          expect(texts.at(-1)).toContain("Despliega solo los viernes.");
+          yield* service.sendMessage({ id: coordinator.id, text: "dos-c" });
+          expect(texts.at(-1)).toBe("dos-c");
 
           yield* memory.upsert(
             { ...essential, text: "Despliega los martes.", inclusion: "essential" },

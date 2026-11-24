@@ -21,6 +21,7 @@ import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { listedThreadsAtom, selectedThreadKeyAtom } from "../sidebar/Sidebar.tsx";
 import { serverEnvironment } from "../state.ts";
 import { botThreadState, type BotDraft, validateBotDraft } from "./bots.logic.ts";
+import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
 import {
@@ -115,6 +116,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
   const [messageText, setMessageText] = useState("");
   const [sending, setSending] = useState(false);
   const [panel, setPanel] = useState<"chat" | "memory">("chat");
+  const confirm = useConfirm();
 
   const selectedBot = bots.find((bot) => bot.id === selectedBotId) ?? null;
   const openThread = (threadId: ThreadId) =>
@@ -133,9 +135,12 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
   };
 
   const removeBot = async (bot: ForkBot) => {
-    if (!window.confirm(`¿Eliminar el bot «${bot.name}»? Su hilo y su historial se conservan.`)) {
-      return;
-    }
+    const agreed = await confirm.ask({
+      title: `¿Eliminar el bot «${bot.name}»?`,
+      description: "Su hilo y su historial se conservan.",
+      confirmLabel: "Eliminar",
+    });
+    if (!agreed) return;
     setListError(null);
     const failure = await runCommand(
       registry,
@@ -318,7 +323,11 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
                   </TabsList>
                   <TabsPanel value="chat">{chatPanel(selectedBot)}</TabsPanel>
                   <TabsPanel value="memory">
-                    <ProjectMemory environmentId={environmentId} bot={selectedBot} />
+                    <ProjectMemory
+                      key={`${selectedBot.id}:${selectedBot.projectId}`}
+                      environmentId={environmentId}
+                      bot={selectedBot}
+                    />
                   </TabsPanel>
                 </Tabs>
               ) : (
@@ -329,6 +338,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
         </section>
       </div>
 
+      {confirm.dialog}
       {editing === null ? null : (
         <BotEditor
           environmentId={environmentId}

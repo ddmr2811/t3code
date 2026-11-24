@@ -50,15 +50,15 @@ async function readRegularBounded(
   const info = await handle.stat();
   if (!info.isFile()) return { kind: "notFile" };
   if (info.size > maxBytes) return { kind: "tooLarge" };
-  // Read up to maxBytes + 1 so concurrent growth past the cap is caught without trusting stat alone.
-  const buffer = new Uint8Array(maxBytes + 1);
+  // One byte past the reported size catches a file that grew after the stat.
+  const buffer = new Uint8Array(info.size + 1);
   let total = 0;
   while (total < buffer.length) {
     const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
     if (bytesRead === 0) break;
     total += bytesRead;
   }
-  if (total > maxBytes) return { kind: "tooLarge" };
+  if (total > info.size || total > maxBytes) return { kind: "tooLarge" };
   return { kind: "ok", text: new TextDecoder("utf-8").decode(buffer.subarray(0, total)) };
 }
 

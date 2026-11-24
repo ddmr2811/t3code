@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { FORK_MEMORY_ESSENTIAL_MAX_BYTES, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ServerConfig from "../../config.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
 import * as ForkProjectMemory from "./ForkProjectMemory.ts";
 
 const projectA = ProjectId.make("proj-a");
@@ -22,6 +24,16 @@ const withMemory = <A, E>(
           ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-memory-test-" }),
         ),
         Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (projectId) =>
+              Effect.succeed(
+                projectId === projectA || projectId === projectB
+                  ? Option.some({ id: projectId } as never)
+                  : Option.none(),
+              ),
+          }),
+        ),
       ),
     ),
     Effect.scoped,
