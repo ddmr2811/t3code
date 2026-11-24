@@ -58,6 +58,7 @@ import {
   type ThreadState,
   threadState,
 } from "./sidebar.logic.ts";
+import { allBotsAtom } from "../bots/bots.state.ts";
 
 const STATE_VIEW = {
   "needs-you": { Glyph: WarningCircleIcon, text: "Te necesita" },
@@ -112,11 +113,19 @@ export const narrowViewportAtom = Atom.make((get) => {
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
   const threads = useAtomValue(needsYouThreadsAtom);
+  // A bot handoff cut for too many hops also waits for the user, so it counts and opens the panel.
+  const { handoffsByEnv } = useAtomValue(allBotsAtom);
+  const cutHandoffKeys = [...handoffsByEnv].flatMap(([environmentId, handoffs]) =>
+    handoffs
+      .filter((handoff) => handoff.status === "cut")
+      .map((handoff) => `handoff:${environmentId}:${handoff.id}`),
+  );
   const [choice, setChoice] = useAtom(decisionsChoiceAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
-  const keys = threads.map((thread) =>
-    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-  );
+  const keys = [
+    ...threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    ...cutHandoffKeys,
+  ];
   const effectiveChoice = reconcileTrayChoice(choice, keys, narrowViewport);
   useEffect(() => {
     if (effectiveChoice !== choice) {
@@ -125,6 +134,7 @@ export function useDecisionsPanel() {
   }, [choice, effectiveChoice, setChoice]);
   return {
     threads,
+    count: keys.length,
     open: isTrayOpenForViewport(effectiveChoice, keys, narrowViewport),
     setOpen: (open: boolean) => setChoice({ open, seenKeys: keys }),
   };
@@ -161,9 +171,8 @@ export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean
 }
 
 export function NeedsYouBlock(props: { compact?: boolean }) {
-  const { threads, open, setOpen } = useDecisionsPanel();
+  const { count, open, setOpen } = useDecisionsPanel();
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
-  const count = threads.length;
   const words = count === 1 ? "te necesita" : "te necesitan";
   if (props.compact) {
     if (count === 0) return null;

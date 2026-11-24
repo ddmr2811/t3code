@@ -46,8 +46,7 @@ function MobileBottomNav() {
   const [view, setView] = useAtom(viewAtom);
   const [drawerOpen, setDrawerOpen] = useAtom(mobileSidebarOpenAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
-  const { threads, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
-  const pendingCount = threads.length;
+  const { count: pendingCount, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
 
   const goView = (target: "resumen" | "proyectos" | "bots" | "respaldo") => {
     setDrawerOpen(false);

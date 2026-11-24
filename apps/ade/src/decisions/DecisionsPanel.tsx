@@ -104,7 +104,7 @@ function DecisionCard(props: {
  */
 export function DecisionsPanel() {
   const registry = useContext(RegistryContext);
-  const { threads, open, setOpen } = useDecisionsPanel();
+  const { threads, count, open, setOpen } = useDecisionsPanel();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const selectThread = useAtomSet(selectedThreadKeyAtom);
   const alertsEnabled = useAtomValue(pendingAlertsEnabledAtom);
@@ -153,9 +153,7 @@ export function DecisionsPanel() {
     <aside id="ade-decisions" className="ade-decisions" aria-label="Decisiones">
       <header>
         <div>
-          <p className="ade-label">
-            {threads.length === 1 ? "1 pendiente" : `${threads.length} pendientes`}
-          </p>
+          <p className="ade-label">{count === 1 ? "1 pendiente" : `${count} pendientes`}</p>
           <h2>Decisiones</h2>
         </div>
         <div className="ade-decisions-header-actions">
