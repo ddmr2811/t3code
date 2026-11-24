@@ -1,6 +1,69 @@
-import { type ForkBot, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { type ForkBot, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { coordinatorRoutineInput, parseMention, validateBotDraft } from "./bots.logic.ts";
+import { botState, coordinatorRoutineInput, parseMention, validateBotDraft } from "./bots.logic.ts";
+
+type BotThread = NonNullable<Parameters<typeof botState>[1]>;
+type RunStatus = "running" | "completed" | "failed" | "interrupted";
+
+// The run ended at 10:05; visits before that have not seen it, visits after have.
+const botThread = (
+  status: RunStatus,
+  lastVisitedAt = "2026-11-23T09:00:00.000Z",
+  overrides: Partial<BotThread> = {},
+): BotThread => ({
+  archivedAt: null,
+  deletedAt: null,
+  hasPendingApprovals: false,
+  hasPendingUserInput: false,
+  pendingGuestMessageCount: 0,
+  interactionMode: "default",
+  hasActionableProposedPlan: false,
+  pendingSubagentRequest: null,
+  latestRun: {
+    runId: RunId.make("run-1"),
+    status,
+    requestedAt: "2026-11-23T10:00:00.000Z",
+    startedAt: "2026-11-23T10:00:00.000Z",
+    completedAt: status === "running" ? null : "2026-11-23T10:05:00.000Z",
+    assistantMessageId: null,
+  },
+  runtime: {
+    status: status === "completed" ? "idle" : status,
+    activeRunId: status === "running" ? RunId.make("run-1") : null,
+  } as BotThread["runtime"],
+  lastVisitedAt,
+  ...overrides,
+});
+const SEEN = "2026-11-23T11:00:00.000Z";
+
+describe("botState", () => {
+  it.each([
+    ["an archived bot, even mid-turn", true, botThread("running"), false, "asleep"],
+    ["a bot that never wrote", false, undefined, false, "asleep"],
+    [
+      "a pending approval",
+      false,
+      botThread("running", undefined, { hasPendingApprovals: true }),
+      false,
+      "needs-you",
+    ],
+    ["a running turn", false, botThread("running"), false, "working"],
+    ["a failure not yet opened", false, botThread("failed"), false, "error"],
+    ["a turn cut and not yet opened", false, botThread("interrupted"), false, "error"],
+    ["a cut turn the user already opened", false, botThread("interrupted", SEEN), false, "asleep"],
+    ["a finished turn not yet opened", false, botThread("completed"), false, "done"],
+    [
+      "a finished turn seen, with a routine coming",
+      false,
+      botThread("completed", SEEN),
+      true,
+      "done",
+    ],
+    ["a finished turn seen, nothing coming", false, botThread("completed", SEEN), false, "asleep"],
+  ] as const)("%s → %s", (_name, archived, thread, routine, expected) => {
+    expect(botState({ archived }, thread, routine).status).toBe(expected);
+  });
+});
 
 describe("bots.logic", () => {
   it("hands work over only for a leading @handle of another bot with something to say", () => {

@@ -1,4 +1,3 @@
-import { type EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   FORK_BOTS_INSTRUCTIONS_MAX_LENGTH,
   FORK_BOTS_NAME_MAX_LENGTH,
@@ -7,9 +6,12 @@ import {
   type ForkBotHandoff,
   type ProjectId,
   type ProviderInstanceId,
+  type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ThreadId,
 } from "@t3tools/contracts";
+
+import { threadState } from "../sidebar/sidebar.logic.ts";
 
 export interface BotDraft {
   readonly handle: string;
@@ -83,25 +85,64 @@ export function validateBotDraft(
   };
 }
 
-export function botThreadState(
-  bot: ForkBot,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-): "Listo" | "Trabajando" | "Te necesita" | "Error" {
-  const thread = threads.find((candidate) => candidate.id === bot.threadId);
-  if (thread === undefined) return "Listo";
-  const runtime = thread.runtime?.status;
-  if (runtime === "failed") return "Error";
-  if (
-    runtime === "preparing" ||
-    runtime === "queued" ||
-    runtime === "starting" ||
-    runtime === "running" ||
-    runtime === "waiting"
-  ) {
-    return "Trabajando";
+export type BotStatus = "working" | "needs-you" | "error" | "done" | "asleep";
+
+export interface BotState {
+  readonly status: BotStatus;
+  /** Spanish label shown beside the avatar, so the state never rests on colour alone. */
+  readonly label: string;
+}
+
+type BotThread = Parameters<typeof threadState>[0];
+
+/**
+ * The single place a bot's state is decided; every surface that paints a bot reads it.
+ * `thread` is the bot's listed thread, if any. A finished turn reads «Hecho» until the user
+ * opens it, or for as long as a routine is still coming; after that the bot sleeps.
+ */
+export function botState(
+  bot: Pick<ForkBot, "archived">,
+  thread: BotThread | undefined,
+  routineScheduled: boolean,
+): BotState {
+  if (bot.archived) return { status: "asleep", label: "Archivado" };
+  if (thread === undefined) return { status: "asleep", label: "Dormido" };
+  const state = threadState(thread);
+  if (state === "needs-you") return { status: "needs-you", label: "Te necesita" };
+  if (state === "working") return { status: "working", label: "Trabajando" };
+  if (state === "error") return { status: "error", label: "Error" };
+  const run = thread.latestRun;
+  const unseen = run !== null && endedAfter(run, thread.lastVisitedAt);
+  if (run?.status === "interrupted" && unseen) return { status: "error", label: "Cortado" };
+  if (run?.status === "completed" && (unseen || routineScheduled)) {
+    return { status: "done", label: "Hecho" };
   }
-  // A thread that needs you is still surfaced through the pending tray; this is only a coarse badge.
-  return "Listo";
+  return { status: "asleep", label: "Dormido" };
+}
+
+function endedAfter(
+  run: NonNullable<BotThread["latestRun"]>,
+  visitedAt: string | null | undefined,
+): boolean {
+  if (!visitedAt) return true;
+  const endedMs = Date.parse(run.completedAt ?? run.startedAt ?? run.requestedAt ?? "");
+  const visitedMs = Date.parse(visitedAt);
+  return Number.isNaN(endedMs) || Number.isNaN(visitedMs) || endedMs > visitedMs;
+}
+
+/** Threads with a routine still to come: enabled, not blocked, and dated or waiting on a webhook. */
+export function routineThreadIds(tasks: ReadonlyArray<ScheduledTask>): ReadonlySet<string> {
+  return new Set(
+    tasks
+      .filter(
+        (task) =>
+          task.enabled &&
+          task.blockedByPolicy === undefined &&
+          task.threadId !== null &&
+          (task.nextRunAt !== null || task.schedule.type === "webhook"),
+      )
+      .map((task) => task.threadId!),
+  );
 }
 
 export const NIGHTLY_CONSOLIDATION_PROMPT = [

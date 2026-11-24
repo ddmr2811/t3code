@@ -3051,15 +3051,74 @@ body {
   cursor: pointer;
 }
 
-.ade-bot-monogram {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+/* F6: a fixed dot face per state. Orange is active or waiting, red only errors, the rest grey. */
+.ade-bot-avatar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--ade-radius-md);
   background: var(--ade-bg);
+  color: var(--ade-text-tertiary);
+}
+
+.ade-bot-avatar[data-size="sm"] {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ade-radius-sm);
+}
+
+.ade-bot-avatar circle {
+  fill: currentColor;
+  opacity: 0.12;
+  transition: opacity 150ms ease-out;
+}
+
+.ade-bot-avatar circle[data-on] {
+  opacity: 1;
+}
+
+.ade-bot-avatar:is([data-status="working"], [data-status="needs-you"]) {
   color: var(--ade-accent);
-  font: 600 13px var(--ade-font-mono);
+}
+
+.ade-bot-avatar[data-status="error"] {
+  color: var(--ade-danger);
+}
+
+.ade-bot-avatar[data-status="done"] {
+  color: var(--ade-text);
+}
+
+.ade-bot-progress {
+  height: 2px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--ade-divider);
+}
+
+.ade-bot-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ade-accent);
+}
+
+.ade-bot-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ade-bot-chat-header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-bot-chat-header .ade-bot-status {
+  margin-left: auto;
 }
 
 .ade-bot-card-text {
@@ -3082,6 +3141,18 @@ body {
 .ade-bot-status {
   color: var(--ade-text-tertiary);
   font-size: 12px;
+}
+
+.ade-bot-status:is([data-status="working"], [data-status="needs-you"]) {
+  color: var(--ade-accent);
+}
+
+.ade-bot-status[data-status="error"] {
+  color: var(--ade-danger);
+}
+
+.ade-bot-status[data-status="done"] {
+  color: var(--ade-ok);
 }
 
 .ade-bot-actions {
@@ -4386,7 +4457,8 @@ body {
   .ade-panel,
   .ade-search,
   .ade-search-backdrop,
-  .ade-main > * {
+  .ade-main > *,
+  .ade-bot-avatar circle {
     transition: none;
   }
 }

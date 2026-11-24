@@ -8,6 +8,7 @@ import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
 import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
 import {
   FORK_BOTS_MESSAGE_MAX_LENGTH,
   type EnvironmentId,
@@ -24,14 +25,17 @@ import { allEnvironmentProjectsAtom } from "../coordination/coordination.state.t
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { listedThreadsAtom, selectedThreadKeyAtom } from "../sidebar/Sidebar.tsx";
-import { serverEnvironment } from "../state.ts";
+import { environmentThreadDetails, serverEnvironment } from "../state.ts";
+import { planStepChip } from "../timeline/timeline.logic.ts";
 import {
-  botThreadState,
+  botState,
   type BotDraft,
   parseMention,
   recentHandoffs,
+  routineThreadIds,
   validateBotDraft,
 } from "./bots.logic.ts";
+import { BotAvatar } from "./BotAvatar.tsx";
 import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
@@ -138,6 +142,19 @@ function MachineBots(props: {
   const setSelectedKey = useAtomSet(selectedThreadKeyAtom);
   const canWrite = useAtomValue(forkBotsUpsertCommand.permissionAtom(environmentId));
   const canSend = useAtomValue(forkBotsSendMessageCommand.permissionAtom(environmentId));
+  const tasksResult = useAtomValue(
+    serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
+  );
+  const routines = useMemo(
+    () => routineThreadIds(tasksResult._tag === "Success" ? tasksResult.value.tasks : []),
+    [tasksResult],
+  );
+  const threadOf = (bot: ForkBot) =>
+    allThreads.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === bot.threadId,
+    );
+  const stateOf = (bot: ForkBot) =>
+    botState(bot, threadOf(bot), bot.threadId !== null && routines.has(bot.threadId));
   const [editing, setEditing] = useState<ForkBot | "new" | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -308,83 +325,92 @@ function MachineBots(props: {
               <p>Aún no hay bots en esta máquina.</p>
             </div>
           ) : null}
-          {bots.map((bot) => (
-            <article
-              key={bot.id}
-              className="ade-bot-card"
-              data-selected={bot.id === selectedBotId ? "" : undefined}
-              data-archived={bot.archived ? "" : undefined}
-            >
-              <button
-                type="button"
-                className="ade-bot-card-main"
-                onClick={() => {
-                  if (bot.id === selectedBotId) return;
-                  setSelectedBotId(bot.id);
-                  setMessageText("");
-                  setChatError(null);
-                  setChatNote(null);
-                  setPanel("chat");
-                }}
-                aria-pressed={bot.id === selectedBotId}
+          {bots.map((bot) => {
+            const state = stateOf(bot);
+            return (
+              <article
+                key={bot.id}
+                className="ade-bot-card"
+                data-selected={bot.id === selectedBotId ? "" : undefined}
+                data-archived={bot.archived ? "" : undefined}
               >
-                <span className="ade-bot-monogram" aria-hidden>
-                  {bot.name.slice(0, 2).toUpperCase()}
-                </span>
-                <span className="ade-bot-card-text">
-                  <strong>{bot.name}</strong>
-                  <span className="ade-bot-meta">
-                    @{bot.handle} · {bot.role}
-                    {bot.coordinator ? " · Coordinador" : ""}
+                <button
+                  type="button"
+                  className="ade-bot-card-main"
+                  onClick={() => {
+                    if (bot.id === selectedBotId) return;
+                    setSelectedBotId(bot.id);
+                    setMessageText("");
+                    setChatError(null);
+                    setChatNote(null);
+                    setPanel("chat");
+                  }}
+                  aria-pressed={bot.id === selectedBotId}
+                >
+                  <BotAvatar status={state.status} />
+                  <span className="ade-bot-card-text">
+                    <strong>{bot.name}</strong>
+                    <span className="ade-bot-meta">
+                      @{bot.handle} · {bot.role}
+                      {bot.coordinator ? " · Coordinador" : ""}
+                    </span>
+                    <span className="ade-bot-meta">
+                      {bot.modelSelection.instanceId} · {bot.modelSelection.model}
+                    </span>
                   </span>
-                  <span className="ade-bot-meta">
-                    {bot.modelSelection.instanceId} · {bot.modelSelection.model}
+                  <span className="ade-bot-status" data-status={state.status}>
+                    {state.label}
                   </span>
-                </span>
-                <span className="ade-bot-status">
-                  {bot.archived ? "Archivado" : botThreadState(bot, allThreads)}
-                </span>
-              </button>
-              <BotHandoffs entries={recentHandoffs(handoffs, bots, bot.id, 3)} />
-              <div className="ade-bot-actions">
-                <button
-                  type="button"
-                  className="ade-button-quiet"
-                  onClick={() => bot.threadId !== null && openThread(bot.threadId)}
-                  disabled={bot.threadId === null}
-                >
-                  Ver hilo
                 </button>
-                <button
-                  type="button"
-                  className="ade-icon-button"
-                  onClick={() => setEditing(bot)}
-                  disabled={canWrite !== true}
-                  aria-label={`Editar ${bot.name}`}
-                >
-                  <PencilIcon size={16} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className="ade-icon-button"
-                  onClick={() => void toggleArchive(bot)}
-                  disabled={canWrite !== true}
-                  aria-label={bot.archived ? `Restaurar ${bot.name}` : `Archivar ${bot.name}`}
-                >
-                  <ArchiveIcon size={16} aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  className="ade-icon-button"
-                  onClick={() => void removeBot(bot)}
-                  disabled={canWrite !== true}
-                  aria-label={`Eliminar ${bot.name}`}
-                >
-                  <TrashIcon size={16} aria-hidden />
-                </button>
-              </div>
-            </article>
-          ))}
+                {bot.threadId !== null &&
+                (state.status === "working" || state.status === "needs-you") ? (
+                  <BotProgress
+                    environmentId={environmentId}
+                    threadId={bot.threadId}
+                    runId={threadOf(bot)?.latestRun?.runId ?? null}
+                  />
+                ) : null}
+                <BotHandoffs entries={recentHandoffs(handoffs, bots, bot.id, 3)} />
+                <div className="ade-bot-actions">
+                  <button
+                    type="button"
+                    className="ade-button-quiet"
+                    onClick={() => bot.threadId !== null && openThread(bot.threadId)}
+                    disabled={bot.threadId === null}
+                  >
+                    Ver hilo
+                  </button>
+                  <button
+                    type="button"
+                    className="ade-icon-button"
+                    onClick={() => setEditing(bot)}
+                    disabled={canWrite !== true}
+                    aria-label={`Editar ${bot.name}`}
+                  >
+                    <PencilIcon size={16} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="ade-icon-button"
+                    onClick={() => void toggleArchive(bot)}
+                    disabled={canWrite !== true}
+                    aria-label={bot.archived ? `Restaurar ${bot.name}` : `Archivar ${bot.name}`}
+                  >
+                    <ArchiveIcon size={16} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="ade-icon-button"
+                    onClick={() => void removeBot(bot)}
+                    disabled={canWrite !== true}
+                    aria-label={`Eliminar ${bot.name}`}
+                  >
+                    <TrashIcon size={16} aria-hidden />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </section>
 
         <section className="ade-bots-chat" aria-label="Panel del bot seleccionado">
@@ -392,7 +418,13 @@ function MachineBots(props: {
             <p className="ade-bot-meta">Elige un bot para escribirle.</p>
           ) : (
             <>
-              <h2>{selectedBot.name}</h2>
+              <div className="ade-bot-chat-header">
+                <BotAvatar status={stateOf(selectedBot).status} size="sm" />
+                <h2>{selectedBot.name}</h2>
+                <span className="ade-bot-status" data-status={stateOf(selectedBot).status}>
+                  {stateOf(selectedBot).label}
+                </span>
+              </div>
               {selectedBot.coordinator ? (
                 <Tabs value={panel} onValueChange={(value) => setPanel(value as typeof panel)}>
                   <TabsList aria-label="Panel del coordinador">
@@ -425,6 +457,36 @@ function MachineBots(props: {
         />
       )}
     </>
+  );
+}
+
+const NO_TURN_ITEMS: ReadonlyArray<ThreadStructureTurnItem> = [];
+
+/** A thin line for the latest run's plan; with no plan there is no real progress, so no line. */
+function BotProgress(props: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  runId: string | null;
+}) {
+  const threadRef = scopeThreadRef(props.environmentId, props.threadId);
+  // The quiet thread keeps its value while replies stream, so tokens re-render nothing here.
+  const turnItems =
+    useAtomValue(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.turnItems ??
+    NO_TURN_ITEMS;
+  const chip = planStepChip(turnItems, props.runId);
+  if (chip === null) return null;
+  const done = chip.steps.filter((step) => step.status === "completed").length;
+  return (
+    <div
+      className="ade-bot-progress"
+      role="progressbar"
+      aria-label={`Paso ${chip.number} de ${chip.total}`}
+      aria-valuemin={0}
+      aria-valuemax={chip.total}
+      aria-valuenow={done}
+    >
+      <span style={{ width: `${(done / chip.total) * 100}%` }} />
+    </div>
   );
 }
 
