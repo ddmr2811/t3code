@@ -15,6 +15,10 @@ import {
   RuntimeMode,
   type ServerConfig,
 } from "@t3tools/contracts";
+import {
+  type LegacyProjectSettingsFields,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
 
 export interface TurnSettings {
   readonly model: ModelSelection;
@@ -120,6 +124,46 @@ export function turnSettings(
         ? (draft.interactionMode ?? thread.interactionMode)
         : thread.interactionMode,
   };
+}
+
+/**
+ * Starting settings for a new thread in `projectId`: project defaults over machine defaults,
+ * falling back to the first available provider/model and clamped to what that provider allows.
+ */
+export function defaultNewThreadSettings(
+  config: Pick<ServerConfig, "settings">,
+  projectId: ProjectId,
+  providers: ReadonlyArray<ProviderChoice>,
+  project?: LegacyProjectSettingsFields | null,
+): TurnSettings | null {
+  const firstProvider = providers.find((choice) => choice.models.length > 0);
+  if (firstProvider === undefined) return null;
+  const resolved = resolveProjectSettings(config.settings, projectId, project).settings;
+  const preferred = resolved.defaultModelSelection;
+  const preferredProvider =
+    preferred === null
+      ? undefined
+      : providers.find(
+          (choice) => choice.instanceId === preferred.instanceId && choice.models.length > 0,
+        );
+  const model: ModelSelection =
+    preferred !== null &&
+    preferredProvider !== undefined &&
+    preferredProvider.models.some((candidate) => candidate.slug === preferred.model)
+      ? preferred
+      : preferredProvider !== undefined
+        ? { instanceId: preferredProvider.instanceId, model: preferredProvider.models[0]!.slug }
+        : { instanceId: firstProvider.instanceId, model: firstProvider.models[0]!.slug };
+
+  return turnSettings(
+    { text: "" },
+    {
+      model,
+      runtimeMode: resolved.defaultRuntimeMode,
+      interactionMode: "default",
+    },
+    providers,
+  );
 }
 
 type ImageFile = Pick<File, "name" | "type" | "size">;

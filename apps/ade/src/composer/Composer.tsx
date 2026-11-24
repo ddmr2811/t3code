@@ -16,7 +16,7 @@ import {
   runAttachmentUploadCycle,
 } from "@t3tools/client-runtime/state/attachments";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
@@ -29,13 +29,16 @@ import {
   type EnvironmentId,
   type ChatImageAttachment,
   MessageId,
+  type OrchestrationProjectShell,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type ProviderInteractionMode,
   type RunId,
   type RuntimeMode,
   type ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import * as DateTime from "effect/DateTime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -55,15 +58,18 @@ import {
 } from "../state.ts";
 import {
   acceptImages,
+  defaultNewThreadSettings,
   type DraftImage,
   effortBars,
   modelEffort,
   type ProviderChoice,
   providerChoices,
   type TurnDraft,
+  type TurnSettings,
   turnSettings,
   withOption,
 } from "./composer.logic.ts";
+import { deriveInitialThreadTitle } from "../home/home.logic.ts";
 import { ProviderIcon } from "./ProviderIcon.tsx";
 
 const RUNTIME_MODE_TEXT: Record<RuntimeMode, string> = {
@@ -304,21 +310,13 @@ function EffortGlyph(props: { count: number; filled: number }) {
 }
 
 function SettingsPickers(props: {
-  thread: EnvironmentThreadShell;
+  defaults: TurnSettings;
   providers: ReadonlyArray<ProviderChoice>;
   draft: TurnDraft;
   setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
 }) {
-  const { thread, providers } = props;
-  const settings = turnSettings(
-    props.draft,
-    {
-      model: thread.modelSelection,
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-    },
-    providers,
-  );
+  const { defaults, providers } = props;
+  const settings = turnSettings(props.draft, defaults, providers);
   const provider = providers.find((choice) => choice.instanceId === settings.model.instanceId);
   const model = provider?.models.find((choice) => choice.slug === settings.model.model);
   const modelName = model?.name;
@@ -355,10 +353,10 @@ function SettingsPickers(props: {
           const [instanceId, slug] = JSON.parse(value) as [string, string];
           const chosen = providers.find((choice) => choice.instanceId === instanceId);
           if (chosen === undefined) return;
-          const own = thread.modelSelection;
+          const own = defaults.model;
           props.setDraft((draft) => ({
             ...draft,
-            // The thread's own model keeps its options, such as reasoning effort.
+            // The default model keeps its options, such as reasoning effort.
             model:
               own.instanceId === instanceId && own.model === slug
                 ? own
@@ -536,21 +534,28 @@ function StopButton(props: { threadRef: ScopedThreadRef; onError: (error: string
   );
 }
 
+interface SendPayload {
+  readonly typed: string;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatImageAttachment>;
+  readonly settings: TurnSettings;
+}
+
 function ComposerForm(props: {
-  threadRef: ScopedThreadRef;
-  thread: EnvironmentThreadShell;
+  environmentId: EnvironmentId;
+  providers: ReadonlyArray<ProviderChoice>;
+  defaults: TurnSettings | null;
+  draft: TurnDraft;
+  setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
   readOnlyReason: string | null;
+  unavailableReason?: string | null;
+  placeholder: string;
+  submitLabel: string;
+  stopThreadRef?: ScopedThreadRef | undefined;
+  onSend: (payload: SendPayload) => Promise<string | null>;
 }) {
-  const { threadRef, thread } = props;
+  const { environmentId, providers, defaults, draft, setDraft } = props;
   const registry = useContext(RegistryContext);
-  const [draft, setDraft] = useAtom(draftAtom(scopedThreadKey(threadRef)));
-  const config = useAtomValue(serverEnvironment.configValueAtom(threadRef.environmentId));
-  const providers = useMemo(
-    () => (config === null ? NO_PROVIDERS : providerChoices(config, thread.projectId)),
-    [config, thread.projectId],
-  );
-  const running =
-    useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -573,16 +578,11 @@ function ComposerForm(props: {
       images: (current.images ?? []).filter((image) => image.key !== key),
     }));
 
-  const settings = turnSettings(
-    draft,
-    {
-      model: thread.modelSelection,
-      runtimeMode: thread.runtimeMode,
-      interactionMode: thread.interactionMode,
-    },
-    providers,
-  );
-  const provider = providers.find((choice) => choice.instanceId === settings.model.instanceId);
+  const settings = defaults === null ? null : turnSettings(draft, defaults, providers);
+  const provider =
+    settings === null
+      ? undefined
+      : providers.find((choice) => choice.instanceId === settings.model.instanceId);
   // Said before sending: the machine would take the message and then fail its turn.
   const imagesRefused =
     images.length > 0 && provider?.takesImages === false
@@ -592,74 +592,39 @@ function ComposerForm(props: {
   const send = async () => {
     const typed = draft.text;
     const sentImages = images;
-    if (sending || imagesRefused !== null || (typed.trim() === "" && sentImages.length === 0)) {
+    if (
+      sending ||
+      settings === null ||
+      imagesRefused !== null ||
+      (typed.trim() === "" && sentImages.length === 0)
+    ) {
       return;
     }
     // The agent needs words to start a turn: images alone go with T3's own placeholder.
     const text = restoreAttachmentOnlyBootstrapPrompt(typed, sentImages.length > 0);
-    const target = { environmentId: threadRef.environmentId };
-    const threadId = threadRef.threadId;
     setSending(true);
     setError(null);
     const upload =
       sentImages.length === 0
         ? { attachments: [] }
-        : await uploadImages(registry, threadRef.environmentId, sentImages);
+        : await uploadImages(registry, environmentId, sentImages);
     if ("error" in upload) {
       setSending(false);
       setError(upload.error);
       return;
     }
-    // The thread keeps its modes between turns, so a changed one is set before the message.
-    const failure =
-      (settings.runtimeMode === thread.runtimeMode
-        ? null
-        : await runCommand(
-            registry,
-            threadEnvironment.setRuntimeMode,
-            { ...target, input: { threadId, runtimeMode: settings.runtimeMode } },
-            "No se pudo cambiar el modo",
-          )) ??
-      (settings.interactionMode === thread.interactionMode
-        ? null
-        : await runCommand(
-            registry,
-            threadEnvironment.setInteractionMode,
-            { ...target, input: { threadId, interactionMode: settings.interactionMode } },
-            "No se pudo cambiar la interacción",
-          )) ??
-      (await runCommand(
-        registry,
-        threadEnvironment.startTurn,
-        {
-          ...target,
-          input: {
-            threadId,
-            message: {
-              messageId: MessageId.make(SecureRandom.uuidV4Unsafe()),
-              role: "user",
-              text,
-              attachments: upload.attachments,
-            },
-            modelSelection: settings.model,
-            runtimeMode: settings.runtimeMode,
-            interactionMode: settings.interactionMode,
-            // While the agent works, the message waits its turn in the server's queue.
-            dispatchMode: resolveComposerDispatchMode({
-              running,
-              alternateModifier: false,
-              activeTurnDefault: "queue",
-            }),
-          },
-        },
-        "No se pudo enviar el mensaje",
-      ));
+    const failure = await props.onSend({
+      typed,
+      text,
+      attachments: upload.attachments,
+      settings,
+    });
     setSending(false);
     setError(failure);
     if (failure !== null) {
       releaseUploads(
         registry,
-        threadRef.environmentId,
+        environmentId,
         upload.attachments.map((attachment) => attachment.id),
       );
     }
@@ -686,9 +651,7 @@ function ComposerForm(props: {
         <textarea
           className="ade-composer-text"
           aria-label="Mensaje"
-          placeholder={
-            running ? "Escribe; se enviará cuando termine este turno" : "Escribe un mensaje"
-          }
+          placeholder={props.placeholder}
           rows={3}
           value={draft.text}
           onChange={(event) => {
@@ -748,21 +711,28 @@ function ComposerForm(props: {
           >
             <PaperclipIcon size={16} aria-hidden />
           </button>
-          <SettingsPickers
-            thread={thread}
-            providers={providers}
-            draft={draft}
-            setDraft={setDraft}
-          />
+          {defaults === null ? (
+            <div className="ade-composer-settings" />
+          ) : (
+            <SettingsPickers
+              defaults={defaults}
+              providers={providers}
+              draft={draft}
+              setDraft={setDraft}
+            />
+          )}
           <div className="ade-composer-actions">
-            {running ? <StopButton threadRef={threadRef} onError={setError} /> : null}
+            {props.stopThreadRef === undefined ? null : (
+              <StopButton threadRef={props.stopThreadRef} onError={setError} />
+            )}
             <button
               type="submit"
               className="ade-composer-send"
-              aria-label={running ? "Poner en cola" : "Enviar"}
+              aria-label={props.submitLabel}
               aria-busy={sending}
               disabled={
                 sending ||
+                settings === null ||
                 imagesRefused !== null ||
                 (draft.text.trim() === "" && images.length === 0)
               }
@@ -777,6 +747,11 @@ function ComposerForm(props: {
           {props.readOnlyReason}
         </p>
       )}
+      {props.readOnlyReason === null && props.unavailableReason != null ? (
+        <p className="ade-composer-note" role="status">
+          {props.unavailableReason}
+        </p>
+      ) : null}
       {imagesRefused === null ? null : (
         <p className="ade-composer-note" role="status">
           {imagesRefused}
@@ -832,16 +807,207 @@ function Workspace(props: { threadRef: ScopedThreadRef; thread: EnvironmentThrea
 
 /** The selected thread's composer, with its queue above it and where it works below. */
 export function Composer(props: { threadRef: ScopedThreadRef; thread: EnvironmentThreadShell }) {
-  const access = useAtomValue(operateAccessAtom(props.threadRef.environmentId));
+  const { threadRef, thread } = props;
+  const registry = useContext(RegistryContext);
+  const access = useAtomValue(operateAccessAtom(threadRef.environmentId));
+  const [draft, setDraft] = useAtom(draftAtom(scopedThreadKey(threadRef)));
+  const config = useAtomValue(serverEnvironment.configValueAtom(threadRef.environmentId));
+  const providers = useMemo(
+    () => (config === null ? NO_PROVIDERS : providerChoices(config, thread.projectId)),
+    [config, thread.projectId],
+  );
+  const running =
+    useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
+  const defaults: TurnSettings = {
+    model: thread.modelSelection,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+  };
   return (
     <section className="ade-composer" aria-label="Compositor">
-      <QueuedRuns threadRef={props.threadRef} />
+      <QueuedRuns threadRef={threadRef} />
       <ComposerForm
-        threadRef={props.threadRef}
-        thread={props.thread}
+        environmentId={threadRef.environmentId}
+        providers={providers}
+        defaults={defaults}
+        draft={draft}
+        setDraft={setDraft}
         readOnlyReason={access === "operate" ? null : READ_ONLY_TEXT[access ?? "loading"]}
+        placeholder={
+          running ? "Escribe; se enviará cuando termine este turno" : "Escribe un mensaje"
+        }
+        submitLabel={running ? "Poner en cola" : "Enviar"}
+        stopThreadRef={running ? threadRef : undefined}
+        onSend={async ({ text, attachments, settings }) => {
+          const target = { environmentId: threadRef.environmentId };
+          const threadId = threadRef.threadId;
+          // The thread keeps its modes between turns, so a changed one is set before the message.
+          return (
+            (settings.runtimeMode === thread.runtimeMode
+              ? null
+              : await runCommand(
+                  registry,
+                  threadEnvironment.setRuntimeMode,
+                  { ...target, input: { threadId, runtimeMode: settings.runtimeMode } },
+                  "No se pudo cambiar el modo",
+                )) ??
+            (settings.interactionMode === thread.interactionMode
+              ? null
+              : await runCommand(
+                  registry,
+                  threadEnvironment.setInteractionMode,
+                  { ...target, input: { threadId, interactionMode: settings.interactionMode } },
+                  "No se pudo cambiar la interacción",
+                )) ??
+            (await runCommand(
+              registry,
+              threadEnvironment.startTurn,
+              {
+                ...target,
+                input: {
+                  threadId,
+                  message: {
+                    messageId: MessageId.make(SecureRandom.uuidV4Unsafe()),
+                    role: "user",
+                    text,
+                    attachments,
+                  },
+                  modelSelection: settings.model,
+                  runtimeMode: settings.runtimeMode,
+                  interactionMode: settings.interactionMode,
+                  // While the agent works, the message waits its turn in the server's queue.
+                  dispatchMode: resolveComposerDispatchMode({
+                    running,
+                    alternateModifier: false,
+                    activeTurnDefault: "queue",
+                  }),
+                },
+              },
+              "No se pudo enviar el mensaje",
+            ))
+          );
+        }}
       />
-      <Workspace threadRef={props.threadRef} thread={props.thread} />
+      <Workspace threadRef={threadRef} thread={thread} />
+    </section>
+  );
+}
+
+// Shared across project chips on Inicio so switching projects keeps the typed prompt and images.
+const homePromptAtom = Atom.make<Pick<TurnDraft, "text" | "images">>({ text: "" }).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ade-home-prompt"),
+);
+const homeOverridesAtom = Atom.family((_projectKey: string) =>
+  Atom.make<Partial<TurnSettings>>({}).pipe(Atom.keepAlive),
+);
+
+/** Composer for Inicio: creates a new thread in the chosen machine & project and opens it. */
+export function NewThreadComposer(props: {
+  environmentId: EnvironmentId;
+  machineLabel: string;
+  project: OrchestrationProjectShell;
+  onThreadCreated: (threadKey: string) => void;
+}) {
+  const { environmentId, machineLabel, project, onThreadCreated } = props;
+  const registry = useContext(RegistryContext);
+  const access = useAtomValue(operateAccessAtom(environmentId));
+  const [prompt, setPrompt] = useAtom(homePromptAtom);
+  const [overrides, setOverrides] = useAtom(homeOverridesAtom(`${environmentId}:${project.id}`));
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const providers = useMemo(
+    () => (config === null ? NO_PROVIDERS : providerChoices(config, project.id)),
+    [config, project.id],
+  );
+  const defaults = useMemo(
+    () =>
+      config === null ? null : defaultNewThreadSettings(config, project.id, providers, project),
+    [config, project, providers],
+  );
+  const draft: TurnDraft = { ...overrides, ...prompt };
+  const setDraft = (update: (current: TurnDraft) => TurnDraft) => {
+    const next = update({
+      ...registry.get(homeOverridesAtom(`${environmentId}:${project.id}`)),
+      ...registry.get(homePromptAtom),
+    });
+    setPrompt({ text: next.text, ...(next.images === undefined ? {} : { images: next.images }) });
+    setOverrides({
+      ...(next.model === undefined ? {} : { model: next.model }),
+      ...(next.runtimeMode === undefined ? {} : { runtimeMode: next.runtimeMode }),
+      ...(next.interactionMode === undefined ? {} : { interactionMode: next.interactionMode }),
+    });
+  };
+  const unavailableReason =
+    defaults !== null
+      ? null
+      : config === null
+        ? "Cargando proveedores de esta máquina…"
+        : "No hay proveedores disponibles en esta máquina para este proyecto.";
+
+  return (
+    <section className="ade-composer ade-composer-home" aria-label="Compositor">
+      <ComposerForm
+        environmentId={environmentId}
+        providers={providers}
+        defaults={defaults}
+        draft={draft}
+        setDraft={setDraft}
+        readOnlyReason={access === "operate" ? null : READ_ONLY_TEXT[access ?? "loading"]}
+        unavailableReason={unavailableReason}
+        placeholder="¿Qué hacemos?"
+        submitLabel="Crear hilo"
+        onSend={async ({ typed, text, attachments, settings }) => {
+          const threadId = ThreadId.make(SecureRandom.uuidV4Unsafe());
+          const createdAt = DateTime.formatIso(DateTime.nowUnsafe());
+          const title = deriveInitialThreadTitle(typed);
+          return await runCommand(
+            registry,
+            threadEnvironment.startTurn,
+            {
+              environmentId,
+              input: {
+                threadId,
+                message: {
+                  messageId: MessageId.make(SecureRandom.uuidV4Unsafe()),
+                  role: "user",
+                  text,
+                  attachments,
+                },
+                modelSelection: settings.model,
+                titleSeed: title,
+                runtimeMode: settings.runtimeMode,
+                interactionMode: settings.interactionMode,
+                bootstrap: {
+                  createThread: {
+                    projectId: project.id,
+                    title,
+                    modelSelection: settings.model,
+                    runtimeMode: settings.runtimeMode,
+                    interactionMode: settings.interactionMode,
+                    branch: null,
+                    worktreePath: null,
+                    createdAt,
+                  },
+                },
+                createdAt,
+              },
+            },
+            "No se pudo crear el hilo",
+            () => onThreadCreated(scopedThreadKey(scopeThreadRef(environmentId, threadId))),
+          );
+        }}
+      />
+      <p className="ade-composer-where" aria-label="Dónde empieza">
+        <span>
+          <DesktopIcon size={13} aria-hidden />
+          {machineLabel}
+        </span>
+        <span>
+          <FolderSimpleIcon size={13} aria-hidden />
+          {project.title}
+        </span>
+        <span>Checkout local</span>
+      </p>
     </section>
   );
 }

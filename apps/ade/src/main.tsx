@@ -1,11 +1,11 @@
 import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react";
-import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
-import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
+import { NotePencilIcon } from "@phosphor-icons/react/dist/csr/NotePencil";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/dist/csr/SidebarSimple";
 import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import { TrayIcon } from "@phosphor-icons/react/dist/csr/Tray";
+import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useShortcut, useShortcutHint } from "@ui-sdk/react/shortcuts";
@@ -48,7 +48,7 @@ function MobileBottomNav() {
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const { count: pendingCount, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
 
-  const goView = (target: "resumen" | "proyectos" | "bots" | "respaldo") => {
+  const goView = (target: "inicio" | "resumen" | "proyectos" | "bots") => {
     setDrawerOpen(false);
     setTrayOpen(false);
     setView(target);
@@ -56,6 +56,17 @@ function MobileBottomNav() {
 
   return (
     <nav className="ade-mobile-nav" aria-label="Navegación móvil">
+      <button
+        type="button"
+        className="ade-mobile-nav-item"
+        aria-current={
+          !drawerOpen && !trayOpen && !threadOpen && view === "inicio" ? "page" : undefined
+        }
+        onClick={() => goView("inicio")}
+      >
+        <NotePencilIcon size={20} aria-hidden />
+        <span>Inicio</span>
+      </button>
       <button
         type="button"
         className="ade-mobile-nav-item"
@@ -88,17 +99,6 @@ function MobileBottomNav() {
       >
         <UserCircleIcon size={20} aria-hidden />
         <span>Bots</span>
-      </button>
-      <button
-        type="button"
-        className="ade-mobile-nav-item"
-        aria-current={
-          !drawerOpen && !trayOpen && !threadOpen && view === "respaldo" ? "page" : undefined
-        }
-        onClick={() => goView("respaldo")}
-      >
-        <ArrowsLeftRightIcon size={20} aria-hidden />
-        <span>Respaldo</span>
       </button>
       <button
         type="button"
@@ -159,6 +159,8 @@ function Shell() {
   const registry = useContext(RegistryContext);
   const background = useBackground();
   const [drawerOpen, setDrawerOpen] = useAtom(mobileSidebarOpenAtom);
+  const [view, setView] = useAtom(viewAtom);
+  const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const narrowViewport = useAtomValue(narrowViewportAtom);
   const hasMachines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size > 0;
   // Start collapsed on desktop unless a pairing link arrived in the URL and needs the form.
@@ -170,14 +172,25 @@ function Shell() {
     writeSidebarExpanded(next);
   };
   const toggleSidebar = () => setExpanded(!sidebarExpanded);
+  const openHome = () => {
+    setDrawerOpen(false);
+    setView("inicio");
+  };
   useShortcut("mod+b", toggleSidebar, {
     when: () => !narrowViewport && hasMachines && !isFocusInTerminal(),
     description: "Alternar la barra lateral",
   });
+  useShortcut("mod+shift+o", openHome, {
+    when: () => hasMachines && !isFocusInTerminal(),
+    description: "Nuevo hilo",
+  });
   const toggleHint = useShortcutHint("mod+b");
+  const newThreadHint = useShortcutHint("mod+shift+o");
   // Keep the sidebar expanded while there are no machines so the pairing UI stays reachable.
   const collapsed = !narrowViewport && !sidebarExpanded && hasMachines;
   const shortcutLabel = toggleHint.text || "Ctrl+B";
+  const newThreadShortcutLabel = newThreadHint.text || "Ctrl+Shift+O";
+  const isHome = hasMachines && !threadOpen && view === "inicio";
 
   useEffect(
     () =>
@@ -202,40 +215,74 @@ function Shell() {
               <AdeMark className="ade-brand-mark" />
               {collapsed ? null : <span>ADE</span>}
             </div>
-            {hasMachines ? (
-              <Tooltip>
-                <TooltipTrigger
+            <div className="ade-brand-actions">
+              {hasMachines && !collapsed ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className="ade-icon-button ade-new-thread-button"
+                    aria-label="Nuevo hilo"
+                    aria-current={isHome ? "page" : undefined}
+                    aria-keyshortcuts={newThreadHint.ariaKeyshortcuts}
+                    onClick={openHome}
+                  >
+                    <NotePencilIcon size={17} aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8} className="ade-rail-tooltip">
+                    Nuevo hilo · {newThreadShortcutLabel}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              {hasMachines ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className={
+                      collapsed
+                        ? "ade-rail-button ade-sidebar-toggle"
+                        : "ade-icon-button ade-sidebar-toggle"
+                    }
+                    aria-label={collapsed ? "Desplegar barra lateral" : "Recoger barra lateral"}
+                    aria-expanded={!collapsed}
+                    aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
+                    onClick={toggleSidebar}
+                  >
+                    <SidebarSimpleIcon size={collapsed ? 19 : 17} aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+                    {collapsed ? "Desplegar" : "Recoger"} · {shortcutLabel}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              {collapsed ? null : (
+                <button
                   type="button"
-                  className={
-                    collapsed
-                      ? "ade-rail-button ade-sidebar-toggle"
-                      : "ade-icon-button ade-sidebar-toggle"
-                  }
-                  aria-label={collapsed ? "Desplegar barra lateral" : "Recoger barra lateral"}
-                  aria-expanded={!collapsed}
-                  aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
-                  onClick={toggleSidebar}
+                  className="ade-icon-button ade-mobile-drawer-close"
+                  aria-label="Cerrar menú lateral"
+                  onClick={() => setDrawerOpen(false)}
                 >
-                  <SidebarSimpleIcon size={collapsed ? 19 : 17} aria-hidden />
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-                  {collapsed ? "Desplegar" : "Recoger"} · {shortcutLabel}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-            {collapsed ? null : (
-              <button
-                type="button"
-                className="ade-icon-button ade-mobile-drawer-close"
-                aria-label="Cerrar menú lateral"
-                onClick={() => setDrawerOpen(false)}
-              >
-                <XIcon size={18} aria-hidden />
-              </button>
-            )}
+                  <XIcon size={18} aria-hidden />
+                </button>
+              )}
+            </div>
           </div>
           {collapsed ? (
             <div className="ade-rail">
+              <Tooltip>
+                <TooltipTrigger
+                  type="button"
+                  className="ade-rail-button ade-new-thread-button"
+                  aria-label="Nuevo hilo"
+                  aria-current={isHome ? "page" : undefined}
+                  aria-keyshortcuts={newThreadHint.ariaKeyshortcuts}
+                  onClick={openHome}
+                >
+                  <NotePencilIcon size={19} aria-hidden />
+                </TooltipTrigger>
+                <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+                  Nuevo hilo · {newThreadShortcutLabel}
+                </TooltipContent>
+              </Tooltip>
               <NeedsYouBlock compact />
               <ViewNav compact />
               <span className="ade-rail-sep" aria-hidden />

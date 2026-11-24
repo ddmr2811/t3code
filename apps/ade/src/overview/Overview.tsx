@@ -22,6 +22,7 @@ import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime
 import { ExtensionPanel, MachineExtensions } from "../extensions/Extensions.tsx";
 import { allFailoverStatesAtom } from "../failover/failover.state.ts";
 import { FailoverPanel } from "../failover/FailoverPanel.tsx";
+import { Home } from "../home/Home.tsx";
 import { useMachineStatus } from "../Machines.tsx";
 import {
   listedThreadsAtom,
@@ -34,15 +35,21 @@ import type { ThreadState } from "../sidebar/sidebar.logic.ts";
 import { serverEnvironment } from "../state.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
 
-export type View = "resumen" | "proyectos" | "tablero" | "respaldo" | "bots";
+export type View = "inicio" | "resumen" | "proyectos" | "tablero" | "respaldo" | "bots";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
 const readView = (): View => {
   const value = new URLSearchParams(window.location.search).get("vista");
-  if (value === "tablero" || value === "proyectos" || value === "respaldo" || value === "bots")
+  if (
+    value === "resumen" ||
+    value === "tablero" ||
+    value === "proyectos" ||
+    value === "respaldo" ||
+    value === "bots"
+  )
     return value;
-  return "resumen";
+  return "inicio";
 };
 export const viewAtom = Atom.writable(
   (get) => {
@@ -53,7 +60,7 @@ export const viewAtom = Atom.writable(
   },
   (_ctx, view: View) => {
     const url = new URL(window.location.href);
-    if (view === "resumen") url.searchParams.delete("vista");
+    if (view === "inicio") url.searchParams.delete("vista");
     else url.searchParams.set("vista", view);
     url.searchParams.delete("hilo");
     if (url.href === window.location.href) return;
@@ -524,6 +531,7 @@ export function Overview() {
       </section>
     );
   }
+  if (view === "inicio") return <Home />;
   if (view === "proyectos") return <ProjectBoard />;
   if (view === "bots") return <BotsView />;
   if (view === "respaldo") return <FailoverPanel />;

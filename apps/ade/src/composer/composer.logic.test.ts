@@ -7,7 +7,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { acceptImages, effortBars, providerChoices, turnSettings } from "./composer.logic.ts";
+import {
+  acceptImages,
+  defaultNewThreadSettings,
+  effortBars,
+  providerChoices,
+  turnSettings,
+} from "./composer.logic.ts";
 
 const project = ProjectId.make("project");
 const provider = (id: string, extra: Partial<ServerProvider> = {}): ServerProvider => ({
@@ -160,5 +166,76 @@ describe("effortBars", () => {
     expect(effortBars(select(["off", "low", "high"]), "off")).toEqual({ count: 2, filled: 0 });
     // Max is named, not a bar: it fills them all.
     expect(effortBars(select(["low", "high", "max"]), "max")).toEqual({ count: 2, filled: 2 });
+  });
+});
+
+describe("defaultNewThreadSettings", () => {
+  it("uses project runtime mode and model defaults, falling back and clamping to allowed modes", () => {
+    const codexId = ProviderInstanceId.make("codex");
+    const replayId = ProviderInstanceId.make("devReplay");
+    const providers = providerChoices(
+      {
+        providers: [
+          provider("codex", { supportedRuntimeModes: ["approval-required", "auto"] }),
+          provider("devReplay", {
+            models: [
+              {
+                slug: "command-output",
+                name: "Command output",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          }),
+        ],
+        settings: DEFAULT_SERVER_SETTINGS,
+      },
+      project,
+    );
+
+    const withProjectDefaults = defaultNewThreadSettings(
+      {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultRuntimeMode: "full-access",
+          projectSettingsOverrides: {
+            [project]: {
+              defaultRuntimeMode: "auto",
+              defaultModelSelection: { instanceId: codexId, model: "m" },
+            },
+          },
+        },
+      },
+      project,
+      providers,
+    );
+    expect(withProjectDefaults).toEqual({
+      model: { instanceId: codexId, model: "m" },
+      runtimeMode: "auto",
+      interactionMode: "default",
+    });
+
+    const clamped = defaultNewThreadSettings(
+      {
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultRuntimeMode: "full-access",
+          defaultModelSelection: { instanceId: ProviderInstanceId.make("missing"), model: "x" },
+        },
+      },
+      project,
+      providers,
+    );
+    expect(clamped).toEqual({
+      model: { instanceId: codexId, model: "m" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+    });
+
+    expect(
+      defaultNewThreadSettings({ settings: DEFAULT_SERVER_SETTINGS }, project, [], {
+        defaultModelSelection: { instanceId: replayId, model: "command-output" },
+      }),
+    ).toBeNull();
   });
 });
