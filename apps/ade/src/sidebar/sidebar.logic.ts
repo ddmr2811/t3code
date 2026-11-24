@@ -67,6 +67,89 @@ export function listedThreads<T extends GroupInput>(threads: ReadonlyArray<T>): 
   );
 }
 
+const SIDEBAR_STORAGE_KEY = "ade.sidebar";
+
+const PROJECT_ACCENTS = ["#ECE6DA", "#8FB4EE", "#96C59A", "#D8D58A", "#E0A3B8", "#86CFCB"] as const;
+
+export function readSidebarExpanded(
+  storage: Pick<Storage, "getItem"> | undefined = typeof localStorage === "undefined"
+    ? undefined
+    : localStorage,
+): boolean {
+  try {
+    return storage?.getItem(SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeSidebarExpanded(
+  expanded: boolean,
+  storage: Pick<Storage, "setItem"> | undefined = typeof localStorage === "undefined"
+    ? undefined
+    : localStorage,
+): void {
+  try {
+    storage?.setItem(SIDEBAR_STORAGE_KEY, expanded ? "1" : "0");
+  } catch {
+    // Storage may be unavailable or full in private browsing; keep the choice in memory.
+  }
+}
+
+export function projectMonogram(title: string): string {
+  const words = title
+    .trim()
+    .split(/[\s._/-]+/)
+    .filter((word) => word.length > 0);
+  if (words.length >= 2) {
+    return `${words[0]![0]}${words[1]![0]}`.toUpperCase();
+  }
+  const single = words[0];
+  if (single === undefined) return "?";
+  return single.slice(0, 2).toUpperCase();
+}
+
+export function projectAccentColor(seed: string): string {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0;
+  }
+  return PROJECT_ACCENTS[hash % PROJECT_ACCENTS.length]!;
+}
+
+export interface RailProject<T> {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly hasPendingDecision: boolean;
+  readonly primaryThread: T;
+  readonly threads: ReadonlyArray<T>;
+}
+
+/** Projects for the collapsed rail, in recency order, flagging any with an operable pending decision. */
+export function railProjects<T extends GroupInput & StateInput>(
+  threads: ReadonlyArray<T>,
+  machineIds: ReadonlyArray<EnvironmentId>,
+  operableIds: ReadonlySet<EnvironmentId>,
+): RailProject<T>[] {
+  return groupThreads(threads, machineIds).flatMap((machine) => {
+    const canAnswer = operableIds.has(machine.environmentId);
+    return machine.projects.map((project) => {
+      const pending = canAnswer
+        ? project.threads.find((thread) => threadState(thread) === "needs-you")
+        : undefined;
+      return {
+        key: `${machine.environmentId}:${project.projectId}`,
+        environmentId: machine.environmentId,
+        projectId: project.projectId,
+        hasPendingDecision: pending !== undefined,
+        primaryThread: pending ?? project.threads[0]!,
+        threads: project.threads,
+      };
+    });
+  });
+}
+
 /**
  * Threads by machine, in `machineIds` order, then by project. Threads and projects go most recent
  * first. Machines without threads are left out; so are threads of machines not in `machineIds`.

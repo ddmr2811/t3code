@@ -15,6 +15,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { lazy, memo, Suspense, useContext, useEffect, useMemo, useState } from "react";
 
@@ -46,7 +47,16 @@ import {
   serverEnvironment,
   terminalAccessAtom,
 } from "../state.ts";
-import { groupThreads, listedThreads, type ThreadState, threadState } from "./sidebar.logic.ts";
+import {
+  groupThreads,
+  listedThreads,
+  projectAccentColor,
+  projectMonogram,
+  type RailProject,
+  railProjects,
+  type ThreadState,
+  threadState,
+} from "./sidebar.logic.ts";
 
 const STATE_VIEW = {
   "needs-you": { Glyph: WarningCircleIcon, text: "Te necesita" },
@@ -89,7 +99,7 @@ export const mobileSidebarOpenAtom = Atom.make(false).pipe(
 );
 
 /** Tracks narrow mobile viewports (<= 720 px) so the pending tray stays non-blocking on phones. */
-const narrowViewportAtom = Atom.make((get) => {
+export const narrowViewportAtom = Atom.make((get) => {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   const media = window.matchMedia("(max-width: 720px)");
   const onChange = () => get.setSelf(media.matches);
@@ -203,6 +213,73 @@ export function ProjectTitle(props: { environmentId: EnvironmentId; projectId: P
     (index) => index.get(props.projectId)?.title ?? null,
   );
   return <>{title ?? "Proyecto sin nombre"}</>;
+}
+
+function ProjectRailButton(props: {
+  project: RailProject<EnvironmentThreadShell>;
+  active: boolean;
+  onOpen: (key: string) => void;
+}) {
+  const title =
+    useAtomValue(
+      environmentProjects.environmentProjectIndexAtom(props.project.environmentId),
+      (index) => index.get(props.project.projectId)?.title ?? null,
+    ) ?? "Proyecto sin nombre";
+  const label = props.project.hasPendingDecision ? `${title} · espera una decisión` : title;
+  const threadKey = scopedThreadKey(
+    scopeThreadRef(props.project.primaryThread.environmentId, props.project.primaryThread.id),
+  );
+  const accent = projectAccentColor(`${props.project.environmentId}:${props.project.projectId}`);
+  return (
+    <Tooltip type="label">
+      <TooltipTrigger
+        type="button"
+        className="ade-rail-project"
+        aria-current={props.active ? "true" : undefined}
+        onClick={() => props.onOpen(threadKey)}
+      >
+        <span
+          className="ade-rail-mark"
+          style={{ "--ade-project-color": accent } as Record<string, string>}
+          aria-hidden
+        >
+          {projectMonogram(title)}
+        </span>
+        {props.project.hasPendingDecision ? <span className="ade-rail-dot" aria-hidden /> : null}
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function ProjectRail() {
+  const listed = useAtomValue(listedThreadsAtom);
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const operable = useAtomValue(operableEnvironmentIdsAtom);
+  const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
+  const projects = railProjects(listed, [...catalog.entries.keys()], operable);
+  if (projects.length === 0) return null;
+  const selectedRef = selected === null ? null : parseScopedThreadKey(selected);
+  return (
+    <nav className="ade-rail-projects" aria-label="Proyectos">
+      {projects.map((project) => {
+        const active =
+          selectedRef !== null &&
+          selectedRef.environmentId === project.environmentId &&
+          project.threads.some((thread) => thread.id === selectedRef.threadId);
+        return (
+          <ProjectRailButton
+            key={project.key}
+            project={project}
+            active={active}
+            onOpen={setSelected}
+          />
+        );
+      })}
+    </nav>
+  );
 }
 
 const ThreadRow = memo(function ThreadRow(props: {

@@ -30,6 +30,8 @@ const addressBar = (() => {
   return refused ? { link: "", error: TOKEN_IN_QUERY_TEXT } : { link, error: null };
 })();
 
+export const hasInitialPairingRequest = addressBar !== null;
+
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 export function useMachineStatus(environmentId: EnvironmentId, entry: ConnectionCatalogEntry) {

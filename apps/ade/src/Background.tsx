@@ -3,6 +3,7 @@ import { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 import { PaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";
 import { SquareIcon } from "@phosphor-icons/react/dist/csr/Square";
 import { UploadSimpleIcon } from "@phosphor-icons/react/dist/csr/UploadSimple";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover";
 import { Toggle, ToggleGroup, ToggleIcon } from "@ui-sdk/react/toggle";
 import { type ChangeEvent, useRef, useState } from "react";
 
@@ -101,8 +102,19 @@ export function BackgroundLayer({ pref, customImage }: Pick<Background, "pref" |
   );
 }
 
-/** Icon-only picker that sits in the sidebar footer, so it never covers the work area. */
-export function BackgroundPicker({ pref, update, setCustomImage }: Background) {
+const MODE_ICON = {
+  luna: MoonIcon,
+  imagen: ImageIcon,
+  liso: SquareIcon,
+} as const;
+
+/** Icon-only picker in the sidebar footer, or inside a popover when the rail is collapsed. */
+export function BackgroundPicker({
+  pref,
+  update,
+  setCustomImage,
+  compact = false,
+}: Background & { compact?: boolean }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const onModeChange = (values: ReadonlyArray<string>) => {
@@ -125,8 +137,8 @@ export function BackgroundPicker({ pref, update, setCustomImage }: Background) {
     reader.readAsDataURL(file);
   };
 
-  return (
-    <div className="ml-auto flex items-center gap-0.5">
+  const controls = (
+    <div className="flex items-center gap-0.5">
       <ToggleGroup
         value={[pref.mode]}
         deselectable={false}
@@ -139,12 +151,7 @@ export function BackgroundPicker({ pref, update, setCustomImage }: Background) {
             <MoonIcon size={14} />
           </ToggleIcon>
         </Toggle>
-        <Toggle
-          value="imagen"
-          aria-label="Fondo: imagen"
-
-          className={iconToggleClass}
-        >
+        <Toggle value="imagen" aria-label="Fondo: imagen" className={iconToggleClass}>
           <ToggleIcon>
             <ImageIcon size={14} />
           </ToggleIcon>
@@ -161,7 +168,6 @@ export function BackgroundPicker({ pref, update, setCustomImage }: Background) {
             pressed={pref.color}
             onPressedChange={(color) => update({ ...pref, color })}
             aria-label="Imagen en color"
-
             className={iconToggleClass}
           >
             <ToggleIcon>
@@ -171,22 +177,50 @@ export function BackgroundPicker({ pref, update, setCustomImage }: Background) {
           <button
             type="button"
             aria-label="Usar una imagen tuya"
-
             onClick={() => fileInputRef.current?.click()}
             className={iconToggleClass}
           >
             <UploadSimpleIcon size={14} aria-hidden />
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            tabIndex={-1}
-            className="ade-sr-only"
-            onChange={onFileChange}
-          />
         </>
       ) : null}
+    </div>
+  );
+
+  // Kept outside the popover so closing the menu while the OS file dialog is open still delivers onChange.
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/*"
+      tabIndex={-1}
+      className="ade-sr-only"
+      onChange={onFileChange}
+    />
+  );
+
+  if (compact) {
+    const ActiveIcon = MODE_ICON[pref.mode];
+    return (
+      <>
+        <Popover>
+          <PopoverTrigger className="ade-rail-button" aria-label="Fondo">
+            <ActiveIcon size={18} aria-hidden />
+          </PopoverTrigger>
+          <PopoverContent side="right" align="end" sideOffset={10} className="ade-bg-popover">
+            <PopoverTitle className="ade-bg-popover-title">Fondo</PopoverTitle>
+            {controls}
+          </PopoverContent>
+        </Popover>
+        {fileInput}
+      </>
+    );
+  }
+
+  return (
+    <div className="ml-auto flex items-center gap-0.5">
+      {controls}
+      {fileInput}
     </div>
   );
 }

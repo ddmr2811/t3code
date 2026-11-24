@@ -1,7 +1,15 @@
 import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupThreads, listedThreads, threadState } from "./sidebar.logic.ts";
+import {
+  groupThreads,
+  listedThreads,
+  projectMonogram,
+  railProjects,
+  readSidebarExpanded,
+  threadState,
+  writeSidebarExpanded,
+} from "./sidebar.logic.ts";
 
 const run = (status: "completed" | "failed" | "running") =>
   ({
@@ -143,5 +151,67 @@ describe("groupThreads", () => {
       ],
       [machineB, [["api", ["b-only"]]]],
     ]);
+  });
+});
+
+describe("sidebar persistence", () => {
+  it("defaults to collapsed and handles storage errors safely", () => {
+    expect(readSidebarExpanded({ getItem: () => null })).toBe(false);
+    expect(readSidebarExpanded({ getItem: () => "0" })).toBe(false);
+    expect(readSidebarExpanded({ getItem: () => "1" })).toBe(true);
+    const broken = {
+      getItem: () => {
+        throw new Error("denied");
+      },
+      setItem: () => {
+        throw new Error("quota");
+      },
+    };
+    expect(readSidebarExpanded(broken)).toBe(false);
+    expect(() => writeSidebarExpanded(true, broken)).not.toThrow();
+  });
+});
+
+describe("railProjects", () => {
+  it("flags pending decisions only on operable machines and targets the waiting thread", () => {
+    const waiting = {
+      ...stateInput({ hasPendingApprovals: true }),
+      ...thread("a-wait", machineA, "web", "2026-11-22T10:00:00.000Z"),
+    };
+    const newer = {
+      ...stateInput(),
+      ...thread("a-new", machineA, "web", "2026-11-23T12:00:00.000Z"),
+    };
+    const readOnlyWaiting = {
+      ...stateInput({ hasPendingApprovals: true }),
+      ...thread("b-wait", machineB, "api", "2026-11-23T12:00:00.000Z"),
+    };
+    const projects = railProjects(
+      [newer, waiting, readOnlyWaiting],
+      [machineA, machineB],
+      new Set([machineA]),
+    );
+    expect(
+      projects.map((project) => ({
+        projectId: project.projectId,
+        hasPendingDecision: project.hasPendingDecision,
+        primaryId: project.primaryThread.id,
+      })),
+    ).toEqual([
+      { projectId: "web", hasPendingDecision: true, primaryId: "a-wait" },
+      { projectId: "api", hasPendingDecision: false, primaryId: "b-wait" },
+    ]);
+  });
+});
+
+describe("projectMonogram", () => {
+  it.each([
+    ["proyecto-demo", "PD"],
+    ["T3 Code Fork", "TC"],
+    ["Neutralpha", "NE"],
+    ["danimartin.dev", "DD"],
+    ["   ", "?"],
+  ])("%s → %s", (title, expected) => {
+    expect(projectMonogram(title)).toBe(expected);
   });
 });

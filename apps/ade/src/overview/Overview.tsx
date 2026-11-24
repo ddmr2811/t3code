@@ -11,6 +11,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, PROVIDER_DISPLAY_NAMES, WS_METHODS } from "@t3tools/contracts";
 import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { memo } from "react";
 
@@ -107,31 +108,56 @@ const gigabytes = (bytes: number) =>
 // The server names its windows in English.
 const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as const;
 
-export function ViewNav() {
+const VIEW_LINKS = [
+  { target: "resumen", label: "Resumen", Icon: SquaresFourIcon },
+  { target: "proyectos", label: "Proyectos", Icon: FoldersIcon },
+  { target: "tablero", label: "Tablero", Icon: KanbanIcon },
+  { target: "bots", label: "Bots", Icon: UserCircleIcon },
+  { target: "respaldo", label: "Respaldo", Icon: ArrowsLeftRightIcon },
+] as const;
+
+export function ViewNav(props: { compact?: boolean }) {
   const [view, setView] = useAtom(viewAtom);
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
-  const link = (target: View, label: string, Icon: typeof KanbanIcon) => (
-    <button
-      type="button"
-      className="ade-view-link"
-      aria-current={!threadOpen && view === target ? "page" : undefined}
-      onClick={() => {
-        setView(target);
-        setMobileSidebar(false);
-      }}
-    >
-      <Icon size={16} aria-hidden />
-      {label}
-    </button>
-  );
+  if (props.compact) {
+    return (
+      <nav className="ade-rail-nav" aria-label="Vistas">
+        {VIEW_LINKS.map(({ target, label, Icon }) => (
+          <Tooltip key={target} type="label">
+            <TooltipTrigger
+              type="button"
+              className="ade-rail-button"
+              aria-current={!threadOpen && view === target ? "page" : undefined}
+              onClick={() => setView(target)}
+            >
+              <Icon size={19} aria-hidden />
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+              {label}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </nav>
+    );
+  }
   return (
     <nav className="ade-views" aria-label="Vistas">
-      {link("resumen", "Resumen", SquaresFourIcon)}
-      {link("proyectos", "Proyectos", FoldersIcon)}
-      {link("tablero", "Tablero", KanbanIcon)}
-      {link("bots", "Bots", UserCircleIcon)}
-      {link("respaldo", "Respaldo", ArrowsLeftRightIcon)}
+      {VIEW_LINKS.map(({ target, label, Icon }) => (
+        <button
+          key={target}
+          type="button"
+          className="ade-view-link"
+          aria-current={!threadOpen && view === target ? "page" : undefined}
+          onClick={() => {
+            setView(target);
+            setMobileSidebar(false);
+          }}
+        >
+          <Icon size={16} aria-hidden />
+          {label}
+        </button>
+      ))}
     </nav>
   );
 }
