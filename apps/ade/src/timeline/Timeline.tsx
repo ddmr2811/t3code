@@ -409,12 +409,15 @@ export function ThreadTimeline(props: {
   const turns = groupTurns(rows);
   if (turns.length === 0) {
     return (
-      <p className="ade-timeline-empty" role={error === null ? "status" : "alert"}>
-        {status === "deleted"
-          ? "Este hilo se ha borrado."
-          : (error ??
-            (status === "live" ? "Este hilo aún no tiene mensajes." : "Cargando el historial…"))}
-      </p>
+      <>
+        <p className="ade-timeline-empty" role={error === null ? "status" : "alert"}>
+          {status === "deleted"
+            ? "Este hilo se ha borrado."
+            : (error ??
+              (status === "live" ? "Este hilo aún no tiene mensajes." : "Cargando el historial…"))}
+        </p>
+        <div className="ade-requests-outside">{props.requests}</div>
+      </>
     );
   }
   return (

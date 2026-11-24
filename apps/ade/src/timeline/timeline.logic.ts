@@ -1,3 +1,4 @@
+import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
 import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2TurnItem } from "@t3tools/contracts";
 
 /** Line and file counts the Spanish way, whatever the browser's language. */
@@ -60,12 +61,17 @@ export interface PlanStepChip {
   readonly steps: ReadonlyArray<{ readonly id: string; readonly status: string }>;
 }
 
-/** Where the agent is in its latest plan: the running step, else the first not done. */
+/**
+ * Where the agent is in the latest run's plan: the running step, else the first not done.
+ * A plan from an earlier run says nothing about this one.
+ */
 export function planStepChip(
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  turnItems: ReadonlyArray<ThreadStructureTurnItem>,
+  latestRunId: string | null,
 ): PlanStepChip | null {
   const plan = turnItems.findLast((item) => item.type === "todo_list");
   if (plan?.type !== "todo_list" || plan.steps.length === 0) return null;
+  if (latestRunId === null || plan.runId !== latestRunId) return null;
   const { steps } = plan;
   const running = steps.findIndex((step) => step.status === "running");
   const index = running !== -1 ? running : steps.findIndex((step) => step.status !== "completed");

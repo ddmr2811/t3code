@@ -370,9 +370,15 @@ body {
   overflow-y: auto;
 }
 
-/* Long content scrolls the sidebar; nothing in it shrinks to make room. */
+/* Only the thread tree gives way to long content: Máquinas and the footer stay in view. */
 .ade-sidebar > * {
   flex-shrink: 0;
+}
+
+.ade-sidebar > .ade-tree {
+  flex-shrink: 1;
+  min-height: 160px;
+  overflow-y: auto;
 }
 
 .ade-sr-only {
@@ -595,6 +601,8 @@ body {
   z-index: 1;
   display: flex;
   flex-direction: column;
+  /* The title's one line would otherwise set the view's width on a phone. */
+  min-width: 0;
   min-height: 0;
   height: 100%;
   max-width: none;
@@ -1397,8 +1405,19 @@ body {
 }
 
 /* The thread's last row; gone, with its gap, while nothing waits. */
-.ade-turn-requests:has(> .ade-requests:empty) {
+.ade-turn-requests:has(> .ade-requests:empty),
+.ade-requests-outside:has(> .ade-requests:empty) {
   display: none;
+}
+
+/* Above the composer while the timeline is not there to hold them. */
+.ade-requests-outside {
+  display: grid;
+  grid-template-columns: minmax(0, 696px);
+  justify-content: center;
+  max-height: 45vh;
+  padding: 12px 32px 0;
+  overflow-y: auto;
 }
 
 .ade-request-child {
@@ -3943,6 +3962,7 @@ body {
     padding: 16px 16px 32px;
   }
 
+  .ade-requests-outside,
   .ade-composer {
     padding-right: 16px;
     padding-left: 16px;
@@ -3970,11 +3990,35 @@ body {
   min-width: 0;
 }
 
-.ade-thread-view-title h1 {
+/* Mark, project, title and state stay on one line; the title gives way with an ellipsis. */
+.ade-thread-view-name {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ade-thread-view-name h1 {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ade-thread-view-project {
+  flex: 0 1 auto;
+  max-width: 30%;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-thread-view-project::after {
+  content: " /";
 }
 
 .ade-thread-view-mark {
@@ -4083,6 +4127,12 @@ body {
   border: 1px solid var(--ade-border);
   border-radius: var(--ade-radius-lg);
   background: var(--ade-surface);
+}
+
+.ade-tree-decision {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0 4px;
 }
 
 .ade-tree-project .ade-request {

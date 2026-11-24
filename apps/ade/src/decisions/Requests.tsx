@@ -20,7 +20,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, type AtomRegistry } from "effect/reactivity";
-import { useContext, useState } from "react";
+import { useContext } from "react";
 
 import { draftAtom, runCommand } from "../composer/Composer.tsx";
 import {
@@ -58,28 +58,60 @@ const NOT_ANSWERABLE = "El proceso del agente ya no está: para o reinicia el hi
 // Shared by the thread and the decisions panel, and kept for the session: what is typed for a
 // question survives moving between them, and outlives the question if it is answered elsewhere.
 const answerDraftsAtom = Atom.make<AnswerDrafts>({}).pipe(Atom.keepAlive);
-// What this ADE is sending for each request, read by every place the request shows (the thread,
-// the sidebar and the decisions panel): one click anywhere disables the others. Kept after the
-// server accepts, until the request leaves; and a question in here was not "answered elsewhere".
+// What this ADE is sending for each request, and why the last try failed, read by every place
+// the request shows (the thread, the sidebar and the decisions panel): one click anywhere disables
+// the others, and an error shows in all of them. A question in here was not "answered elsewhere".
 const sendingAtom = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(Atom.keepAlive);
+const sendErrorsAtom = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(Atom.keepAlive);
 
-/** Marks the request as being sent here; false when some place already sends it. */
-function claimSending(
+const without = (map: ReadonlyMap<string, string>, key: string) => {
+  const next = new Map(map);
+  next.delete(key);
+  return next;
+};
+
+/**
+ * Sends an answer once, whichever place it comes from. On success the request stays marked as
+ * sent until the server drops it; `onSent` runs first, so a draft is gone before the mark is.
+ */
+async function sendOnce(
   registry: AtomRegistry.AtomRegistry,
-  requestKey: string,
+  threadRef: ScopedThreadRef,
+  requestId: string,
   what: string,
-): boolean {
-  if (registry.get(sendingAtom).has(requestKey)) return false;
+  send: () => Promise<string | null>,
+  onSent?: () => void,
+) {
+  const requestKey = requestKeyOf(threadRef, requestId);
+  if (registry.get(sendingAtom).has(requestKey)) return;
   registry.update(sendingAtom, (current) => new Map(current).set(requestKey, what));
-  return true;
-}
-
-function releaseSending(registry: AtomRegistry.AtomRegistry, requestKey: string) {
-  registry.update(sendingAtom, (current) => {
-    const next = new Map(current);
-    next.delete(requestKey);
-    return next;
-  });
+  registry.update(sendErrorsAtom, (current) => without(current, requestKey));
+  const failure = await send();
+  if (failure !== null) {
+    registry.update(sendingAtom, (current) => without(current, requestKey));
+    registry.update(sendErrorsAtom, (current) => new Map(current).set(requestKey, failure));
+    return;
+  }
+  onSent?.();
+  // Watches the request until the server drops it; the callback can run before subscribe returns.
+  let resolved = false;
+  let unsubscribe: (() => void) | undefined;
+  unsubscribe = registry.subscribe(
+    environmentThreadDetails.pendingRequestsAtom(threadRef),
+    (requests) => {
+      const pending =
+        requests !== null &&
+        [...requests.approvals, ...requests.userInputs].some(
+          (request) => request.requestId === requestId,
+        );
+      if (pending || resolved) return;
+      resolved = true;
+      registry.update(sendingAtom, (current) => without(current, requestKey));
+      unsubscribe?.();
+    },
+    { immediate: true },
+  );
+  if (resolved) unsubscribe();
 }
 
 const requestKeyOf = (threadRef: ScopedThreadRef, requestId: string) =>
@@ -98,7 +130,7 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
   const requestKey = requestKeyOf(threadRef, approval.requestId);
   // The decision on its way, or already accepted by the server: the card leaves with the request.
   const sent = useAtomValue(sendingAtom, (sending) => sending.get(requestKey) ?? null);
-  const [error, setError] = useState<string | null>(null);
+  const error = useAtomValue(sendErrorsAtom, (errors) => errors.get(requestKey) ?? null);
   const choices = approvalChoices(approval.options);
   // As JSON so streaming that changes nothing here re-renders nothing.
   const shownJson = useAtomValue(environmentThreadDetails.stateAtom(threadRef), (state) => {
@@ -112,22 +144,18 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
     files: ReturnType<typeof approvalFiles>;
     coversTurn: boolean;
   };
-  const respond = async (decision: ProviderApprovalDecision) => {
-    if (!claimSending(registry, requestKey, decision)) return;
-    setError(null);
-    const failure = await runCommand(
-      registry,
-      threadEnvironment.respondToApproval,
-      {
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, requestId: approval.requestId, decision },
-      },
-      "No se pudo responder a la aprobación",
+  const respond = (decision: ProviderApprovalDecision) =>
+    sendOnce(registry, threadRef, approval.requestId, decision, () =>
+      runCommand(
+        registry,
+        threadEnvironment.respondToApproval,
+        {
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, requestId: approval.requestId, decision },
+        },
+        "No se pudo responder a la aprobación",
+      ),
     );
-    if (failure === null) return;
-    releaseSending(registry, requestKey);
-    setError(failure);
-  };
   const button = (choice: ApprovalChoice) => (
     <button
       key={choice.decision}
@@ -219,23 +247,16 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
   const answers = seedUserInputDraftAnswers(prompt.questions, edits ?? {});
   const resolved = buildPendingUserInputAnswers(prompt.questions, answers);
   const sent = useAtomValue(sendingAtom, (sending) => sending.get(requestKey) ?? null);
-  const [error, setError] = useState<string | null>(null);
+  const error = useAtomValue(sendErrorsAtom, (errors) => errors.get(requestKey) ?? null);
   const edit = (questionId: string, next: (typeof answers)[string]) =>
     registry.update(answerDraftsAtom, (drafts) => ({
       ...drafts,
       [requestKey]: { ...drafts[requestKey], [questionId]: next },
     }));
-  const run = async (kind: "answer" | "dismiss", send: () => Promise<string | null>) => {
-    if (!claimSending(registry, requestKey, kind)) return;
-    setError(null);
-    const failure = await send();
-    if (failure === null) {
-      registry.update(answerDraftsAtom, ({ [requestKey]: _sent, ...rest }) => rest);
-    } else {
-      releaseSending(registry, requestKey);
-      setError(failure);
-    }
-  };
+  const run = (kind: "answer" | "dismiss", send: () => Promise<string | null>) =>
+    sendOnce(registry, threadRef, prompt.requestId, kind, send, () =>
+      registry.update(answerDraftsAtom, ({ [requestKey]: _sent, ...rest }) => rest),
+    );
   const target = { environmentId: threadRef.environmentId };
   const request = { threadId: threadRef.threadId, requestId: prompt.requestId };
   return (

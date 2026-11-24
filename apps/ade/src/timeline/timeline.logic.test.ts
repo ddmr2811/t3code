@@ -37,18 +37,23 @@ describe("planStepChip", () => {
   const plan = (...statuses: string[]) =>
     ({
       type: "todo_list",
+      runId: "run-b",
       steps: statuses.map((status, i) => ({ id: `s${i}`, text: `Paso ${i}`, status })),
     }) as never;
 
   it("reads the latest plan, and the running step over an earlier one left pending", () => {
-    const chip = planStepChip([
-      plan("running", "pending"),
-      plan("completed", "pending", "running", "pending"),
-    ]);
+    const chip = planStepChip(
+      [plan("running", "pending"), plan("completed", "pending", "running", "pending")],
+      "run-b",
+    );
     expect(chip).toMatchObject({ number: 3, total: 4, text: "Paso 2" });
   });
 
   it("without a running step, points at the first step not done", () => {
-    expect(planStepChip([plan("completed", "pending", "pending")])?.number).toBe(2);
+    expect(planStepChip([plan("completed", "pending", "pending")], "run-b")?.number).toBe(2);
+  });
+
+  it("shows nothing for a plan left by an earlier run", () => {
+    expect(planStepChip([plan("completed", "running")], "run-c")).toBeNull();
   });
 });
