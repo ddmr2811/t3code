@@ -210,5 +210,9 @@ describe("tray.logic", () => {
     expect(isSnoozed(snooze, null, 1_000)).toBe(true);
     expect(isSnoozed(snooze, ["approval-1", "question-2"], 1_000)).toBe(false);
     expect(isSnoozed(snooze, ["question-2"], 1_000)).toBe(false);
+    // Answered elsewhere, then waiting on something with no request (a plan): it ends.
+    expect(isSnoozed(snooze, [], 1_000)).toBe(false);
+    // Nothing recorded at snooze time never hides anything.
+    expect(isSnoozed({ until: 2_000, requestIds: [] }, [], 1_000)).toBe(false);
   });
 });

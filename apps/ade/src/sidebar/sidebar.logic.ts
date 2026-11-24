@@ -169,6 +169,8 @@ export function railProjects<T extends GroupInput & StateInput>(
   machineIds: ReadonlyArray<EnvironmentId>,
   operableIds: ReadonlySet<EnvironmentId>,
   waitingRowKeys: ReadonlySet<string>,
+  /** Waiting threads «Luego» set aside: no mark on the rail for them. */
+  snoozed: (thread: T) => boolean = () => false,
 ): RailProject<T>[] {
   return groupThreads(threads, machineIds).flatMap((machine) => {
     const canAnswer = operableIds.has(machine.environmentId);
@@ -176,7 +178,8 @@ export function railProjects<T extends GroupInput & StateInput>(
       const pending = canAnswer
         ? project.threads.find(
             (thread) =>
-              threadState(thread) === "needs-you" || waitingRowKeys.has(lineageKey(thread)),
+              (threadState(thread) === "needs-you" && !snoozed(thread)) ||
+              waitingRowKeys.has(lineageKey(thread)),
           )
         : undefined;
       const key = `${machine.environmentId}:${project.projectId}`;

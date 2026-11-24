@@ -122,13 +122,17 @@ function SearchCommands(props: {
             <kbd>{terminalKeys}</kbd>,
           )}
           {item("actividad", <BroadcastIcon size={16} aria-hidden />, "Actividad en vivo")}
-          {decisions.count === 0
+          {decisions.count === 0 && decisions.snoozedCount === 0
             ? null
             : item(
                 "decisiones",
                 <BellSimpleRingingIcon size={16} aria-hidden />,
                 "Decisiones",
-                <span className="ade-command-aside">{decisions.count} te necesitan</span>,
+                <span className="ade-command-aside">
+                  {decisions.count > 0
+                    ? `${decisions.count} te necesitan`
+                    : `${decisions.snoozedCount} pospuestas`}
+                </span>,
               )}
           {item("maquinas", <HardDrivesIcon size={16} aria-hidden />, "Máquinas y emparejamiento")}
           {item(

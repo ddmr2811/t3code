@@ -3591,6 +3591,11 @@ body {
     text-align: center;
   }
 
+  .ade-rail-count[data-quiet] {
+    background: var(--ade-divider);
+    color: var(--ade-text);
+  }
+
   .ade-rail-button[aria-current="page"]::before,
   .ade-rail-project[aria-current="true"]::before {
     content: "";

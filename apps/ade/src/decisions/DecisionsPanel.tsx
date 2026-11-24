@@ -1,4 +1,6 @@
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import { Atom } from "effect/reactivity";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { BellIcon } from "@phosphor-icons/react/dist/csr/Bell";
 import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
@@ -10,6 +12,7 @@ import { useShortcut } from "@ui-sdk/react/shortcuts";
 import { type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
+import { environmentThreadDetails } from "../state.ts";
 import { FloatingPanel } from "../panels/FloatingPanel.tsx";
 import { ProjectTitle, selectedThreadKeyAtom, useDecisionsPanel } from "../sidebar/Sidebar.tsx";
 import {
@@ -26,6 +29,7 @@ import {
   countPendingByKind,
   filterPendingItems,
   nextSnoozeReturn,
+  waitingIds,
   type PendingTrayFilterKind,
   type PendingTrayItem,
   type PendingTrayKind,
@@ -113,7 +117,7 @@ function DecisionCard(props: {
       </div>
       <h3>{thread.title}</h3>
       {props.later === undefined ? (
-        <RequestCards threadRef={threadRef} subscribe={hasRequest} />
+        <RequestCards threadRef={threadRef} subscribe={hasRequest} inCard />
       ) : (
         <FirstRequest threadRef={threadRef} subscribe={hasRequest} />
       )}
@@ -141,13 +145,30 @@ function DecisionCard(props: {
 }
 
 /** «Solo tú decides»: one decision at a time, answered with Y, N or S while focus is here. */
+const NO_REQUESTS = Atom.make<PendingThreadRequests | null>(null);
+
 function OneAtATime(props: {
   waiting: ReadonlyArray<TrayEntry>;
-  onLater: (key: string) => void;
+  onLater: (key: string, ids: ReadonlyArray<string>) => void;
   onOpenBackLayer: (threadKey: string) => void;
 }) {
   const ref = useRef<HTMLElement>(null);
   const current = props.waiting[0];
+  const thread = current?.item?.thread;
+  const requests = useAtomValue(
+    thread !== undefined && (thread.hasPendingApprovals || thread.hasPendingUserInput)
+      ? environmentThreadDetails.pendingRequestsAtom(
+          scopeThreadRef(thread.environmentId, thread.id),
+        )
+      : NO_REQUESTS,
+  );
+  // «Luego» waits until it knows what it sets aside: a handoff is itself, a thread its requests.
+  const ids =
+    current === undefined
+      ? null
+      : thread === undefined
+        ? [current.key]
+        : waitingIds(thread, requests);
   // Y, N and S need focus here; take it on open only when nothing else holds it.
   useEffect(() => {
     const active = document.activeElement;
@@ -160,16 +181,16 @@ function OneAtATime(props: {
     }
   }, []);
   const later = () => {
-    if (current === undefined) return;
+    if (current === undefined || ids === null) return;
     ref.current?.focus();
-    props.onLater(current.key);
+    props.onLater(current.key, ids);
   };
   useShortcut("s", later, {
-    when: () => current !== undefined && trayHasFocus(),
+    when: () => ids !== null && trayHasFocus(),
     description: "Luego",
   });
   const laterButton = (
-    <button type="button" className="ade-button-quiet" onClick={later}>
+    <button type="button" className="ade-button-quiet" disabled={ids === null} onClick={later}>
       Luego <kbd>S</kbd>
     </button>
   );
@@ -252,8 +273,9 @@ export function DecisionsPanel() {
   useEffect(() => {
     const tick = () => tickSnoozeClock(registry);
     const due = nextSnoozeReturn(snoozes, clock);
+    if (due === null) return;
     // @effect-diagnostics-next-line globalTimers:off -- a React effect, outside any Effect program.
-    const timer = due === null ? undefined : setTimeout(tick, due - clock);
+    const timer = setTimeout(tick, due - clock);
     document.addEventListener("visibilitychange", tick);
     return () => {
       clearTimeout(timer);
@@ -382,11 +404,11 @@ export function DecisionsPanel() {
       {effectiveMode === "una" ? (
         <OneAtATime
           waiting={waiting}
-          onLater={(key) => {
+          onLater={(key, ids) => {
             setMode("una");
             // Snoozing the last one must not close the panel under the user's hands.
-            setOpen(true);
-            snoozeDecision(registry, key, [...waitingKeys, ...snoozedKeys]);
+            if (waitingKeys.length === 1) setOpen(true);
+            snoozeDecision(registry, key, ids, [...waitingKeys, ...snoozedKeys]);
           }}
           onOpenBackLayer={openBackLayer}
         />

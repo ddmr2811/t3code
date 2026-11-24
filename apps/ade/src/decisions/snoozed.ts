@@ -1,8 +1,6 @@
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
-import { environmentThreadDetails } from "../state.ts";
 import {
   pruneSnoozes,
   readSnoozes,
@@ -32,15 +30,9 @@ function save(registry: AtomRegistry.AtomRegistry, next: Snoozes) {
 export function snoozeDecision(
   registry: AtomRegistry.AtomRegistry,
   key: string,
+  requestIds: ReadonlyArray<string>,
   waitingKeys: ReadonlyArray<string>,
 ) {
-  const ref = key.startsWith("handoff:") ? null : parseScopedThreadKey(key);
-  const requests =
-    ref === null ? null : registry.get(environmentThreadDetails.pendingRequestsAtom(ref));
-  const requestIds =
-    requests === null
-      ? []
-      : [...requests.approvals, ...requests.userInputs].map((request) => request.requestId);
   const kept = pruneSnoozes(registry.get(snoozesAtom), waitingKeys, nowMillis());
   save(registry, {
     ...kept,

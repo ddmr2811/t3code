@@ -2,6 +2,7 @@ import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
@@ -30,7 +31,12 @@ import {
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer, runCommand } from "../composer/Composer.tsx";
 import { RequestCards, ThreadRequests } from "../decisions/Requests.tsx";
-import { isSnoozed, isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
+import {
+  isSnoozed,
+  isTrayOpenForViewport,
+  reconcileTrayChoice,
+  waitingIds,
+} from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import {
   availableMachineProviderCatalog,
@@ -102,10 +108,8 @@ const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
 const threadKeyOf = (thread: EnvironmentThreadShell) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
 
-const NO_REQUEST_IDS: ReadonlyArray<string> = [];
-
 /** What «Luego» hides right now: not due, and its thread asks nothing new since. */
-const snoozedKeysAtom = (() => {
+export const snoozedKeysAtom = (() => {
   let previous: ReadonlyArray<string> = [];
   return Atom.make((get) => {
     const now = get(snoozeClockAtom);
@@ -113,7 +117,7 @@ const snoozedKeysAtom = (() => {
       get(needsYouThreadsAtom).map((thread) => [threadKeyOf(thread), thread]),
     );
     const next = Object.entries(get(snoozesAtom)).flatMap(([key, snooze]) => {
-      if (key.startsWith("handoff:")) return isSnoozed(snooze, NO_REQUEST_IDS, now) ? [key] : [];
+      if (key.startsWith("handoff:")) return isSnoozed(snooze, [key], now) ? [key] : [];
       const thread = waiting.get(key);
       if (thread === undefined) return [];
       const requests =
@@ -123,12 +127,8 @@ const snoozedKeysAtom = (() => {
                 scopeThreadRef(thread.environmentId, thread.id),
               ),
             )
-          : { approvals: [], userInputs: [] };
-      const ids =
-        requests === null
-          ? null
-          : [...requests.approvals, ...requests.userInputs].map((request) => request.requestId);
-      return isSnoozed(snooze, ids, now) ? [key] : [];
+          : null;
+      return isSnoozed(snooze, waitingIds(thread, requests), now) ? [key] : [];
     });
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;
@@ -254,20 +254,29 @@ export function NeedsYouBlock(props: { compact?: boolean }) {
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const words = count === 1 ? "te necesita" : "te necesitan";
   if (props.compact) {
-    if (count === 0) return null;
-    const label = `${count} ${words} · ${open ? "ocultar decisiones" : "ver decisiones"}`;
+    if (count === 0 && snoozedCount === 0) return null;
+    // Only snoozed ones left: a quiet way back to them, never the accent.
+    const snoozedOnly = count === 0;
+    const what = snoozedOnly
+      ? `${snoozedCount} ${snoozedCount === 1 ? "pospuesta" : "pospuestas"}`
+      : `${count} ${words}`;
+    const label = `${what} · ${open ? "ocultar decisiones" : "ver decisiones"}`;
     return (
       <Tooltip type="label">
         <TooltipTrigger
           type="button"
-          className="ade-rail-button ade-rail-needs-you"
+          className={snoozedOnly ? "ade-rail-button" : "ade-rail-button ade-rail-needs-you"}
           aria-expanded={open}
           aria-controls="ade-decisions"
           onClick={() => setOpen(!open)}
         >
-          <BellSimpleRingingIcon size={19} weight="fill" aria-hidden />
-          <span className="ade-rail-count" aria-hidden>
-            {count}
+          {snoozedOnly ? (
+            <ClockIcon size={19} aria-hidden />
+          ) : (
+            <BellSimpleRingingIcon size={19} weight="fill" aria-hidden />
+          )}
+          <span className="ade-rail-count" data-quiet={snoozedOnly ? "" : undefined} aria-hidden>
+            {snoozedOnly ? snoozedCount : count}
           </span>
         </TooltipTrigger>
         <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
@@ -389,12 +398,14 @@ export function ProjectRail() {
   const operable = useAtomValue(operableEnvironmentIdsAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
   const needsYou = useAtomValue(waitingThreadsAtom);
+  const snoozed = useAtomValue(snoozedKeysAtom);
   const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const projects = railProjects(
     listed,
     [...catalog.entries.keys()],
     operable,
     new Set(decisionsByRow(needsYou, allShells, listed).keys()),
+    (thread) => snoozed.includes(threadKeyOf(thread)),
   );
   if (projects.length === 0) return null;
   const selectedRef = selected === null ? null : parseScopedThreadKey(selected);

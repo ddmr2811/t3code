@@ -230,18 +230,34 @@ export function snoozeUntilTomorrow(now: DateTime.DateTime): number {
 }
 
 /**
- * Hidden until its time, and only while the thread asks nothing it did not ask when snoozed.
- * `pendingRequestIds` is null while the thread's requests are still loading.
+ * Hidden until its time, and only while the thread still waits on just what it waited on when
+ * snoozed: something new, or nothing of that left, ends it. `pendingIds` is null while loading.
  */
 export function isSnoozed(
   snooze: Snooze | undefined,
-  pendingRequestIds: ReadonlyArray<string> | null,
+  pendingIds: ReadonlyArray<string> | null,
   now: number,
 ): boolean {
-  if (snooze === undefined || snooze.until <= now) return false;
-  return (
-    pendingRequestIds === null || pendingRequestIds.every((id) => snooze.requestIds.includes(id))
-  );
+  if (snooze === undefined || snooze.until <= now || snooze.requestIds.length === 0) return false;
+  if (pendingIds === null) return true;
+  return pendingIds.length > 0 && pendingIds.every((id) => snooze.requestIds.includes(id));
+}
+
+/**
+ * What a waiting thread waits on: its request ids, or for a plan or a guest message, which carry
+ * none, the moment it last changed. Null while its requests load.
+ */
+export function waitingIds(
+  thread: Pick<PendingThreadInput, "hasPendingApprovals" | "hasPendingUserInput" | "updatedAt">,
+  requests: {
+    readonly approvals: ReadonlyArray<{ readonly requestId: string }>;
+    readonly userInputs: ReadonlyArray<{ readonly requestId: string }>;
+  } | null,
+): ReadonlyArray<string> | null {
+  if (!thread.hasPendingApprovals && !thread.hasPendingUserInput)
+    return [`sin-peticion@${thread.updatedAt}`];
+  if (requests === null) return null;
+  return [...requests.approvals, ...requests.userInputs].map((request) => request.requestId);
 }
 
 /** Drops what is due and what no longer waits, so a later wait on the same thread starts fresh. */
