@@ -1,16 +1,18 @@
 # Product analytics
 
-The server owns analytics delivery, opt-out, and identity for every connected client.
+This fork ships analytics off: nothing is recorded, sent, or identified until
+`T3CODE_TELEMETRY_ENABLED=true`, and provider login files are never read for it.
+
+The server owns analytics delivery, opt-in, and identity for every connected client.
 Clients do not load the PostHog browser SDK. Client-use events require an
 authenticated connection, so visiting the hosted app without connecting does not
 count as product use.
 
 ## Installs and owners
 
-`distinct_id` keeps the rule every build has used: the hashed Codex workspace,
-else the Claude machine id, else the install's anonymous id. It can change when
-someone logs in, and a Codex Team shares one, but keeping it means PostHog charts
-and history never break. Do not change it; add a field instead.
+Upstream derives `distinct_id` from the hashed Codex workspace, else the Claude
+machine id, else the install's anonymous id. This fork does not read those
+files, so `distinct_id` is always the install's hashed anonymous id.
 
 Every event also carries `installId` when the server can save its state: the hash
 of a random id in the state directory, which never changes for the install. If
@@ -20,12 +22,9 @@ with it. Who an install belongs to is a separate fact, sent as
 a rule can change and apply to all history.
 
 [Owner sources](../../apps/server/src/telemetry/Identify.ts), strongest first:
-T3 Connect, then the OpenAI and Claude person ids, then the client device. The
-server reports what it can read itself: the linked Connect account and provider
-logins. A connecting client reports its signed-in Connect account and its device,
-which links every environment opened from one phone, browser, or desktop. Use the
-OpenAI `user_id` claim, not the Codex `account_id` (the ChatGPT workspace, which a
-whole Team shares) or the token `sub` (one per login method). Two Connect accounts are never the same person, whatever
+T3 Connect, then the client device. The server reports the linked Connect
+account; this fork reports no OpenAI or Claude ids. A connecting client reports its signed-in Connect account and its device,
+which links every environment opened from one phone, browser, or desktop. Two Connect accounts are never the same person, whatever
 weaker ids they share.
 
 Every id is SHA-256 hashed with [one helper](../../packages/shared/src/telemetryId.ts)
@@ -149,6 +148,6 @@ send prompts, authentication material, raw provider payloads, user-assigned devi
 names, or conversation identifiers. Client metadata is best effort; invalid values
 must not reject a connection. PostHog person profiles remain disabled.
 
-Dev-runner servers and the CI archive smoke test turn telemetry off, which also
+Dev-runner servers and the CI archive smoke test set telemetry off explicitly, which also
 stops relay tracing, because each would count as a new install. Set
 `T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.

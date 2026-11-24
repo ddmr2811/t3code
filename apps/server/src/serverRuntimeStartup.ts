@@ -177,7 +177,10 @@ const recordStartupHeartbeat = Effect.gen(function* () {
     threadCount,
     projectCount,
   });
-  yield* analytics.recordOwners(yield* getServerOwners, "server");
+  // Fork: the linked account is read only once the user has opted in to analytics.
+  if (yield* analytics.enabled) {
+    yield* analytics.recordOwners(yield* getServerOwners, "server");
+  }
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
