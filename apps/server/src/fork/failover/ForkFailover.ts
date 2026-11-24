@@ -26,7 +26,6 @@ import {
   type ModelSelection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
-  type OrchestrationV2TurnItem,
   type ProjectId,
   type ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
@@ -34,13 +33,16 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -52,13 +54,19 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { buildFailoverResumePrompt, isUsageLimitFailure, selectFailoverTarget } from "./policy.ts";
+import {
+  type AvailableProviderCatalog,
+  buildFailoverResumePrompt,
+  isUsageLimitFailure,
+  selectFailoverTarget,
+} from "./policy.ts";
 import {
   decodeStoredFailoverState,
   EMPTY_FAILOVER_STATE,
   serializeFailoverState,
   type StoredFailoverState,
   toPublicFailoverState,
+  validateFailoverConfigBytes,
   withAppendedEvent,
   withUpdatedConfig,
 } from "./store.ts";
@@ -92,10 +100,14 @@ const WRITE_TEMP_FLAGS =
   (NodeFS.constants.O_NOFOLLOW ?? 0);
 
 const MAX_HANDLED_RUN_KEYS = 2048;
-const ACTIVE_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
+const MAX_MEMORY_EVENTS_PER_THREAD = 32;
+const MAX_MEMORY_THREADS = 512;
+
+const MANUAL_SWITCH_BLOCKED_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "preparing",
   "starting",
   "running",
+  "waiting",
 ]);
 const BUSY_OR_QUEUED_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "preparing",
@@ -104,6 +116,12 @@ const BUSY_OR_QUEUED_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "waiting",
   "queued",
 ]);
+
+const streamRetryBackoff = Schedule.exponential("5 seconds").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.minutes(10))),
+  ),
+);
 
 const invalidInput = (message: string) =>
   new ForkFailoverError({ reason: "invalidInput", message });
@@ -252,6 +270,7 @@ export const make = Effect.gen(function* () {
   const storeLock = yield* Semaphore.make(1);
   const threadLocks = yield* KeyedLock.make<ThreadId>();
   const handledRuns = new Set<string>();
+  const memoryEventsByThread = new Map<ThreadId, ReadonlyArray<ForkFailoverEvent>>();
 
   const resolvedStateDir = path.resolve(config.stateDir);
   const forkDir = path.resolve(resolvedStateDir, "fork");
@@ -266,6 +285,41 @@ export const make = Effect.gen(function* () {
       const oldest = handledRuns.values().next().value;
       if (oldest !== undefined) handledRuns.delete(oldest);
     }
+  };
+
+  const recordMemoryEvent = (event: ForkFailoverEvent) => {
+    const existing = memoryEventsByThread.get(event.threadId) ?? [];
+    const next = [event, ...existing.filter((item) => item.id !== event.id)].slice(
+      0,
+      MAX_MEMORY_EVENTS_PER_THREAD,
+    );
+    memoryEventsByThread.delete(event.threadId);
+    memoryEventsByThread.set(event.threadId, next);
+    if (memoryEventsByThread.size > MAX_MEMORY_THREADS) {
+      const oldest = memoryEventsByThread.keys().next().value;
+      if (oldest !== undefined) memoryEventsByThread.delete(oldest);
+    }
+  };
+
+  const mergedRecentEventsForThread = (
+    threadId: ThreadId,
+    persisted: ReadonlyArray<ForkFailoverEvent>,
+  ): ReadonlyArray<ForkFailoverEvent> => {
+    const memory = memoryEventsByThread.get(threadId);
+    if (memory === undefined || memory.length === 0) return persisted;
+    const seen = new Set<string>();
+    const combined: ForkFailoverEvent[] = [];
+    for (const event of memory) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      combined.push(event);
+    }
+    for (const event of persisted) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      combined.push(event);
+    }
+    return combined;
   };
 
   const ensureSafeForkDir = Effect.fn("ForkFailover.ensureSafeForkDir")(function* (options: {
@@ -469,9 +523,9 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const resolveAvailableInstances = Effect.fn("ForkFailover.resolveAvailableInstances")(function* (
+  const resolveAvailableProviders = Effect.fn("ForkFailover.resolveAvailableProviders")(function* (
     projectId: ProjectId,
-  ) {
+  ): Effect.fn.Return<AvailableProviderCatalog, ForkFailoverError> {
     const [liveInstances, providers, settings] = yield* Effect.all([
       instanceRegistry.listInstances,
       providerRegistry.getProviders,
@@ -491,17 +545,27 @@ export const make = Effect.gen(function* () {
       ),
     ]);
     const liveIds = new Set(liveInstances.map((instance) => instance.instanceId));
-    const available = new Set<ProviderInstanceId>();
+    const available = new Map<ProviderInstanceId, ReadonlySet<string> | null>();
     for (const provider of providers) {
       if (
         liveIds.has(provider.instanceId) &&
         provider.enabled &&
         provider.installed &&
         provider.status !== "disabled" &&
+        provider.status !== "error" &&
         provider.availability !== "unavailable" &&
+        provider.auth.status !== "unauthenticated" &&
         resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId)
       ) {
-        available.add(provider.instanceId);
+        const knownModels =
+          provider.models.length === 0
+            ? null
+            : new Set(
+                provider.models
+                  .filter((model) => model.isLegacy !== true)
+                  .map((model) => model.slug),
+              );
+        available.set(provider.instanceId, knownModels);
       }
     }
     return available;
@@ -528,7 +592,7 @@ export const make = Effect.gen(function* () {
     readonly resume: boolean;
   }) {
     const state = yield* storeLock.withPermits(1)(readState());
-    const availableInstances = yield* resolveAvailableInstances(input.projectId);
+    const availableProviders = yield* resolveAvailableProviders(input.projectId);
     const nowMs = yield* Clock.currentTimeMillis;
     const nowIso = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
     const reason = sanitizeSingleLine(
@@ -536,6 +600,7 @@ export const make = Effect.gen(function* () {
       FORK_FAILOVER_REASON_MAX_LENGTH,
     );
     const resetAt = input.failure?.resetAt ?? null;
+    const recentEvents = mergedRecentEventsForThread(input.threadId, state.recentEvents);
 
     const decision = selectFailoverTarget({
       config: state.config,
@@ -543,8 +608,8 @@ export const make = Effect.gen(function* () {
       ...(input.failure === undefined ? {} : { failure: input.failure }),
       threadId: input.threadId,
       currentSelection: input.fromSelection,
-      availableInstances,
-      recentEvents: state.recentEvents,
+      availableProviders,
+      recentEvents,
       nowMs,
       ...(input.explicitTarget === undefined ? {} : { explicitTarget: input.explicitTarget }),
     });
@@ -565,6 +630,7 @@ export const make = Effect.gen(function* () {
           detail: sanitizeSingleLine(decision.detail, FORK_FAILOVER_DETAIL_MAX_LENGTH),
           occurredAt: nowIso,
         };
+        recordMemoryEvent(skippedEvent);
         yield* appendEventLocked(skippedEvent).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("fork failover failed to record skipped event", {
@@ -589,17 +655,22 @@ export const make = Effect.gen(function* () {
         ? `${input.threadId}:${input.failedRunId}`
         : `${input.threadId}:${SecureRandom.uuidV4Unsafe()}`;
 
-    const dispatchOutcome = yield* Effect.gen(function* () {
-      yield* threads.dispatch({
+    const setSelectionOutcome = yield* threads
+      .dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make(`fork-failover-set:${commandKey}`),
         threadId: input.threadId,
         modelSelection: nextSelection,
-      });
+      })
+      .pipe(Effect.result);
 
-      if (input.resume) {
-        const resumeId = `fork-failover-resume:${commandKey}`;
-        yield* threads.dispatch({
+    let dispatchFailure: unknown | null =
+      setSelectionOutcome._tag === "Failure" ? setSelectionOutcome.failure : null;
+
+    if (dispatchFailure === null && input.resume) {
+      const resumeId = `fork-failover-resume:${commandKey}`;
+      const resumeOutcome = yield* threads
+        .dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(resumeId),
           messageId: MessageId.make(resumeId),
@@ -610,17 +681,39 @@ export const make = Effect.gen(function* () {
           dispatchMode: { type: "start_immediately" },
           createdBy: "agent",
           creationSource: "server",
-        });
-      }
-    }).pipe(Effect.result);
+        })
+        .pipe(Effect.result);
 
-    if (dispatchOutcome._tag === "Failure") {
+      if (resumeOutcome._tag === "Failure") {
+        dispatchFailure = resumeOutcome.failure;
+        // Compensate so a failed resume never leaves the thread mutated onto the backup model.
+        yield* threads
+          .dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`fork-failover-rollback:${commandKey}`),
+            threadId: input.threadId,
+            modelSelection: toModelSelection(input.fromSelection),
+          })
+          .pipe(
+            Effect.catchCause((rollbackCause) =>
+              Effect.logWarning("fork failover rollback after resume failure failed", {
+                threadId: input.threadId,
+                fromInstanceId: input.fromSelection.instanceId,
+                fromModel: input.fromSelection.model,
+                cause: rollbackCause,
+              }),
+            ),
+          );
+      }
+    }
+
+    if (dispatchFailure !== null) {
       yield* Effect.logWarning("fork failover command dispatch failed", {
         threadId: input.threadId,
         trigger: input.trigger,
         targetInstanceId: decision.target.instanceId,
         targetModel: decision.target.model,
-        cause: dispatchOutcome.failure,
+        cause: dispatchFailure,
       });
       const failedEvent: ForkFailoverEvent = {
         id: `failover:${SecureRandom.uuidV4Unsafe()}`,
@@ -633,6 +726,7 @@ export const make = Effect.gen(function* () {
         detail: "Could not switch the thread to the backup model.",
         occurredAt: nowIso,
       };
+      recordMemoryEvent(failedEvent);
       yield* appendEventLocked(failedEvent).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("fork failover failed to record failed event", {
@@ -667,7 +761,15 @@ export const make = Effect.gen(function* () {
       detail,
       occurredAt: nowIso,
     };
-    yield* appendEventLocked(switchedEvent);
+    recordMemoryEvent(switchedEvent);
+    yield* appendEventLocked(switchedEvent).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("fork failover failed to persist switched event", {
+          threadId: input.threadId,
+          cause,
+        }),
+      ),
+    );
 
     return {
       event: switchedEvent,
@@ -687,6 +789,9 @@ export const make = Effect.gen(function* () {
     const parsed = yield* decodeSetConfigInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid failover configuration.")),
     );
+    const sizeCheck = validateFailoverConfigBytes(parsed.config);
+    if (!sizeCheck.ok) return yield* sizeCheck.error;
+
     return yield* storeLock.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* readState();
@@ -720,17 +825,32 @@ export const make = Effect.gen(function* () {
                   }),
             ),
           );
-        const { thread, runs } = projection;
+        const { thread, runs, runtimeRequests } = projection;
         if (thread.archivedAt !== null || thread.deletedAt !== null) {
           return yield* new ForkFailoverError({
             reason: "notFound",
             message: "Thread is archived or deleted.",
           });
         }
-        if (runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
+        if (isProviderNativeSubagentThread(thread)) {
+          return yield* invalidInput("Provider-native subagent threads cannot be switched.");
+        }
+        if (runtimeRequests.some((request) => request.status === "pending")) {
           return yield* new ForkFailoverError({
             reason: "threadBusy",
-            message: "Cannot switch model while a turn is currently running.",
+            message: "Cannot switch model while the thread has pending approval or input requests.",
+          });
+        }
+        if (
+          runs.some(
+            (run) =>
+              MANUAL_SWITCH_BLOCKED_RUN_STATUSES.has(run.status) ||
+              (parsed.resume === true && run.status === "queued"),
+          )
+        ) {
+          return yield* new ForkFailoverError({
+            reason: "threadBusy",
+            message: "Cannot switch model while a turn is active or waiting.",
           });
         }
         const result = yield* executeFailover({
@@ -803,13 +923,17 @@ export const make = Effect.gen(function* () {
         if (latestRun?.id !== failedRun.id) return;
         if (runs.some((run) => BUSY_OR_QUEUED_RUN_STATUSES.has(run.status))) return;
 
-        const latestError = turnItems
-          .filter(
-            (item): item is Extract<OrchestrationV2TurnItem, { readonly type: "error" }> =>
-              item.type === "error" && item.runId === failedRun.id,
-          )
-          .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-        const failure = latestError?.failure ?? null;
+        // If the user already switched the thread's model manually after the failure, respect it.
+        if (
+          failedRun.modelSelection != null &&
+          (thread.modelSelection.instanceId !== failedRun.modelSelection.instanceId ||
+            thread.modelSelection.model !== failedRun.modelSelection.model)
+        ) {
+          rememberHandledRun(runKey);
+          return;
+        }
+
+        const failure = latestRootProviderFailure(failedRun, turnItems);
         if (!isUsageLimitFailure(failure)) return;
 
         rememberHandledRun(runKey);
@@ -835,19 +959,22 @@ export const make = Effect.gen(function* () {
   });
 
   yield* forkParked(
-    Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-      handleDomainEvent(event).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("fork failover domain event handler failed", {
-            threadId: event.threadId,
-            cause,
-          }),
+    orchestrator.streamDomainEvents.pipe(
+      Stream.mapEffect((event) =>
+        handleDomainEvent(event).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("fork failover domain event handler failed", {
+              threadId: event.threadId,
+              cause,
+            }),
+          ),
         ),
       ),
-    ).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("fork failover domain event stream failed", { cause }),
+      Stream.tapCause((cause) =>
+        Effect.logWarning("fork failover domain event stream failed; retrying", { cause }),
       ),
+      Stream.retry(streamRetryBackoff),
+      Stream.runDrain,
     ),
   );
 

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  type AvailableProviderCatalog,
   buildFailoverResumePrompt,
   isUsageLimitFailure,
   selectFailoverTarget,
@@ -18,6 +19,9 @@ const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
 const cursor = ProviderInstanceId.make("cursor");
 const threadA = ThreadId.make("thread-a");
+
+const allProvidersOpen = (ids: ReadonlyArray<ProviderInstanceId>): AvailableProviderCatalog =>
+  new Map(ids.map((id) => [id, null]));
 
 const baseConfig: ForkFailoverConfig = {
   ...DEFAULT_FORK_FAILOVER_CONFIG,
@@ -84,19 +88,39 @@ describe("failover policy", () => {
     );
   });
 
-  it("skips disabled or missing instances and selects the next eligible target in chain order", () => {
-    const decision = selectFailoverTarget({
+  it("skips disabled instances and models missing from a loaded catalog", () => {
+    const decisionDisabled = selectFailoverTarget({
       config: baseConfig,
       trigger: "auto_usage_limit",
       failure: { class: "usage_limit", code: "429" },
       threadId: threadA,
       currentSelection: { instanceId: codex, model: "gpt-5.4" },
-      // claude is disabled/missing; cursor is enabled.
-      availableInstances: new Set([codex, cursor]),
+      availableProviders: allProvidersOpen([codex, cursor]),
       recentEvents: [],
       nowMs,
     });
-    expect(decision).toEqual({
+    expect(decisionDisabled).toEqual({
+      decision: "switch",
+      target: { instanceId: cursor, model: "composer-2" },
+      chainId: "codex-exact",
+    });
+
+    // Claude is available, but its loaded catalog does not contain `claude-opus-4-6`.
+    const decisionMissingModel = selectFailoverTarget({
+      config: baseConfig,
+      trigger: "auto_usage_limit",
+      failure: { class: "usage_limit", code: "429" },
+      threadId: threadA,
+      currentSelection: { instanceId: codex, model: "gpt-5.4" },
+      availableProviders: new Map<ProviderInstanceId, ReadonlySet<string> | null>([
+        [codex, new Set(["gpt-5.4"])],
+        [claude, new Set(["claude-sonnet-4-6"])],
+        [cursor, new Set(["composer-2"])],
+      ]),
+      recentEvents: [],
+      nowMs,
+    });
+    expect(decisionMissingModel).toEqual({
       decision: "switch",
       target: { instanceId: cursor, model: "composer-2" },
       chainId: "codex-exact",
@@ -111,7 +135,7 @@ describe("failover policy", () => {
         failure: { class: "usage_limit", code: "429" },
         threadId: threadA,
         currentSelection: { instanceId: codex, model: "gpt-5.4" },
-        availableInstances: new Set([codex, claude, cursor]),
+        availableProviders: allProvidersOpen([codex, claude, cursor]),
         recentEvents: [],
         nowMs,
       }),
@@ -124,7 +148,7 @@ describe("failover policy", () => {
         failure: { class: "permission_error", code: "401" },
         threadId: threadA,
         currentSelection: { instanceId: codex, model: "gpt-5.4" },
-        availableInstances: new Set([codex, claude, cursor]),
+        availableProviders: allProvidersOpen([codex, claude, cursor]),
         recentEvents: [],
         nowMs,
       }),
@@ -169,7 +193,7 @@ describe("failover policy", () => {
       failure: { class: "usage_limit", code: "429" },
       threadId: threadA,
       currentSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
-      availableInstances: new Set([codex, claude, cursor]),
+      availableProviders: allProvidersOpen([codex, claude, cursor]),
       recentEvents: [firstSwitch],
       nowMs,
     });
@@ -198,7 +222,7 @@ describe("failover policy", () => {
       failure: { class: "usage_limit", code: "429" },
       threadId: threadA,
       currentSelection: { instanceId: cursor, model: "composer-2" },
-      availableInstances: new Set([codex, claude, cursor]),
+      availableProviders: allProvidersOpen([codex, claude, cursor]),
       recentEvents: [secondSwitch, firstSwitch],
       nowMs,
     });
@@ -211,7 +235,7 @@ describe("failover policy", () => {
       failure: { class: "usage_limit", code: "429" },
       threadId: threadA,
       currentSelection: { instanceId: cursor, model: "composer-2" },
-      availableInstances: new Set([codex, claude, cursor]),
+      availableProviders: allProvidersOpen([codex, claude, cursor]),
       recentEvents: [secondSwitch, firstSwitch],
       nowMs: nowMs + 601_000,
     });
@@ -222,13 +246,16 @@ describe("failover policy", () => {
     });
   });
 
-  it("supports manual switches with explicit or rotated chain targets", () => {
+  it("supports manual switches with explicit or rotated chain targets and rejects unknown models", () => {
     const manualExplicit = selectFailoverTarget({
       config: { ...baseConfig, enabled: false },
       trigger: "manual",
       threadId: threadA,
       currentSelection: { instanceId: codex, model: "gpt-5.4" },
-      availableInstances: new Set([codex, claude]),
+      availableProviders: new Map<ProviderInstanceId, ReadonlySet<string> | null>([
+        [codex, new Set(["gpt-5.4"])],
+        [claude, new Set(["claude-sonnet-4-6"])],
+      ]),
       recentEvents: [],
       nowMs,
       explicitTarget: { instanceId: claude, model: "claude-sonnet-4-6" },
@@ -239,17 +266,23 @@ describe("failover policy", () => {
       chainId: null,
     });
 
-    const manualUnavailable = selectFailoverTarget({
+    const manualMissingModel = selectFailoverTarget({
       config: baseConfig,
       trigger: "manual",
       threadId: threadA,
       currentSelection: { instanceId: codex, model: "gpt-5.4" },
-      availableInstances: new Set([codex]),
+      availableProviders: new Map<ProviderInstanceId, ReadonlySet<string> | null>([
+        [codex, new Set(["gpt-5.4"])],
+        [claude, new Set(["claude-sonnet-4-6"])],
+      ]),
       recentEvents: [],
       nowMs,
-      explicitTarget: { instanceId: claude, model: "claude-sonnet-4-6" },
+      explicitTarget: { instanceId: claude, model: "non-existent-model" },
     });
-    expect(manualUnavailable).toMatchObject({ decision: "skip", skipReason: "target_unavailable" });
+    expect(manualMissingModel).toMatchObject({
+      decision: "skip",
+      skipReason: "target_unavailable",
+    });
   });
 
   it("builds concise same-provider and cross-provider handoff prompts", () => {

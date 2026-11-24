@@ -31,6 +31,12 @@ export type FailoverDecision =
       readonly detail: string;
     };
 
+/**
+ * Eligible provider instances mapped to their known selectable model slugs, or `null` when the
+ * provider has not published a model catalog yet (`models.length === 0`).
+ */
+export type AvailableProviderCatalog = ReadonlyMap<ProviderInstanceId, ReadonlySet<string> | null>;
+
 function targetKey(target: Pick<ForkFailoverTarget, "instanceId" | "model">): string {
   return `${target.instanceId}\u0000${target.model}`;
 }
@@ -40,6 +46,16 @@ function sameFailoverTarget(
   right: Pick<ForkFailoverTarget, "instanceId" | "model">,
 ): boolean {
   return left.instanceId === right.instanceId && left.model === right.model;
+}
+
+function isTargetAvailable(
+  target: Pick<ForkFailoverTarget, "instanceId" | "model">,
+  availableProviders: AvailableProviderCatalog,
+): boolean {
+  if (!availableProviders.has(target.instanceId)) return false;
+  const knownModels = availableProviders.get(target.instanceId);
+  if (knownModels === null || knownModels === undefined) return true;
+  return knownModels.has(target.model);
 }
 
 /**
@@ -128,7 +144,7 @@ export function selectFailoverTarget(input: {
   readonly failure?: Pick<OrchestrationV2ProviderFailure, "class" | "code"> | null;
   readonly threadId: ThreadId;
   readonly currentSelection: ForkFailoverTarget;
-  readonly availableInstances: ReadonlySet<ProviderInstanceId>;
+  readonly availableProviders: AvailableProviderCatalog;
   readonly recentEvents: ReadonlyArray<ForkFailoverEvent>;
   readonly nowMs: number;
   readonly explicitTarget?: ForkFailoverTarget;
@@ -139,7 +155,7 @@ export function selectFailoverTarget(input: {
     failure,
     threadId,
     currentSelection,
-    availableInstances,
+    availableProviders,
     recentEvents,
     nowMs,
     explicitTarget,
@@ -185,11 +201,11 @@ export function selectFailoverTarget(input: {
         detail: "The thread is already using the requested model.",
       };
     }
-    if (!availableInstances.has(explicitTarget.instanceId)) {
+    if (!isTargetAvailable(explicitTarget, availableProviders)) {
       return {
         decision: "skip",
         skipReason: "target_unavailable",
-        detail: "The requested backup provider instance is disabled or unavailable.",
+        detail: "The requested backup provider instance or model is unavailable.",
       };
     }
     return { decision: "switch", target: explicitTarget, chainId: null };
@@ -206,7 +222,7 @@ export function selectFailoverTarget(input: {
 
   const currentKey = targetKey(currentSelection);
   const candidates = chain.targets.filter(
-    (target) => targetKey(target) !== currentKey && availableInstances.has(target.instanceId),
+    (target) => targetKey(target) !== currentKey && isTargetAvailable(target, availableProviders),
   );
   if (candidates.length === 0) {
     return {
@@ -229,7 +245,7 @@ export function selectFailoverTarget(input: {
         ? [...chain.targets.slice(currentIndex + 1), ...chain.targets.slice(0, currentIndex)]
         : chain.targets;
     const manualFallback = ordered.find(
-      (target) => targetKey(target) !== currentKey && availableInstances.has(target.instanceId),
+      (target) => targetKey(target) !== currentKey && isTargetAvailable(target, availableProviders),
     );
     if (manualFallback !== undefined) {
       return { decision: "switch", target: manualFallback, chainId: chain.id };

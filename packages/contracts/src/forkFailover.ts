@@ -6,6 +6,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 export const FORK_FAILOVER_PROTOCOL_VERSION = 1;
 
 export const FORK_FAILOVER_MAX_FILE_BYTES = 256 * 1024;
+export const FORK_FAILOVER_MAX_CONFIG_BYTES = 192 * 1024;
 export const FORK_FAILOVER_MAX_CHAINS = 24;
 export const FORK_FAILOVER_MAX_TARGETS_PER_CHAIN = 8;
 export const FORK_FAILOVER_MAX_EVENTS = 100;

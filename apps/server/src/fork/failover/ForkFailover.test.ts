@@ -10,11 +10,15 @@ import {
   AuthProvidersManageScope,
   DEFAULT_FORK_FAILOVER_CONFIG,
   DEFAULT_SERVER_SETTINGS,
+  FORK_FAILOVER_MAX_CONFIG_BYTES,
   FORK_FAILOVER_MAX_FILE_BYTES,
   type ForkFailoverConfig,
+  type ForkFailoverEvent,
+  NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderDriverKind,
@@ -46,6 +50,7 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkFailover from "./ForkFailover.ts";
+import { serializeFailoverState, type StoredFailoverState } from "./store.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -85,9 +90,18 @@ interface MockThreadState {
   archivedAt: DateTime.Utc | null;
   deletedAt: DateTime.Utc | null;
   settledOverride: "settled" | "active" | null;
+  lineage: {
+    parentThreadId: ThreadId | null;
+    relationshipToParent: "fork" | "subagent" | null;
+    rootThreadId: ThreadId;
+  };
+  creationSource: "web" | "provider";
   runs: Array<OrchestrationV2Run>;
   turnItems: Array<OrchestrationV2TurnItem>;
+  runtimeRequests: Array<OrchestrationV2RuntimeRequest>;
 }
+
+const rootNodeOf = (runId: RunId) => NodeId.make(`root:${runId}`);
 
 const makeRun = (
   id: RunId,
@@ -98,6 +112,7 @@ const makeRun = (
   ({
     id,
     threadId: thread1,
+    rootNodeId: rootNodeOf(id),
     ordinal,
     status,
     providerInstanceId: modelSelection.instanceId,
@@ -109,14 +124,17 @@ const makeErrorItem = (
   failureClass: "usage_limit" | "provider_error" | "permission_error",
   code: string | null = null,
   resetAt: string | null = "2026-11-24T13:00:00.000Z",
+  options?: { readonly nodeId?: NodeId; readonly ordinal?: number; readonly updatedAt?: string },
 ): OrchestrationV2TurnItem =>
   ({
-    id: TurnItemId.make(`err:${runId}`),
+    id: TurnItemId.make(`err:${runId}:${options?.ordinal ?? 1}`),
     type: "error",
     threadId: thread1,
     runId,
-    ordinal: 1,
+    nodeId: options?.nodeId ?? rootNodeOf(runId),
+    ordinal: options?.ordinal ?? 1,
     status: "failed",
+    updatedAt: DateTime.makeUnsafe(options?.updatedAt ?? "2026-11-24T11:00:00.000Z"),
     failure: {
       class: failureClass,
       message: "Quota exhausted",
@@ -125,6 +143,10 @@ const makeErrorItem = (
       resetAt,
     },
   }) as unknown as OrchestrationV2TurnItem;
+
+type DispatchHook = (
+  command: OrchestrationV2Command,
+) => Effect.Effect<void, Orchestrator.OrchestratorDispatchError>;
 
 interface TestHarness {
   readonly stateDir: string;
@@ -137,6 +159,7 @@ interface TestHarness {
   readonly domainEvents: Queue.Queue<OrchestrationV2DomainEvent>;
   readonly setSettings: (next: ServerSettings) => void;
   readonly setProviders: (next: ReadonlyArray<ServerProvider>) => void;
+  readonly setDispatchHook: (hook: DispatchHook | null) => void;
 }
 
 const withTempFailover = <A, E, R>(
@@ -151,9 +174,22 @@ const withTempFailover = <A, E, R>(
       const dispatched: Array<OrchestrationV2Command> = [];
       const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
       let providers: ReadonlyArray<ServerProvider> = options?.initialProviders ?? [
-        makeServerProvider(codex, "codex"),
-        makeServerProvider(claude, "claudeAgent"),
-        makeServerProvider(cursor, "cursor"),
+        makeServerProvider(codex, "codex", {
+          models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+        }),
+        makeServerProvider(claude, "claudeAgent", {
+          models: [
+            {
+              slug: "claude-sonnet-4-6",
+              name: "Claude Sonnet 4.6",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        }),
+        makeServerProvider(cursor, "cursor", {
+          models: [{ slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: null }],
+        }),
       ];
       let settings: ServerSettings = options?.initialSettings ?? {
         ...DEFAULT_SERVER_SETTINGS,
@@ -165,6 +201,7 @@ const withTempFailover = <A, E, R>(
           },
         },
       };
+      let dispatchHook: DispatchHook | null = null;
 
       const threadsById = new Map<ThreadId, MockThreadState>([
         [
@@ -179,8 +216,15 @@ const withTempFailover = <A, E, R>(
             archivedAt: null,
             deletedAt: null,
             settledOverride: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: thread1,
+            },
+            creationSource: "web",
             runs: [],
             turnItems: [],
+            runtimeRequests: [],
           },
         ],
       ]);
@@ -210,21 +254,20 @@ const withTempFailover = <A, E, R>(
               archivedAt: entry.archivedAt,
               deletedAt: entry.deletedAt,
               settledOverride: entry.settledOverride,
-              lineage: {
-                parentThreadId: null,
-                relationshipToParent: null,
-                rootThreadId: entry.id,
-              },
-              creationSource: "web",
+              lineage: entry.lineage,
+              creationSource: entry.creationSource,
             },
             runs: entry.runs,
             turnItems: entry.turnItems,
-            runtimeRequests: [],
+            runtimeRequests: entry.runtimeRequests,
           } as never);
         }) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
         dispatch: ((command: OrchestrationV2Command) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             dispatched.push(command);
+            if (dispatchHook !== null) {
+              yield* dispatchHook(command);
+            }
             if (command.type === "thread.model-selection.set") {
               const entry = threadsById.get(command.threadId);
               if (entry !== undefined) {
@@ -289,6 +332,9 @@ const withTempFailover = <A, E, R>(
           setProviders: (next) => {
             providers = next;
           },
+          setDispatchHook: (hook) => {
+            dispatchHook = hook;
+          },
         });
       }).pipe(Effect.provide(testLayer));
     }),
@@ -342,6 +388,133 @@ describe("ForkFailover", () => {
         }
       }),
     ),
+  );
+
+  it.effect(
+    "prunes oldest events within the file byte budget and keeps anti-loop active if disk persist fails",
+    () =>
+      withTempFailover(
+        ({ stateDir, failoverFile, service, threadsById, dispatched, setDispatchHook }) =>
+          Effect.gen(function* () {
+            // 1. Progressive pruning keeps serialized JSON <= budget while retaining newest events.
+            const manyEvents: ForkFailoverEvent[] = Array.from({ length: 40 }, (_, index) => ({
+              id: `failover:ev-${index}`,
+              threadId: thread1,
+              fromSelection: { instanceId: codex, model: "gpt-5.4" },
+              toSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
+              reason: "usage_limit",
+              resetAt: null,
+              status: "switched",
+              detail: `Event #${index} ${"x".repeat(250)}`,
+              occurredAt: "2026-11-24T11:00:00.000Z",
+            }));
+            const bigState: StoredFailoverState = {
+              version: 1,
+              updatedAt: "2026-11-24T11:00:00.000Z",
+              config: sampleConfig,
+              recentEvents: manyEvents,
+            };
+            const tightBudget = 4096;
+            const serialized = serializeFailoverState(bigState, tightBudget);
+            expect(serialized.ok).toBe(true);
+            if (serialized.ok) {
+              expect(new TextEncoder().encode(serialized.json).byteLength).toBeLessThanOrEqual(
+                tightBudget,
+              );
+              expect(serialized.state.recentEvents.length).toBeGreaterThan(0);
+              expect(serialized.state.recentEvents.length).toBeLessThan(manyEvents.length);
+              expect(serialized.state.recentEvents[0]!.id).toBe("failover:ev-0");
+            }
+
+            // 2. Config exceeding FORK_FAILOVER_MAX_CONFIG_BYTES is rejected to preserve event headroom.
+            const hugeOptions = Array.from({ length: 16 }, (_, optIdx) => ({
+              id: `option-${optIdx}-${"k".repeat(60)}`,
+              value: "v".repeat(150),
+            }));
+            const hugeChains = Array.from({ length: 24 }, (_, chainIdx) => ({
+              id: `chain:big-${chainIdx}`,
+              name: `Chain ${chainIdx} ${"n".repeat(90)}`,
+              targets: Array.from({ length: 8 }, (_, targetIdx) => ({
+                instanceId: codex,
+                model: `model-${chainIdx}-${targetIdx}-${"m".repeat(120)}`,
+                options: hugeOptions,
+              })),
+            }));
+            const hugeConfig: ForkFailoverConfig = {
+              ...sampleConfig,
+              chains: hugeChains,
+            };
+            expect(
+              new TextEncoder().encode(JSON.stringify(hugeConfig, null, 2)).byteLength,
+            ).toBeGreaterThan(FORK_FAILOVER_MAX_CONFIG_BYTES);
+            const configTooBig = yield* service.setConfig({ config: hugeConfig }).pipe(Effect.flip);
+            expect(configTooBig).toMatchObject({
+              _tag: "ForkFailoverError",
+              reason: "limitExceeded",
+            });
+
+            // 3. Even if persisting switchedEvent fails after dispatch, anti-loop still holds in memory.
+            const platform = yield* HostProcess.Platform;
+            if (platform === "win32") return;
+
+            yield* TestClock.setTime(Date.parse("2026-11-24T11:00:00.000Z"));
+            yield* service.setConfig({ config: { ...sampleConfig, maxSwitchesPerWindow: 1 } });
+            const savedJson = yield* Effect.promise(() => NodeFSP.readFile(failoverFile, "utf8"));
+            const path = yield* Path.Path;
+            const decoy = path.join(stateDir, "decoy.txt");
+            yield* Effect.promise(() => NodeFSP.writeFile(decoy, "immutable", "utf8"));
+
+            // Simulate a storage write failure right after the switch dispatches (failover.json becomes a symlink).
+            setDispatchHook((command) =>
+              command.type === "message.dispatch"
+                ? Effect.promise(async () => {
+                    await NodeFSP.unlink(failoverFile);
+                    await NodeFSP.symlink(decoy, failoverFile);
+                  })
+                : Effect.void,
+            );
+
+            const thread = threadsById.get(thread1)!;
+            const failedRun1 = makeRun(run1, 1, "failed", { instanceId: codex, model: "gpt-5.4" });
+            thread.runs = [failedRun1];
+            thread.turnItems = [makeErrorItem(run1, "usage_limit", "429")];
+            yield* service.handleDomainEvent({
+              type: "run.updated",
+              threadId: thread1,
+              payload: failedRun1,
+            } as unknown as OrchestrationV2DomainEvent);
+
+            // First switch succeeded even though disk write of the event failed.
+            expect(dispatched).toHaveLength(2);
+            expect(thread.modelSelection).toEqual({
+              instanceId: claude,
+              model: "claude-sonnet-4-6",
+            });
+
+            // Restore the old failover.json (which has 0 recentEvents on disk!) and trigger a second quota hit.
+            setDispatchHook(null);
+            yield* Effect.promise(async () => {
+              await NodeFSP.unlink(failoverFile);
+              await NodeFSP.writeFile(failoverFile, savedJson, { mode: 0o600 });
+            });
+
+            yield* TestClock.setTime(Date.parse("2026-11-24T11:01:00.000Z"));
+            const failedRun2 = makeRun(run2, 2, "failed", {
+              instanceId: claude,
+              model: "claude-sonnet-4-6",
+            });
+            thread.runs = [failedRun1, failedRun2];
+            thread.turnItems = [...thread.turnItems, makeErrorItem(run2, "usage_limit", "429")];
+            yield* service.handleDomainEvent({
+              type: "run.updated",
+              threadId: thread1,
+              payload: failedRun2,
+            } as unknown as OrchestrationV2DomainEvent);
+
+            // In-memory ring buffer enforced maxSwitchesPerWindow=1, so no second switch was dispatched!
+            expect(dispatched).toHaveLength(2);
+          }),
+      ),
   );
 
   it.effect(
@@ -435,72 +608,181 @@ describe("ForkFailover", () => {
       ),
   );
 
-  it.effect("ignores non-usage_limit failures and respects disabled instances", () =>
-    withTempFailover(({ service, threadsById, dispatched, setProviders }) =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse("2026-11-24T11:00:00.000Z"));
-        yield* service.setConfig({ config: sampleConfig });
+  it.effect(
+    "ignores non-root errors, manual model switches, unauthenticated/error providers, and missing models",
+    () =>
+      withTempFailover(({ service, threadsById, dispatched, setProviders }) =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse("2026-11-24T11:00:00.000Z"));
+          yield* service.setConfig({ config: sampleConfig });
 
-        const thread = threadsById.get(thread1)!;
-        const authFailureRun = makeRun(run1, 1, "failed", { instanceId: codex, model: "gpt-5.4" });
-        thread.runs = [authFailureRun];
-        thread.turnItems = [makeErrorItem(run1, "permission_error", "401")];
+          const thread = threadsById.get(thread1)!;
 
-        yield* service.handleDomainEvent({
-          type: "run.updated",
-          threadId: thread1,
-          payload: authFailureRun,
-        } as unknown as OrchestrationV2DomainEvent);
-        expect(dispatched).toHaveLength(0);
+          // Non-root error (e.g. child node usage_limit) must NOT trigger root failover.
+          const childErrorRun = makeRun(run1, 1, "failed", { instanceId: codex, model: "gpt-5.4" });
+          thread.runs = [childErrorRun];
+          thread.turnItems = [
+            makeErrorItem(run1, "usage_limit", "429", null, {
+              nodeId: NodeId.make("child-subagent-node"),
+            }),
+          ];
+          yield* service.handleDomainEvent({
+            type: "run.updated",
+            threadId: thread1,
+            payload: childErrorRun,
+          } as unknown as OrchestrationV2DomainEvent);
+          expect(dispatched).toHaveLength(0);
 
-        // Disable claude; usage_limit on codex should jump straight to cursor.
-        setProviders([
-          makeServerProvider(codex, "codex"),
-          makeServerProvider(claude, "claudeAgent", { enabled: false, status: "disabled" }),
-          makeServerProvider(cursor, "cursor"),
-        ]);
-        const quotaRun = makeRun(run2, 2, "failed", { instanceId: codex, model: "gpt-5.4" });
-        thread.runs = [authFailureRun, quotaRun];
-        thread.turnItems = [...thread.turnItems, makeErrorItem(run2, "usage_limit", "429")];
-        yield* service.handleDomainEvent({
-          type: "run.updated",
-          threadId: thread1,
-          payload: quotaRun,
-        } as unknown as OrchestrationV2DomainEvent);
+          // If the user already switched the thread's model manually, do NOT overwrite their choice.
+          const racedRun = makeRun(run2, 2, "failed", { instanceId: codex, model: "gpt-5.4" });
+          thread.modelSelection = { instanceId: cursor, model: "composer-2" };
+          thread.runs = [childErrorRun, racedRun];
+          thread.turnItems = [...thread.turnItems, makeErrorItem(run2, "usage_limit", "429")];
+          yield* service.handleDomainEvent({
+            type: "run.updated",
+            threadId: thread1,
+            payload: racedRun,
+          } as unknown as OrchestrationV2DomainEvent);
+          expect(dispatched).toHaveLength(0);
 
-        expect(dispatched).toHaveLength(2);
-        expect(dispatched[0]).toMatchObject({
-          type: "thread.model-selection.set",
-          modelSelection: { instanceId: cursor, model: "composer-2" },
-        });
-      }),
-    ),
+          // Unauthenticated or error providers and models missing from catalog are skipped.
+          thread.modelSelection = { instanceId: codex, model: "gpt-5.4" };
+          setProviders([
+            makeServerProvider(codex, "codex", {
+              models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+            }),
+            makeServerProvider(claude, "claudeAgent", {
+              status: "ready",
+              auth: { status: "unauthenticated" },
+              models: [
+                {
+                  slug: "claude-sonnet-4-6",
+                  name: "Claude Sonnet 4.6",
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+            }),
+            makeServerProvider(cursor, "cursor", {
+              status: "ready",
+              auth: { status: "authenticated" },
+              models: [
+                { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: null },
+              ],
+            }),
+          ]);
+          const quotaRun = makeRun(run3, 3, "failed", { instanceId: codex, model: "gpt-5.4" });
+          thread.runs = [childErrorRun, racedRun, quotaRun];
+          thread.turnItems = [...thread.turnItems, makeErrorItem(run3, "usage_limit", "429")];
+          yield* service.handleDomainEvent({
+            type: "run.updated",
+            threadId: thread1,
+            payload: quotaRun,
+          } as unknown as OrchestrationV2DomainEvent);
+
+          expect(dispatched).toHaveLength(2);
+          expect(dispatched[0]).toMatchObject({
+            type: "thread.model-selection.set",
+            modelSelection: { instanceId: cursor, model: "composer-2" },
+          });
+        }),
+      ),
   );
 
   it.effect(
-    "switches thread manually via switchThread preserving worktree and rejecting busy threads",
+    "guards manual switchThread on waiting/pending requests/native subagents and rolls back on resume failure",
     () =>
-      withTempFailover(({ service, threadsById, dispatched }) =>
+      withTempFailover(({ service, threadsById, dispatched, setDispatchHook }) =>
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse("2026-11-24T11:10:00.000Z"));
-          // Even when automatic failover is off, manual 1-tap switch uses the configured chain.
           yield* service.setConfig({ config: { ...sampleConfig, enabled: false } });
 
           const thread = threadsById.get(thread1)!;
-          thread.runs = [makeRun(run1, 1, "running", { instanceId: codex, model: "gpt-5.4" })];
-          const busyError = yield* service.switchThread({ threadId: thread1 }).pipe(Effect.flip);
-          expect(busyError).toMatchObject({ _tag: "ForkFailoverError", reason: "threadBusy" });
 
-          thread.runs = [makeRun(run1, 1, "completed", { instanceId: codex, model: "gpt-5.4" })];
-          const switched = yield* service.switchThread({ threadId: thread1, resume: false });
-          expect(switched.selection).toEqual({ instanceId: claude, model: "claude-sonnet-4-6" });
-          expect(switched.resumed).toBe(false);
-          expect(dispatched).toHaveLength(1);
-          expect(dispatched[0]).toMatchObject({
-            type: "thread.model-selection.set",
-            threadId: thread1,
-            modelSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
+          // Reject waiting run.
+          thread.runs = [makeRun(run1, 1, "waiting", { instanceId: codex, model: "gpt-5.4" })];
+          expect(
+            yield* service.switchThread({ threadId: thread1 }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "ForkFailoverError",
+            reason: "threadBusy",
           });
+
+          // Reject pending runtimeRequest even if no active run.
+          thread.runs = [];
+          thread.runtimeRequests = [
+            { id: "req-1", status: "pending" } as unknown as OrchestrationV2RuntimeRequest,
+          ];
+          expect(
+            yield* service.switchThread({ threadId: thread1 }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "ForkFailoverError",
+            reason: "threadBusy",
+          });
+          thread.runtimeRequests = [];
+
+          // Reject queued run when resume=true.
+          thread.runs = [makeRun(run1, 1, "queued", { instanceId: codex, model: "gpt-5.4" })];
+          expect(
+            yield* service.switchThread({ threadId: thread1, resume: true }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "ForkFailoverError",
+            reason: "threadBusy",
+          });
+          thread.runs = [];
+
+          // Reject provider-native subagent thread with invalidInput.
+          thread.lineage = {
+            parentThreadId: ThreadId.make("parent-1"),
+            relationshipToParent: "subagent",
+            rootThreadId: ThreadId.make("parent-1"),
+          };
+          thread.creationSource = "provider";
+          expect(
+            yield* service.switchThread({ threadId: thread1 }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "ForkFailoverError",
+            reason: "invalidInput",
+          });
+          thread.lineage = {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: thread1,
+          };
+          thread.creationSource = "web";
+
+          // If message.dispatch fails during resume=true, rollback restores fromSelection.
+          setDispatchHook((command) =>
+            command.type === "message.dispatch"
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "resume dispatch failed",
+                  }),
+                )
+              : Effect.void,
+          );
+          const resumeFailed = yield* service
+            .switchThread({ threadId: thread1, resume: true })
+            .pipe(Effect.flip);
+          expect(resumeFailed).toMatchObject({
+            _tag: "ForkFailoverError",
+            reason: "switchFailed",
+          });
+          expect(dispatched.map((cmd) => cmd.type)).toEqual([
+            "thread.model-selection.set",
+            "message.dispatch",
+            "thread.model-selection.set",
+          ]);
+          expect(thread.modelSelection).toEqual({ instanceId: codex, model: "gpt-5.4" });
+
+          // Normal manual switch skips the just-failed claude target in cooldown and rotates to cursor,
+          // preserving worktree and runtimeMode.
+          setDispatchHook(null);
+          const switched = yield* service.switchThread({ threadId: thread1, resume: false });
+          expect(switched.selection).toEqual({ instanceId: cursor, model: "composer-2" });
+          expect(switched.resumed).toBe(false);
           expect(thread.worktreePath).toBe("/worktrees/feature-a");
           expect(thread.runtimeMode).toBe("approval-required");
 
