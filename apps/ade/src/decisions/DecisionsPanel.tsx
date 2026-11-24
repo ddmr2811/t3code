@@ -463,7 +463,8 @@ export function DecisionsPanel() {
             include={(key) => !snoozedKeys.includes(key)}
             onOpenBackLayer={openBackLayer}
           />
-          {visible.length === 0 ? (
+          {visible.length === 0 &&
+          handoffs.every((handoff) => snoozedKeys.includes(handoff.key)) ? (
             <p className="ade-request-note">Ningún pendiente coincide con el filtro actual.</p>
           ) : (
             visible.map((item) => (

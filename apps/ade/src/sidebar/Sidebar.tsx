@@ -404,8 +404,13 @@ export function ProjectRail() {
     listed,
     [...catalog.entries.keys()],
     operable,
-    new Set(decisionsByRow(needsYou, allShells, listed).keys()),
-    (thread) => snoozed.includes(threadKeyOf(thread)),
+    new Set(
+      decisionsByRow(
+        needsYou.filter((thread) => !snoozed.includes(threadKeyOf(thread))),
+        allShells,
+        listed,
+      ).keys(),
+    ),
   );
   if (projects.length === 0) return null;
   const selectedRef = selected === null ? null : parseScopedThreadKey(selected);

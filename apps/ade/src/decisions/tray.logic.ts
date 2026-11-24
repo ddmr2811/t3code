@@ -238,26 +238,43 @@ export function isSnoozed(
   pendingIds: ReadonlyArray<string> | null,
   now: number,
 ): boolean {
+  // While its requests load nothing is hidden: a new one must never wait on a slow read.
   if (snooze === undefined || snooze.until <= now || snooze.requestIds.length === 0) return false;
-  if (pendingIds === null) return true;
+  if (pendingIds === null) return false;
   return pendingIds.length > 0 && pendingIds.every((id) => snooze.requestIds.includes(id));
 }
 
 /**
- * What a waiting thread waits on: its request ids, or for a plan or a guest message, which carry
- * none, the moment it last changed. Null while its requests load.
+ * What a waiting thread waits on: its request ids, plus a marker for guest messages and plans,
+ * which carry no id, so a new one ends a «Luego». Null while its requests load.
  */
 export function waitingIds(
-  thread: Pick<PendingThreadInput, "hasPendingApprovals" | "hasPendingUserInput" | "updatedAt">,
+  thread: Pick<
+    PendingThreadInput,
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingGuestMessageCount"
+    | "hasActionableProposedPlan"
+    | "updatedAt"
+  >,
   requests: {
     readonly approvals: ReadonlyArray<{ readonly requestId: string }>;
     readonly userInputs: ReadonlyArray<{ readonly requestId: string }>;
   } | null,
 ): ReadonlyArray<string> | null {
+  const others = [
+    ...((thread.pendingGuestMessageCount ?? 0) > 0
+      ? [`invitados:${thread.pendingGuestMessageCount}`]
+      : []),
+    ...(thread.hasActionableProposedPlan ? [`plan@${thread.updatedAt}`] : []),
+  ];
   if (!thread.hasPendingApprovals && !thread.hasPendingUserInput)
-    return [`sin-peticion@${thread.updatedAt}`];
+    return others.length > 0 ? others : [`sin-peticion@${thread.updatedAt}`];
   if (requests === null) return null;
-  return [...requests.approvals, ...requests.userInputs].map((request) => request.requestId);
+  return [
+    ...[...requests.approvals, ...requests.userInputs].map((request) => request.requestId),
+    ...others,
+  ];
 }
 
 /** Drops what is due and what no longer waits, so a later wait on the same thread starts fresh. */

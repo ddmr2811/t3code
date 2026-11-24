@@ -10,6 +10,7 @@ import {
   countPendingByKind,
   filterPendingItems,
   isSnoozed,
+  waitingIds,
   isTrayOpenForViewport,
   readSnoozes,
   reconcileTrayChoice,
@@ -203,11 +204,20 @@ describe("tray.logic", () => {
     expect(readSnoozes(until, storage)).toEqual({});
   });
 
+  it("brings a snoozed approval back when a guest message arrives on the same thread", () => {
+    const thread = pendingThread("t1", envA, { hasPendingApprovals: true });
+    const requests = { approvals: [{ requestId: "approval-1" }], userInputs: [] };
+    const snooze = { until: 2_000, requestIds: waitingIds(thread, requests) ?? [] };
+    expect(isSnoozed(snooze, waitingIds(thread, requests), 1_000)).toBe(true);
+    const withGuest = { ...thread, pendingGuestMessageCount: 1 };
+    expect(isSnoozed(snooze, waitingIds(withGuest, requests), 1_000)).toBe(false);
+  });
+
   it("brings a snoozed thread back as soon as it asks something it did not ask when snoozed", () => {
     const snooze = { until: 2_000, requestIds: ["approval-1"] };
     expect(isSnoozed(snooze, ["approval-1"], 1_000)).toBe(true);
     // Still loading its requests: kept hidden rather than flashing back.
-    expect(isSnoozed(snooze, null, 1_000)).toBe(true);
+    expect(isSnoozed(snooze, null, 1_000)).toBe(false);
     expect(isSnoozed(snooze, ["approval-1", "question-2"], 1_000)).toBe(false);
     expect(isSnoozed(snooze, ["question-2"], 1_000)).toBe(false);
     // Answered elsewhere, then waiting on something with no request (a plan): it ends.
