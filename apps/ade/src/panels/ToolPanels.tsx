@@ -118,7 +118,9 @@ function TerminalBody(props: {
   const allowed = useAtomValue(ref === null ? NO_ACCESS : terminalAccessAtom(ref.environmentId));
   const note = (text: string) => <p className="ade-panel-note">{text}</p>;
   if (ref === null) {
-    return note("La terminal se abre en la carpeta de un hilo. Abre uno y pulsa Ctrl+J.");
+    return note(
+      "La terminal se abre en la carpeta de un hilo. Abre uno y vuelve a elegir Terminal (Ctrl+J o Buscar).",
+    );
   }
   if (currentPairing === null) return note("La máquina de este hilo ya no está emparejada.");
   if (!allowed) {
@@ -128,7 +130,7 @@ function TerminalBody(props: {
   }
   // A terminal opened under another pairing is not opened again by itself.
   if (props.pairing !== currentPairing) {
-    return note("La máquina se emparejó de nuevo. Pulsa Ctrl+J para abrir otra terminal.");
+    return note("La máquina se emparejó de nuevo. Abre otra terminal con Ctrl+J o desde Buscar.");
   }
   if (thread === null) return note("Cargando el hilo…");
   return (

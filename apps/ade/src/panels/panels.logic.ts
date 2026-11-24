@@ -7,7 +7,7 @@ export type ToolPanel =
   | { readonly kind: "actividad" };
 
 /**
- * Ctrl+J closes the terminal of the thread on screen; anything else (no terminal, another
+ * Ctrl+J closes the terminal of the thread on screen, or any terminal when no thread is; anything else (no terminal, another
  * thread's, or one from an older pairing) gives way to a terminal for the thread on screen.
  */
 export function terminalAfterShortcut(
@@ -17,5 +17,7 @@ export function terminalAfterShortcut(
 ): ToolPanel | null {
   const showsThisOne =
     panel?.kind === "terminal" && panel.key === selectedKey && panel.pairing === pairing;
-  return showsThisOne ? null : { kind: "terminal", key: selectedKey, pairing };
+  // With no thread on screen there is no terminal to give way to: the key closes it.
+  const closes = showsThisOne || (panel?.kind === "terminal" && selectedKey === null);
+  return closes ? null : { kind: "terminal", key: selectedKey, pairing };
 }

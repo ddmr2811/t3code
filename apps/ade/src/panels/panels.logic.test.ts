@@ -17,6 +17,10 @@ describe("terminalAfterShortcut", () => {
     });
   });
 
+  it("closes an open terminal when no thread is on screen", () => {
+    expect(terminalAfterShortcut(open, null, null)).toBeNull();
+  });
+
   it("reopens after the machine is paired again, in one press", () => {
     expect(terminalAfterShortcut(open, "a", "p2")).toEqual({
       kind: "terminal",
