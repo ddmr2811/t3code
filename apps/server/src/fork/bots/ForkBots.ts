@@ -92,6 +92,23 @@ function initialBotMessage(bot: ForkBot, text: string): string {
   ].join("\n");
 }
 
+function threadConfigChanged(
+  existing: ForkBot,
+  next: Pick<
+    ForkBot,
+    "role" | "instructions" | "projectId" | "runtimeMode" | "modelSelection" | "name"
+  >,
+): boolean {
+  return (
+    existing.name !== next.name ||
+    existing.role !== next.role ||
+    existing.instructions !== next.instructions ||
+    existing.projectId !== next.projectId ||
+    existing.runtimeMode !== next.runtimeMode ||
+    JSON.stringify(existing.modelSelection) !== JSON.stringify(next.modelSelection)
+  );
+}
+
 function isThreadNotFoundError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -189,77 +206,70 @@ const make = Effect.gen(function* () {
     const id = parsed.id ?? `bot:${SecureRandom.uuidV4Unsafe()}`;
     return yield* botLocks.withLock(
       id,
-      Effect.gen(function* () {
-        const runtimeMode = parsed.runtimeMode ?? "approval-required";
-        yield* validateConfiguration({
-          projectId: parsed.projectId,
-          runtimeMode,
-          instanceId: parsed.modelSelection.instanceId,
-          model: parsed.modelSelection.model,
-        });
-        return yield* storeLock.withPermits(1)(
-          Effect.gen(function* () {
-            const directory = yield* fileStore.read();
-            const existing =
-              parsed.id === undefined
-                ? undefined
-                : directory.bots.find((bot) => bot.id === parsed.id);
-            if (parsed.id !== undefined && existing === undefined) {
-              return yield* notFound("Bot was not found.");
-            }
-            if (
-              directory.bots.some(
-                (bot) => bot.id !== id && bot.handle.toLowerCase() === parsed.handle.toLowerCase(),
-              )
-            ) {
-              return yield* new ForkBotsError({
-                reason: "conflict",
-                message: "Another bot already uses this handle.",
-              });
-            }
-            if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
-              return yield* new ForkBotsError({
-                reason: "limitExceeded",
-                message: `Bot directory cannot hold more than ${FORK_BOTS_MAX_COUNT} bots.`,
-              });
-            }
-            const now = yield* nowIso;
-            const bot: ForkBot = {
-              id,
-              handle: parsed.handle,
-              name: parsed.name,
-              role: parsed.role,
-              instructions: parsed.instructions,
-              projectId: parsed.projectId,
-              threadId:
-                existing !== undefined && existing.projectId !== parsed.projectId
-                  ? null
-                  : (existing?.threadId ?? null),
-              runtimeMode: parsed.runtimeMode ?? existing?.runtimeMode ?? "approval-required",
-              modelSelection: parsed.modelSelection,
-              fallbackChainId: parsed.fallbackChainId ?? null,
-              notifyOnNeedsYou: parsed.notifyOnNeedsYou ?? existing?.notifyOnNeedsYou ?? true,
-              archived: existing?.archived ?? false,
-              createdAt: existing?.createdAt ?? now,
-              updatedAt: now,
-            };
-            if (bot.runtimeMode !== runtimeMode) {
-              yield* validateConfiguration({
-                projectId: bot.projectId,
-                runtimeMode: bot.runtimeMode,
-                instanceId: bot.modelSelection.instanceId,
-                model: bot.modelSelection.model,
-              });
-            }
-            const bots =
-              existing === undefined
-                ? [...directory.bots, bot]
-                : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
-            yield* fileStore.write({ ...directory, bots, updatedAt: now });
-            return bot;
-          }),
-        );
-      }),
+      storeLock.withPermits(1)(
+        Effect.gen(function* () {
+          const directory = yield* fileStore.read();
+          const existing =
+            parsed.id === undefined
+              ? undefined
+              : directory.bots.find((bot) => bot.id === parsed.id);
+          if (parsed.id !== undefined && existing === undefined) {
+            return yield* notFound("Bot was not found.");
+          }
+          if (
+            directory.bots.some(
+              (bot) => bot.id !== id && bot.handle.toLowerCase() === parsed.handle.toLowerCase(),
+            )
+          ) {
+            return yield* new ForkBotsError({
+              reason: "conflict",
+              message: "Another bot already uses this handle.",
+            });
+          }
+          if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
+            return yield* new ForkBotsError({
+              reason: "limitExceeded",
+              message: `Bot directory cannot hold more than ${FORK_BOTS_MAX_COUNT} bots.`,
+            });
+          }
+          const runtimeMode = parsed.runtimeMode ?? existing?.runtimeMode ?? "approval-required";
+          yield* validateConfiguration({
+            projectId: parsed.projectId,
+            runtimeMode,
+            instanceId: parsed.modelSelection.instanceId,
+            model: parsed.modelSelection.model,
+          });
+          const now = yield* nowIso;
+          const draft = {
+            id,
+            handle: parsed.handle,
+            name: parsed.name,
+            role: parsed.role,
+            instructions: parsed.instructions,
+            projectId: parsed.projectId,
+            runtimeMode,
+            modelSelection: parsed.modelSelection,
+          };
+          const bot: ForkBot = {
+            ...draft,
+            // The thread was started with the old prompt, mode, and model; the next message starts
+            // a fresh one so the bot never silently overrides what the user set on that thread.
+            threadId:
+              existing === undefined || threadConfigChanged(existing, draft)
+                ? null
+                : existing.threadId,
+            archived: existing?.archived ?? false,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+          };
+          const bots =
+            existing === undefined
+              ? [...directory.bots, bot]
+              : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
+          yield* fileStore.write({ ...directory, bots, updatedAt: now });
+          return bot;
+        }),
+      ),
     );
   });
 
@@ -326,12 +336,6 @@ const make = Effect.gen(function* () {
             }),
           );
         if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
-        yield* validateConfiguration({
-          projectId: bot.projectId,
-          runtimeMode: bot.runtimeMode,
-          instanceId: bot.modelSelection.instanceId,
-          model: bot.modelSelection.model,
-        });
 
         let existingThread: ThreadId | null = null;
         if (bot.threadId !== null) {
@@ -355,6 +359,12 @@ const make = Effect.gen(function* () {
         }
 
         if (existingThread === null) {
+          yield* validateConfiguration({
+            projectId: bot.projectId,
+            runtimeMode: bot.runtimeMode,
+            instanceId: bot.modelSelection.instanceId,
+            model: bot.modelSelection.model,
+          });
           const commandId = CommandId.make(
             `fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`,
           );
@@ -377,54 +387,36 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(() => dispatchFailed("Could not create the bot thread.")));
           const now = yield* nowIso;
-          const updated = yield* storeLock.withPermits(1)(
-            Effect.gen(function* () {
-              const directory = yield* fileStore.read();
-              const current = directory.bots.find((candidate) => candidate.id === bot.id);
-              if (current === undefined) return yield* notFound("Bot was not found.");
-              const next = { ...current, threadId: launched.threadId, updatedAt: now };
-              yield* fileStore.write({
-                ...directory,
-                bots: directory.bots.map((candidate) =>
-                  candidate.id === bot.id ? next : candidate,
-                ),
-                updatedAt: now,
-              });
-              return next;
-            }),
-          );
-          // Native mobile push already follows needs-you on this real thread; no parallel sidecar.
-          return { bot: updated, threadId: launched.threadId, queued: false };
+          const linked = { ...bot, threadId: launched.threadId, updatedAt: now };
+          // The thread already exists and holds the message; failing here would make a retry
+          // launch a duplicate, so a lost link only means the next message starts another thread.
+          yield* storeLock
+            .withPermits(1)(
+              Effect.gen(function* () {
+                const directory = yield* fileStore.read();
+                yield* fileStore.write({
+                  ...directory,
+                  bots: directory.bots.map((candidate) =>
+                    candidate.id === bot.id
+                      ? { ...candidate, threadId: launched.threadId, updatedAt: now }
+                      : candidate,
+                  ),
+                  updatedAt: now,
+                });
+              }),
+            )
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("fork bots could not link the launched thread", {
+                  botId: bot.id,
+                  threadId: launched.threadId,
+                  reason: error.reason,
+                }),
+              ),
+            );
+          return { bot: linked, threadId: launched.threadId, queued: false };
         }
 
-        const projection = yield* threads
-          .getThreadRecords(existingThread, [])
-          .pipe(Effect.mapError(() => dispatchFailed("Could not load the bot thread.")));
-        const thread = projection.thread;
-        const selection = toModelSelection(bot);
-        if (
-          thread.modelSelection.instanceId !== selection.instanceId ||
-          thread.modelSelection.model !== selection.model
-        ) {
-          yield* threads
-            .dispatch({
-              type: "thread.model-selection.set",
-              commandId: CommandId.make(`fork-bot-model:${bot.id}:${SecureRandom.uuidV4Unsafe()}`),
-              threadId: existingThread,
-              modelSelection: selection,
-            })
-            .pipe(Effect.mapError(() => dispatchFailed("Could not configure the bot model.")));
-        }
-        if (thread.runtimeMode !== bot.runtimeMode) {
-          yield* threads
-            .dispatch({
-              type: "thread.runtime-mode.set",
-              commandId: CommandId.make(`fork-bot-mode:${bot.id}:${SecureRandom.uuidV4Unsafe()}`),
-              threadId: existingThread,
-              runtimeMode: bot.runtimeMode,
-            })
-            .pipe(Effect.mapError(() => dispatchFailed("Could not configure bot permissions.")));
-        }
         const messageId = MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
         const sent = yield* threads
           .sendToThread({
@@ -434,7 +426,6 @@ const make = Effect.gen(function* () {
             messageId,
             text: parsed.text,
             attachments: [],
-            modelSelection: selection,
             mode: "queue",
             createdBy: "user",
             creationSource: "web",

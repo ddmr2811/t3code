@@ -1,6 +1,7 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
+  type ForkBotSendMessageInput,
   clientRpcRequiredScopes,
   containsSecretReference,
   authScopeRequiredResponse,
@@ -289,6 +290,12 @@ const sendsProviderSignOutPrompt = (method: string, payload: unknown): boolean =
   if (method === ORCHESTRATION_V2_WS_METHODS.launchThread) {
     const message = (payload as OrchestrationV2ThreadLaunchInput).initialMessage;
     return message !== undefined && isProviderSignOutPrompt(message);
+  }
+  if (method === WS_METHODS.forkBotsSendMessage) {
+    return isProviderSignOutPrompt({
+      text: (payload as ForkBotSendMessageInput).text,
+      attachments: [],
+    });
   }
   if (method !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand) return false;
   const command = payload as OrchestrationV2Command;

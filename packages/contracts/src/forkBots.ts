@@ -6,13 +6,13 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
-import { ForkFailoverChainId, ForkFailoverTarget } from "./forkFailover.ts";
+import { ForkFailoverTarget } from "./forkFailover.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: persistent bot directory protocol version. */
 export const FORK_BOTS_PROTOCOL_VERSION = 1;
 export const FORK_BOTS_MAX_COUNT = 100;
-export const FORK_BOTS_MAX_FILE_BYTES = 256 * 1024;
+export const FORK_BOTS_MAX_FILE_BYTES = 1024 * 1024;
 export const FORK_BOTS_NAME_MAX_LENGTH = 80;
 export const FORK_BOTS_ROLE_MAX_LENGTH = 120;
 export const FORK_BOTS_INSTRUCTIONS_MAX_LENGTH = 8000;
@@ -70,8 +70,6 @@ export const ForkBot = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   runtimeMode: RuntimeMode,
   modelSelection: ForkFailoverTarget,
-  fallbackChainId: Schema.NullOr(ForkFailoverChainId),
-  notifyOnNeedsYou: Schema.Boolean,
   archived: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -96,8 +94,6 @@ export const ForkBotUpsertInput = Schema.Struct({
   projectId: ProjectId,
   runtimeMode: Schema.optionalKey(RuntimeMode),
   modelSelection: ForkFailoverTarget,
-  fallbackChainId: Schema.optionalKey(Schema.NullOr(ForkFailoverChainId)),
-  notifyOnNeedsYou: Schema.optionalKey(Schema.Boolean),
 });
 export type ForkBotUpsertInput = typeof ForkBotUpsertInput.Type;
 

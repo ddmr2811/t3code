@@ -15,10 +15,8 @@ export interface BotDraft {
   readonly instructions: string;
   readonly projectId: string;
   readonly runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
-  readonly instanceId: ProviderInstanceId;
+  readonly instanceId: string;
   readonly model: string;
-  readonly fallbackChainId: string | null;
-  readonly notifyOnNeedsYou: boolean;
 }
 
 export interface ValidatedBotDraft {
@@ -30,8 +28,6 @@ export interface ValidatedBotDraft {
   readonly runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly instanceId: ProviderInstanceId;
   readonly model: string;
-  readonly fallbackChainId: string | null;
-  readonly notifyOnNeedsYou: boolean;
 }
 
 export function validateBotDraft(
@@ -63,7 +59,7 @@ export function validateBotDraft(
   if (draft.projectId === "") {
     return { ok: false, error: "Selecciona un proyecto." };
   }
-  if (draft.model === "") {
+  if (draft.instanceId === "" || draft.model === "") {
     return { ok: false, error: "Selecciona un modelo." };
   }
   return {
@@ -75,10 +71,8 @@ export function validateBotDraft(
       instructions: draft.instructions,
       projectId: draft.projectId as ProjectId,
       runtimeMode: draft.runtimeMode,
-      instanceId: draft.instanceId,
+      instanceId: draft.instanceId as ProviderInstanceId,
       model: draft.model,
-      fallbackChainId: draft.fallbackChainId,
-      notifyOnNeedsYou: draft.notifyOnNeedsYou,
     },
   };
 }
@@ -102,30 +96,4 @@ export function botThreadState(
   }
   // A thread that needs you is still surfaced through the pending tray; this is only a coarse badge.
   return "Listo";
-}
-
-export function forkBotInitialMessagePrefix(): string {
-  return "Actúa como el bot «";
-}
-
-export function stripForkBotInitialMessage(text: string): string {
-  if (!text.startsWith(forkBotInitialMessagePrefix())) return text;
-  const marker = "\n--- SOLICITUD DEL USUARIO ---\n";
-  const index = text.indexOf(marker);
-  if (index < 0) return text;
-  const rest = text.slice(index + marker.length);
-  const end = rest.indexOf("\n--- FIN DE SOLICITUD ---");
-  return (end < 0 ? rest : rest.slice(0, end)).trim();
-}
-
-export function botNeedsYouCount(
-  bots: ReadonlyArray<ForkBot>,
-  threads: ReadonlyArray<EnvironmentThreadShell>,
-): number {
-  const botThreadIds = new Set(
-    bots
-      .map((bot) => bot.threadId)
-      .filter((id): id is NonNullable<ForkBot["threadId"]> => id !== null),
-  );
-  return threads.filter((thread) => botThreadIds.has(thread.id)).length;
 }

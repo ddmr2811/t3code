@@ -20,6 +20,7 @@ import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   CommandId,
+  ForkBotsError,
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   RunId,
@@ -825,6 +826,31 @@ it.effect("denies manual cleanup before the handler without settings permission"
     });
     expect(handled).toBe(false);
   }),
+);
+
+it.effect("requires provider management to send /logout through a bot", () =>
+  Effect.gen(function* () {
+    const method = WS_METHODS.forkBotsSendMessage;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(method, (input) =>
+      Effect.sync(() => {
+        handled.push(input.text);
+      }).pipe(Effect.andThen(Effect.fail(new ForkBotsError({ reason: "notFound", message: "" })))),
+    );
+    const operator = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
+    );
+    yield* operator[method]({ id: "bot:a", text: "hola" }).pipe(Effect.flip);
+    expect(
+      yield* operator[method]({ id: "bot:a", text: " /LOGOUT " }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    expect(handled).toEqual(["hola"]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("requires provider management to send /logout through chat", () =>

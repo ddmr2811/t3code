@@ -67,14 +67,15 @@ async function readRegularBounded(
   const info = await handle.stat();
   if (!info.isFile()) return { kind: "notFile" };
   if (info.size > FORK_BOTS_MAX_FILE_BYTES) return { kind: "tooLarge" };
-  const buffer = new Uint8Array(FORK_BOTS_MAX_FILE_BYTES + 1);
+  // One byte past the reported size catches a file that grew after the stat.
+  const buffer = new Uint8Array(info.size + 1);
   let total = 0;
   while (total < buffer.length) {
     const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
     if (bytesRead === 0) break;
     total += bytesRead;
   }
-  if (total > FORK_BOTS_MAX_FILE_BYTES) return { kind: "tooLarge" };
+  if (total > FORK_BOTS_MAX_FILE_BYTES || total > info.size) return { kind: "tooLarge" };
   return { kind: "ok", text: new TextDecoder("utf-8").decode(buffer.subarray(0, total)) };
 }
 

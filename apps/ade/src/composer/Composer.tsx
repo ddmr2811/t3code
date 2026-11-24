@@ -198,9 +198,13 @@ export async function runCommand<W extends { readonly environmentId: Environment
   command: AtomCommand<W, A, E>,
   input: W,
   failure: string,
+  onSuccess?: (value: A) => void,
 ): Promise<string | null> {
   const result = await runAtomCommand(registry, command, input, { reportFailure: false });
-  if (result._tag === "Success") return null;
+  if (result._tag === "Success") {
+    onSuccess?.(result.value);
+    return null;
+  }
   const error = squashAtomCommandFailure(result);
   const detail = isAuthorizationError(error)
     ? `la máquina pide el permiso ${error.requiredScope}, que esta sesión no tiene`
