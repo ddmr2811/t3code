@@ -82,7 +82,11 @@ process.once("exit", () => {
   NodeFS.rmSync(sandbox, { recursive: true, force: true, maxRetries: 5 });
 });
 const environmentIdAt = async (origin: string) =>
-  (await (await fetch(`${origin}/.well-known/t3/environment`)).json()).environmentId;
+  (
+    await (
+      await fetch(`${origin}/.well-known/t3/environment`, { signal: AbortSignal.timeout(2000) })
+    ).json()
+  ).environmentId;
 for (let attempt = 0; ; attempt += 1) {
   NodeAssert.ok(
     server.exitCode === null && attempt < 300,
@@ -153,6 +157,14 @@ const openPage = async () => {
     viewport: { width: 1920, height: 1080 },
     // The terminal is a canvas: the test reads what it shows by copying it.
     permissions: ["clipboard-read", "clipboard-write"],
+  });
+  // Keep the desktop sidebar expanded across reloads so the smoke can inspect its machine rows.
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem("ade.sidebar", "1");
+    } catch {
+      // Opaque origins (such as about:blank) disallow localStorage.
+    }
   });
   const opened = await context.newPage();
   opened.on("console", (message) => consoleText.push(message.text()));
@@ -673,7 +685,9 @@ try {
             resolve({
               extractable: key.result.privateKey.extractable,
               catalog: catalog.result,
-              localStorage: localStorage.length + sessionStorage.length,
+              localStorage:
+                Object.keys(localStorage).filter((name) => name !== "ade.sidebar").length +
+                sessionStorage.length,
             }),
           );
         });

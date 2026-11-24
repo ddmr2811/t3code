@@ -9,9 +9,10 @@ import {
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { type FormEvent, useContext, useState } from "react";
 
 import { pairMachine, TOKEN_IN_QUERY_TEXT, tokenInQuery } from "./connection/pairing.ts";
@@ -31,6 +32,21 @@ const addressBar = (() => {
 })();
 
 export const hasInitialPairingRequest = addressBar !== null;
+let initialPairingConsumed = false;
+
+const disconnectedMachinesAtom = Atom.make((get) => {
+  const catalog = get(environmentCatalog.catalogValueAtom);
+  const offline: string[] = [];
+  for (const [environmentId, entry] of catalog.entries) {
+    const state = AsyncResult.getOrElse(
+      get(environmentCatalog.stateAtom(environmentId)),
+      () => AVAILABLE_CONNECTION_STATE,
+    );
+    const { tone } = machineStatus(entry, state);
+    if (tone === "error" || tone === "off") offline.push(entry.target.label);
+  }
+  return offline;
+}).pipe(Atom.withLabel("ade-disconnected-machines"));
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
@@ -78,11 +94,12 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
 
 function PairingForm(props: { onDone: () => void }) {
   const registry = useContext(RegistryContext);
-  const [link, setLink] = useState(addressBar?.link ?? "");
+  const initial = initialPairingConsumed ? null : addressBar;
+  const [link, setLink] = useState(initial?.link ?? "");
   const [code, setCode] = useState("");
   const [terminal, setTerminal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(addressBar?.error ?? null);
+  const [error, setError] = useState<string | null>(initial?.error ?? null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -99,7 +116,10 @@ function PairingForm(props: { onDone: () => void }) {
       { reportFailure: false },
     );
     setBusy(false);
-    if (AsyncResult.isSuccess(result)) return props.onDone();
+    if (AsyncResult.isSuccess(result)) {
+      initialPairingConsumed = true;
+      return props.onDone();
+    }
     const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
     setError(failure?.message ?? "No se pudo emparejar la máquina.");
   };
@@ -148,7 +168,7 @@ function PairingForm(props: { onDone: () => void }) {
 
 export function MachinesSidebar() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const [adding, setAdding] = useState(addressBar !== null);
+  const [adding, setAdding] = useState(addressBar !== null && !initialPairingConsumed);
   const machines = [...catalog.entries];
   return (
     <>
@@ -159,7 +179,10 @@ export function MachinesSidebar() {
           className="ade-icon-button"
           aria-label="Añadir máquina"
           aria-expanded={adding}
-          onClick={() => setAdding(!adding)}
+          onClick={() => {
+            if (adding) initialPairingConsumed = true;
+            setAdding(!adding);
+          }}
         >
           <PlusIcon size={14} />
         </button>
@@ -184,4 +207,21 @@ export function MachinesSidebar() {
 export function ConnectionSummary() {
   const machines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size;
   return <>{machines === 0 ? "Sin máquinas" : count(machines, "máquina")}</>;
+}
+
+/** Disconnected-machine dot in the collapsed rail footer; opens the sidebar to inspect machines. */
+export function RailConnectionIndicator(props: { onExpand: () => void }) {
+  const offline = useAtomValue(disconnectedMachinesAtom);
+  if (offline.length === 0) return null;
+  const label = `Sin conexión: ${offline.join(", ")}`;
+  return (
+    <Tooltip type="label">
+      <TooltipTrigger type="button" className="ade-rail-status" onClick={props.onExpand}>
+        <span className="ade-rail-status-dot" aria-hidden />
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
 }

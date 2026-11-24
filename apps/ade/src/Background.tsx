@@ -23,14 +23,11 @@ const DEFAULT_PREFERENCE: BackgroundPreference = { mode: "luna", color: false };
 const isBackgroundMode = (value: unknown): value is BackgroundMode =>
   value === "luna" || value === "imagen" || value === "liso";
 
-export function readBackgroundPreference(
-  storage: Pick<Storage, "getItem"> | undefined = typeof localStorage === "undefined"
-    ? undefined
-    : localStorage,
-): BackgroundPreference {
+export function readBackgroundPreference(storage?: Pick<Storage, "getItem">): BackgroundPreference {
   try {
-    const rawMode = storage?.getItem(MODE_KEY);
-    const rawColor = storage?.getItem(COLOR_KEY);
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    const rawMode = store?.getItem(MODE_KEY);
+    const rawColor = store?.getItem(COLOR_KEY);
     return {
       mode: isBackgroundMode(rawMode) ? rawMode : DEFAULT_PREFERENCE.mode,
       color: rawColor === "1",
@@ -42,13 +39,12 @@ export function readBackgroundPreference(
 
 export function writeBackgroundPreference(
   next: BackgroundPreference,
-  storage: Pick<Storage, "setItem"> | undefined = typeof localStorage === "undefined"
-    ? undefined
-    : localStorage,
+  storage?: Pick<Storage, "setItem">,
 ): void {
   try {
-    storage?.setItem(MODE_KEY, next.mode);
-    storage?.setItem(COLOR_KEY, next.color ? "1" : "0");
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    store?.setItem(MODE_KEY, next.mode);
+    store?.setItem(COLOR_KEY, next.color ? "1" : "0");
   } catch {
     // Storage may be unavailable or full in private browsing; keep the choice in memory.
   }

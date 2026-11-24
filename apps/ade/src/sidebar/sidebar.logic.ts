@@ -71,26 +71,19 @@ const SIDEBAR_STORAGE_KEY = "ade.sidebar";
 
 const PROJECT_ACCENTS = ["#ECE6DA", "#8FB4EE", "#96C59A", "#D8D58A", "#E0A3B8", "#86CFCB"] as const;
 
-export function readSidebarExpanded(
-  storage: Pick<Storage, "getItem"> | undefined = typeof localStorage === "undefined"
-    ? undefined
-    : localStorage,
-): boolean {
+export function readSidebarExpanded(storage?: Pick<Storage, "getItem">): boolean {
   try {
-    return storage?.getItem(SIDEBAR_STORAGE_KEY) === "1";
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    return store?.getItem(SIDEBAR_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
 }
 
-export function writeSidebarExpanded(
-  expanded: boolean,
-  storage: Pick<Storage, "setItem"> | undefined = typeof localStorage === "undefined"
-    ? undefined
-    : localStorage,
-): void {
+export function writeSidebarExpanded(expanded: boolean, storage?: Pick<Storage, "setItem">): void {
   try {
-    storage?.setItem(SIDEBAR_STORAGE_KEY, expanded ? "1" : "0");
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    store?.setItem(SIDEBAR_STORAGE_KEY, expanded ? "1" : "0");
   } catch {
     // Storage may be unavailable or full in private browsing; keep the choice in memory.
   }
@@ -102,11 +95,13 @@ export function projectMonogram(title: string): string {
     .split(/[\s._/-]+/)
     .filter((word) => word.length > 0);
   if (words.length >= 2) {
-    return `${words[0]![0]}${words[1]![0]}`.toUpperCase();
+    const first = [...words[0]!][0] ?? "";
+    const second = [...words[1]!][0] ?? "";
+    return `${first}${second}`.toUpperCase();
   }
   const single = words[0];
   if (single === undefined) return "?";
-  return single.slice(0, 2).toUpperCase();
+  return [...single].slice(0, 2).join("").toUpperCase();
 }
 
 export function projectAccentColor(seed: string): string {

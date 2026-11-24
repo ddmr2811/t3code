@@ -16,10 +16,15 @@ import { createRoot } from "react-dom/client";
 import "./ade.css";
 import { BackgroundLayer, BackgroundPicker, useBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";
-import { connectionAtomRuntime } from "./connection/runtime.ts";
+import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
-import { ConnectionSummary, hasInitialPairingRequest, MachinesSidebar } from "./Machines.tsx";
+import {
+  ConnectionSummary,
+  hasInitialPairingRequest,
+  MachinesSidebar,
+  RailConnectionIndicator,
+} from "./Machines.tsx";
 import { Overview, viewAtom, ViewNav } from "./overview/Overview.tsx";
 import {
   mobileSidebarOpenAtom,
@@ -156,23 +161,23 @@ function Shell() {
   const background = useBackground();
   const [drawerOpen, setDrawerOpen] = useAtom(mobileSidebarOpenAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
+  const hasMachines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size > 0;
   // Start collapsed on desktop unless a pairing link arrived in the URL and needs the form.
   const [sidebarExpanded, setSidebarExpanded] = useState(
     () => hasInitialPairingRequest || readSidebarExpanded(),
   );
-  const toggleSidebar = () => {
-    setSidebarExpanded((current) => {
-      const next = !current;
-      writeSidebarExpanded(next);
-      return next;
-    });
+  const setExpanded = (next: boolean) => {
+    setSidebarExpanded(next);
+    writeSidebarExpanded(next);
   };
+  const toggleSidebar = () => setExpanded(!sidebarExpanded);
   useShortcut("mod+b", toggleSidebar, {
-    when: () => !narrowViewport && !isFocusInTerminal(),
+    when: () => !narrowViewport && hasMachines && !isFocusInTerminal(),
     description: "Alternar la barra lateral",
   });
   const toggleHint = useShortcutHint("mod+b");
-  const collapsed = !narrowViewport && !sidebarExpanded;
+  // Keep the sidebar expanded while there are no machines so the pairing UI stays reachable.
+  const collapsed = !narrowViewport && !sidebarExpanded && hasMachines;
   const shortcutLabel = toggleHint.text || "Ctrl+B";
 
   useEffect(
@@ -193,65 +198,56 @@ function Shell() {
         data-sidebar={collapsed ? "collapsed" : "expanded"}
       >
         <aside className="ade-sidebar" aria-label="Barra lateral">
-          {collapsed ? (
-            <div className="ade-rail">
-              <div className="ade-rail-brand" aria-hidden>
-                <AdeMark />
-              </div>
-              <span className="ade-rail-sep" aria-hidden />
+          <div className="ade-brand-row">
+            <div className="ade-brand">
+              <AdeMark className="ade-brand-mark" />
+              {collapsed ? null : <span>ADE</span>}
+            </div>
+            {hasMachines ? (
               <Tooltip>
                 <TooltipTrigger
                   type="button"
-                  className="ade-rail-button"
-                  aria-label="Desplegar barra lateral"
-                  aria-expanded={false}
+                  className={
+                    collapsed
+                      ? "ade-rail-button ade-sidebar-toggle"
+                      : "ade-icon-button ade-sidebar-toggle"
+                  }
+                  aria-label={collapsed ? "Desplegar barra lateral" : "Recoger barra lateral"}
+                  aria-expanded={!collapsed}
                   aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
                   onClick={toggleSidebar}
                 >
-                  <SidebarSimpleIcon size={19} aria-hidden />
+                  <SidebarSimpleIcon size={collapsed ? 19 : 17} aria-hidden />
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-                  Desplegar · {shortcutLabel}
+                  {collapsed ? "Desplegar" : "Recoger"} · {shortcutLabel}
                 </TooltipContent>
               </Tooltip>
+            ) : null}
+            {collapsed ? null : (
+              <button
+                type="button"
+                className="ade-icon-button ade-mobile-drawer-close"
+                aria-label="Cerrar menú lateral"
+                onClick={() => setDrawerOpen(false)}
+              >
+                <XIcon size={18} aria-hidden />
+              </button>
+            )}
+          </div>
+          {collapsed ? (
+            <div className="ade-rail">
+              <NeedsYouBlock compact />
               <ViewNav compact />
               <span className="ade-rail-sep" aria-hidden />
               <ProjectRail />
               <div className="ade-rail-footer">
+                <RailConnectionIndicator onExpand={() => setExpanded(true)} />
                 <BackgroundPicker compact {...background} />
               </div>
             </div>
           ) : (
             <>
-              <div className="ade-brand-row">
-                <div className="ade-brand">
-                  <AdeMark className="ade-brand-mark" />
-                  <span>ADE</span>
-                </div>
-                <Tooltip>
-                  <TooltipTrigger
-                    type="button"
-                    className="ade-icon-button ade-sidebar-toggle"
-                    aria-label="Recoger barra lateral"
-                    aria-expanded={true}
-                    aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
-                    onClick={toggleSidebar}
-                  >
-                    <SidebarSimpleIcon size={17} aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-                    Recoger · {shortcutLabel}
-                  </TooltipContent>
-                </Tooltip>
-                <button
-                  type="button"
-                  className="ade-icon-button ade-mobile-drawer-close"
-                  aria-label="Cerrar menú lateral"
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <XIcon size={18} aria-hidden />
-                </button>
-              </div>
               <NeedsYouBlock />
               <ViewNav />
               <ThreadTree />

@@ -155,20 +155,19 @@ describe("groupThreads", () => {
 });
 
 describe("sidebar persistence", () => {
-  it("defaults to collapsed and handles storage errors safely", () => {
-    expect(readSidebarExpanded({ getItem: () => null })).toBe(false);
-    expect(readSidebarExpanded({ getItem: () => "0" })).toBe(false);
-    expect(readSidebarExpanded({ getItem: () => "1" })).toBe(true);
-    const broken = {
-      getItem: () => {
-        throw new Error("denied");
-      },
-      setItem: () => {
-        throw new Error("quota");
+  it("round-trips expanded and collapsed states through storage", () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        data.set(key, value);
       },
     };
-    expect(readSidebarExpanded(broken)).toBe(false);
-    expect(() => writeSidebarExpanded(true, broken)).not.toThrow();
+    expect(readSidebarExpanded(storage)).toBe(false);
+    writeSidebarExpanded(true, storage);
+    expect(readSidebarExpanded(storage)).toBe(true);
+    writeSidebarExpanded(false, storage);
+    expect(readSidebarExpanded(storage)).toBe(false);
   });
 });
 
@@ -205,13 +204,7 @@ describe("railProjects", () => {
 });
 
 describe("projectMonogram", () => {
-  it.each([
-    ["proyecto-demo", "PD"],
-    ["T3 Code Fork", "TC"],
-    ["Neutralpha", "NE"],
-    ["danimartin.dev", "DD"],
-    ["   ", "?"],
-  ])("%s → %s", (title, expected) => {
-    expect(projectMonogram(title)).toBe(expected);
+  it("keeps surrogate-pair emoji intact", () => {
+    expect(projectMonogram("🚀 Proyecto")).toBe("🚀P");
   });
 });

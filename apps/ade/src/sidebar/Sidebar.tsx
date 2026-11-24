@@ -1,5 +1,6 @@
 import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
+import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
@@ -159,11 +160,34 @@ export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean
   );
 }
 
-export function NeedsYouBlock() {
+export function NeedsYouBlock(props: { compact?: boolean }) {
   const { threads, open, setOpen } = useDecisionsPanel();
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const count = threads.length;
   const words = count === 1 ? "te necesita" : "te necesitan";
+  if (props.compact) {
+    if (count === 0) return null;
+    const label = `${count} ${words} · ${open ? "ocultar decisiones" : "ver decisiones"}`;
+    return (
+      <Tooltip type="label">
+        <TooltipTrigger
+          type="button"
+          className="ade-rail-button ade-rail-needs-you"
+          aria-expanded={open}
+          aria-controls="ade-decisions"
+          onClick={() => setOpen(!open)}
+        >
+          <BellSimpleRingingIcon size={19} weight="fill" aria-hidden />
+          <span className="ade-rail-count" aria-hidden>
+            {count}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
   if (count === 0) {
     // Nothing to decide, so nothing to press.
     return (
@@ -217,6 +241,7 @@ export function ProjectTitle(props: { environmentId: EnvironmentId; projectId: P
 
 function ProjectRailButton(props: {
   project: RailProject<EnvironmentThreadShell>;
+  machineLabel: string;
   active: boolean;
   onOpen: (key: string) => void;
 }) {
@@ -225,7 +250,9 @@ function ProjectRailButton(props: {
       environmentProjects.environmentProjectIndexAtom(props.project.environmentId),
       (index) => index.get(props.project.projectId)?.title ?? null,
     ) ?? "Proyecto sin nombre";
-  const label = props.project.hasPendingDecision ? `${title} · espera una decisión` : title;
+  const label = props.project.hasPendingDecision
+    ? `${title} · ${props.machineLabel} · espera una decisión`
+    : `${title} · ${props.machineLabel}`;
   const threadKey = scopedThreadKey(
     scopeThreadRef(props.project.primaryThread.environmentId, props.project.primaryThread.id),
   );
@@ -269,10 +296,13 @@ export function ProjectRail() {
           selectedRef !== null &&
           selectedRef.environmentId === project.environmentId &&
           project.threads.some((thread) => thread.id === selectedRef.threadId);
+        const machineLabel =
+          catalog.entries.get(project.environmentId)?.target.label ?? project.environmentId;
         return (
           <ProjectRailButton
             key={project.key}
             project={project}
+            machineLabel={machineLabel}
             active={active}
             onOpen={setSelected}
           />
