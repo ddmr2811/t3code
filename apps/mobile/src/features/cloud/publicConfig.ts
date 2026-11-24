@@ -23,6 +23,7 @@ export interface CloudPublicConfig {
     readonly url: string | null;
   };
   readonly observability: {
+    readonly enabled: boolean;
     readonly tracesUrl: string | null;
     readonly tracesDataset: string | null;
     readonly tracesToken: string | null;
@@ -66,6 +67,8 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
     },
     observability: {
+      // Fork: relay traces are opt-in; app.config.ts sets this from T3CODE_MOBILE_TELEMETRY_ENABLED.
+      enabled: extra?.observability?.enabled === true,
       tracesUrl: normalizeSecureUrl(extra?.observability?.tracesUrl),
       tracesDataset: trimNonEmpty(extra?.observability?.tracesDataset),
       tracesToken: trimNonEmpty(extra?.observability?.tracesToken),
@@ -90,6 +93,7 @@ export function hasTracingPublicConfig(
   config: CloudPublicConfig = resolveCloudPublicConfig(),
 ): config is TracingPublicConfig {
   return Boolean(
+    config.observability.enabled &&
     config.observability.tracesUrl &&
     config.observability.tracesDataset &&
     config.observability.tracesToken,

@@ -65,7 +65,10 @@ let desktopRelayTelemetry: boolean | null = null;
 
 /** Whether relay spans may be exported now; the desktop host may not know yet at startup. */
 export function relayTelemetryEnabled(): boolean | null {
-  if (typeof window === "undefined" || !window.desktopBridge) return true;
+  if (typeof window === "undefined" || !window.desktopBridge) {
+    // Fork: a browser build exports relay traces only when built with the explicit opt-in.
+    return import.meta.env.VITE_T3CODE_TELEMETRY_ENABLED?.trim().toLowerCase() === "true";
+  }
   desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();
   return desktopRelayTelemetry;
 }

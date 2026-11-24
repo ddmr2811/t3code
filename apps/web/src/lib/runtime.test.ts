@@ -40,12 +40,20 @@ describe("web runtime relay telemetry policy", () => {
       exports: false,
     },
     {
-      surface: "ordinary browser ignores host opt-out",
+      surface: "ordinary browser without the build opt-in",
       desktopBridge: undefined,
+      exports: false,
+    },
+    {
+      surface: "ordinary browser built with the opt-in",
+      desktopBridge: undefined,
+      buildOptIn: "true",
       exports: true,
     },
-  ])("applies $surface before the first relay span", async ({ desktopBridge, exports }) => {
+  ])("applies $surface before the first relay span", async (surface) => {
+    const { desktopBridge, exports } = surface;
     vi.resetModules();
+    vi.stubEnv("VITE_T3CODE_TELEMETRY_ENABLED", "buildOptIn" in surface ? surface.buildOptIn : "");
     vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
     vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", "true");
     vi.stubEnv("OTEL_SDK_DISABLED", "true");

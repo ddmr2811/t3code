@@ -365,6 +365,9 @@ export default defineConfig(({ command }) => {
         configuredRelayTracingDataset,
       ),
       "import.meta.env.VITE_RELAY_OTLP_TRACES_TOKEN": JSON.stringify(configuredRelayTracingToken),
+      "import.meta.env.VITE_T3CODE_TELEMETRY_ENABLED": JSON.stringify(
+        repoEnv.VITE_T3CODE_TELEMETRY_ENABLED?.trim() || "",
+      ),
       "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
       "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
       "import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY": JSON.stringify(

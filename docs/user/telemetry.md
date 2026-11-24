@@ -41,9 +41,10 @@ The desktop app reads `T3CODE_TELEMETRY_ENABLED` from your shell profile (for ex
 Linux, so export it there and restart the app. On Windows, set it as a user environment variable.
 
 The web app in a browser, including one the `t3` CLI opens, does not read these environment
-variables. It sends its own connection traces only when its build was given relay tracing
-credentials (`VITE_RELAY_OTLP_TRACES_URL`, `_DATASET` and `_TOKEN`); a build without them sends
-none. The browser app has no relay tracing toggle.
+variables. It sends its own connection traces only when its build was given both relay tracing
+credentials (`VITE_RELAY_OTLP_TRACES_URL`, `_DATASET` and `_TOKEN`) and the opt-in
+`VITE_T3CODE_TELEMETRY_ENABLED=true`; a build without either sends none. The browser app has no
+runtime relay tracing toggle.
 
 ## Mobile app diagnostics
 
@@ -57,9 +58,10 @@ but an error message can quote a value the app was handling.
 
 To stop sending them, turn **Send crash reports** off again.
 
-The mobile app also sends relay connection traces when its build has tracing configured. These
+The mobile app sends relay connection traces only when its build has tracing configured and was
+built with `T3CODE_MOBILE_TELEMETRY_ENABLED=true`; otherwise it sends none. These
 carry an identifier for the current app session. **Send crash reports** does not control these
-traces, and the mobile app has no separate relay tracing toggle. Server environment variables and
+traces, and the mobile app has no runtime relay tracing toggle. Server environment variables and
 managed policy do not disable mobile tracing.
 
 ## Agent activity for mobile notifications
