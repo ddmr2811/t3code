@@ -49,6 +49,7 @@ const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "auto", "full-a
 const MODEL_SEPARATOR = "\u0000";
 
 export const HANDOFF_STATUS_LABELS: Record<ForkBotHandoffStatus, string> = {
+  pending: "Enviando",
   delivered: "Entregado",
   cut: "Cortado",
   failed: "Falló",
@@ -209,11 +210,10 @@ function MachineBots(props: {
           input: { id, fromId: selectedBot.id, toHandle: mention.handle, text: mention.text },
         },
         `No se pudo pasar el trabajo a @${mention.handle}`,
+        // From the ADE the user hands it over, so the chain starts at hop 1 and is never cut here.
         (result) =>
           setChatNote(
-            result.handoff.status === "cut"
-              ? `Traspaso cortado: la cadena entre bots pasó de ${result.handoff.hops - 1} saltos. Míralo en la bandeja.`
-              : `Pasado a @${mention.handle}${result.duplicate ? " (ya se había enviado)" : ""}.`,
+            `Pasado a @${mention.handle}${result.duplicate ? " (ya se había enviado)" : ""}.`,
           ),
       );
       setSending(false);

@@ -91,8 +91,17 @@ export type ForkBot = typeof ForkBot.Type;
 export const ForkBotHandoffId = TrimmedNonEmptyString.check(Schema.isMaxLength(128), safeBotId);
 export type ForkBotHandoffId = typeof ForkBotHandoffId.Type;
 
-/** `failed` may be retried with the same id; `dismissed` is a cut handoff the user cleared. */
-export const ForkBotHandoffStatus = Schema.Literals(["delivered", "cut", "failed", "dismissed"]);
+/**
+ * `pending` and `failed` may be retried with the same id (`pending` is one a restart cut short);
+ * `dismissed` is a cut handoff the user cleared.
+ */
+export const ForkBotHandoffStatus = Schema.Literals([
+  "pending",
+  "delivered",
+  "cut",
+  "failed",
+  "dismissed",
+]);
 export type ForkBotHandoffStatus = typeof ForkBotHandoffStatus.Type;
 
 export const ForkBotHandoff = Schema.Struct({

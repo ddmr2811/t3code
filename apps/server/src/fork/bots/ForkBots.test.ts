@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -69,6 +71,8 @@ const withBots = <A, E, R>(
     /** Each live thread's runtime mode, which its user may raise above the bot's. */
     readonly threadModes: Map<ThreadId, RuntimeMode>;
     readonly board: ForkCoordination.ForkCoordination["Service"];
+    /** The next launch reaches the provider and then never returns, as when the server stops. */
+    readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
     readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
     /** A fresh service over the same state directory, as after a server restart. */
     readonly reopen: Effect.Effect<ForkBots.ForkBots["Service"], never, Scope.Scope>;
@@ -82,6 +86,7 @@ const withBots = <A, E, R>(
       const liveThreads = new Set<ThreadId>();
       const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
       const threadModes = new Map<ThreadId, RuntimeMode>();
+      const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
       const mocks = Layer.mergeAll(
@@ -94,8 +99,11 @@ const withBots = <A, E, R>(
             ),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
-          launch: (input) =>
-            Effect.sync(() => {
+          launch: (input) => {
+            const stall = stalls.shift();
+            if (stall !== undefined)
+              return Deferred.succeed(stall, undefined).pipe(Effect.andThen(Effect.never));
+            return Effect.sync(() => {
               texts.push(input.initialMessage?.text ?? "");
               const threadId = ThreadId.make(`thread-bot-${launched.length + 1}`);
               launched.push(threadId);
@@ -103,7 +111,8 @@ const withBots = <A, E, R>(
               threadModels.set(threadId, input.modelSelection);
               threadModes.set(threadId, input.runtimeMode);
               return { threadId } as never;
-            }),
+            });
+          },
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadRecords: ((threadId: ThreadId) =>
@@ -180,6 +189,9 @@ const withBots = <A, E, R>(
           threadModels,
           threadModes,
           board: yield* ForkCoordination.ForkCoordination,
+          stallNextLaunch: Deferred.make<void>().pipe(
+            Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
+          ),
           memory: yield* ForkProjectMemory.ForkProjectMemory,
           reopen: Layer.build(
             services.pipe(
@@ -463,6 +475,78 @@ describe("ForkBots", () => {
       ),
     );
 
+    it.effect("sends an interrupted handoff again with the same id, once", () =>
+      withBots(({ service, texts, stallNextLaunch }) =>
+        Effect.gen(function* () {
+          const [ana] = yield* twoBots(service);
+          const input = {
+            id: "handoff:cut-short",
+            fromId: ana.id,
+            toHandle: "beto",
+            text: "hazlo",
+          };
+          const reached = yield* stallNextLaunch;
+          const stuck = yield* service.handoff(input, { kind: "user" }).pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+          yield* Fiber.interrupt(stuck);
+          const retried = yield* service.handoff(input, { kind: "user" });
+          expect(retried).toMatchObject({ duplicate: false, handoff: { status: "delivered" } });
+          expect(texts.filter((text) => text.includes("hazlo"))).toHaveLength(1);
+        }),
+      ),
+    );
+
+    it.effect("dismisses only a cut handoff, and dismissing it twice changes nothing", () =>
+      withBots(({ service }) =>
+        Effect.gen(function* () {
+          const [ana, beto] = yield* twoBots(service);
+          const delivered = yield* service.handoff(
+            { id: "handoff:ok", fromId: ana.id, toHandle: "beto", text: "uno" },
+            { kind: "user" },
+          );
+          expect(
+            yield* service.dismissHandoff({ id: delivered.handoff.id }).pipe(Effect.flip),
+          ).toMatchObject({ reason: "invalidInput" });
+
+          // Four hops in, the fifth is cut.
+          for (const [n, from, to] of [
+            [1, beto, "ana"],
+            [2, ana, "beto"],
+            [3, beto, "ana"],
+            [4, ana, "beto"],
+          ] as const) {
+            yield* service.handoff(
+              { id: `handoff:hop-${n}`, fromId: from.id, toHandle: to, text: `vuelta ${n}` },
+              { kind: "agent", limits: { runtimeMode: "full-access", interactionMode: "default" } },
+            );
+          }
+          const { handoffs } = yield* service.list({});
+          const cut = handoffs.find((handoff) => handoff.status === "cut");
+          expect(cut).toBeDefined();
+          const first = yield* service.dismissHandoff({ id: cut!.id });
+          const second = yield* service.dismissHandoff({ id: cut!.id });
+          expect([first.status, second.status]).toEqual(["dismissed", "dismissed"]);
+        }),
+      ),
+    );
+
+    it.effect("keeps one board entry per pair of bots however many handoffs pass", () =>
+      withBots(({ service, board }) =>
+        Effect.gen(function* () {
+          const [ana] = yield* twoBots(service);
+          for (let n = 0; n < 5; n++) {
+            yield* service.handoff(
+              { id: `handoff:many-${n}`, fromId: ana.id, toHandle: "beto", text: `tarea ${n}` },
+              { kind: "user" },
+            );
+          }
+          expect((yield* board.list({})).entries).toMatchObject([
+            { status: "done", completedSummary: expect.stringContaining("tarea 4") },
+          ]);
+        }),
+      ),
+    );
+
     it.effect("cuts a chain past the hop limit, across a restart, and never to the same bot", () =>
       withBots(({ service, texts, board, reopen }) =>
         Effect.gen(function* () {
@@ -491,9 +575,20 @@ describe("ForkBots", () => {
             status: "blocked",
           });
 
-          // The user stepping in starts the chain again.
-          yield* restarted.sendMessage({ id: ana.id, text: "sigue tú" });
-          expect((yield* pass(restarted, 6, ana, "beto")).handoff).toMatchObject({
+          yield* restarted.dismissHandoff({ id: "handoff:5" });
+          expect((yield* board.list({})).entries.some((entry) => entry.id === "handoff:5")).toBe(
+            false,
+          );
+
+          // The user stepping in, with a message or an @mention through a bot, starts again.
+          yield* restarted.sendMessage({ id: beto.id, text: "sigue tú" });
+          expect((yield* pass(restarted, 6, beto, "ana")).handoff).toMatchObject({ hops: 1 });
+          yield* restarted.handoff(
+            { id: "handoff:mention", fromId: ana.id, toHandle: "beto", text: "mira" },
+            { kind: "user" },
+          );
+          // Ana had received hop 1 from Beto; without the reset this would be hop 2.
+          expect((yield* pass(restarted, 7, ana, "beto")).handoff).toMatchObject({
             status: "delivered",
             hops: 1,
           });

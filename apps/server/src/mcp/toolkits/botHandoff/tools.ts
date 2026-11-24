@@ -21,7 +21,7 @@ const BotHandoffTool = Tool.make("bot_handoff", {
     ThreadManagementService.ThreadManagementService,
     ForkBots.ForkBots,
   ],
-  description: `Hand work to another bot by its @handle when it belongs to that bot's role. \`text\` is queued in that bot's own thread and no answer comes back here, so say what you need and where to leave the result. A repeated call is ignored, a chain between bots stops after ${FORK_BOTS_HANDOFF_MAX_HOPS} hops and goes to the user, and a bot with broader permissions than yours is refused.`,
+  description: `Hand work to another bot by its @handle when it belongs to that bot's role. \`text\` is queued in that bot's own thread and no answer comes back here, so say what you need and where to leave the result. A repeated call is ignored, a chain between bots stops after ${FORK_BOTS_HANDOFF_MAX_HOPS} hops and goes to the user, and a bot with broader permissions than yours is refused. Writing to a bot's thread with other T3 tools does not reset the hop count.`,
   parameters: Schema.Struct({
     handle: ForkBotHandle.annotate({ description: "Without the @." }),
     text: ForkBotMessage,

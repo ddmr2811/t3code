@@ -667,7 +667,11 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** The board is a trace; the handoff itself is already on disk, so a failed write is logged. */
+  /**
+   * The board is a trace; the handoff itself is already on disk, so a failed write is logged.
+   * Delivered handoffs share one entry per pair of bots, so they never fill the board. A cut one
+   * keeps its own entry until the user dismisses it.
+   */
   const traceHandoff = Effect.fn("ForkBots.traceHandoff")(function* (
     handoff: ForkBotHandoff,
     from: ForkBot,
@@ -681,16 +685,19 @@ const make = Effect.gen(function* () {
         onSome: (found) => found.title,
       });
       const summary = `Traspaso de @${from.handle} a @${to.handle}: ${handoff.preview}`;
+      if (handoff.status === "dismissed") {
+        yield* coordination.remove({ id: handoff.id });
+        return;
+      }
       yield* coordination.upsert({
-        id: handoff.id,
+        id: handoff.status === "cut" ? handoff.id : `handoff:${from.id}:${to.id}`,
         projectKey: projectKeyFromName(projectName, to.projectId),
         projectName: projectName.slice(0, 160),
         ...(threadId === null ? {} : { threadId }),
         agentName: to.name,
         status: handoff.status === "cut" ? "blocked" : "done",
         workingOn: "",
-        completedSummary:
-          handoff.status === "dismissed" ? `Descartado por el usuario. ${summary}` : summary,
+        completedSummary: summary,
         waitingFor:
           handoff.status === "cut"
             ? `Cortado: más de ${FORK_BOTS_HANDOFF_MAX_HOPS} saltos seguidos entre bots. Decide en la bandeja.`
@@ -706,16 +713,29 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** Callers hold the store lock. */
-  const saveHandoff = Effect.fn("ForkBots.saveHandoff")(function* (handoff: ForkBotHandoff) {
+  /** Callers hold the store lock. `resetHopsOf` is a bot the user just acted through. */
+  const saveHandoff = Effect.fn("ForkBots.saveHandoff")(function* (
+    handoff: ForkBotHandoff,
+    resetHopsOf?: ForkBot["id"],
+  ) {
     const directory = yield* fileStore.read();
     const now = yield* nowIso;
+    const all = [...directory.handoffs.filter((candidate) => candidate.id !== handoff.id), handoff];
+    // Trimming drops the oldest, but never a cut handoff the user has not dismissed yet.
+    let extra = all.length - FORK_BOTS_HANDOFF_HISTORY;
+    const handoffs = all
+      .filter((candidate) => {
+        if (extra <= 0 || candidate.status === "cut") return true;
+        extra -= 1;
+        return false;
+      })
+      .slice(-FORK_BOTS_HANDOFF_HISTORY); // Only a history of nothing but cuts loses one.
     yield* fileStore.write({
       ...directory,
-      handoffs: [
-        ...directory.handoffs.filter((candidate) => candidate.id !== handoff.id),
-        handoff,
-      ].slice(-FORK_BOTS_HANDOFF_HISTORY),
+      bots: directory.bots.map((bot) =>
+        bot.id === resetHopsOf ? { ...bot, handoffHops: 0 } : bot,
+      ),
+      handoffs,
       updatedAt: now,
     });
   });
@@ -747,11 +767,15 @@ const make = Effect.gen(function* () {
               return yield* notFound("Bot was not found.");
             }
             const seen = directory.handoffs.find((candidate) => candidate.id === parsed.id);
-            if (seen !== undefined && seen.status !== "failed") {
+            // `pending` was cut short by a crash or a restart, so it is tried again too.
+            if (seen !== undefined && seen.status !== "failed" && seen.status !== "pending") {
               return { from, to, handoff: seen, duplicate: true };
             }
             if (from.id === to.id) {
               return yield* invalidInput(`@${to.handle} cannot hand work to itself.`);
+            }
+            if (from.archived) {
+              return yield* invalidInput(`Restore @${from.handle} before it hands work over.`);
             }
             const hops = sender.kind === "user" ? 1 : from.handoffHops + 1;
             const record: ForkBotHandoff = {
@@ -760,41 +784,55 @@ const make = Effect.gen(function* () {
               toBotId: to.id,
               origin: sender.kind,
               hops,
-              status: hops > FORK_BOTS_HANDOFF_MAX_HOPS ? "cut" : "delivered",
+              status: hops > FORK_BOTS_HANDOFF_MAX_HOPS ? "cut" : "pending",
               preview: parsed.text
                 .replaceAll(/\s+/g, " ")
                 .slice(0, FORK_BOTS_HANDOFF_PREVIEW_LENGTH),
               createdAt: now,
             };
-            yield* saveHandoff(record);
+            // The user stepping in through this bot starts its chain again, as a message would.
+            yield* saveHandoff(record, sender.kind === "user" ? from.id : undefined);
             return { from, to, handoff: record, duplicate: false };
           }),
         );
-        const { from, to, handoff: record } = reserved;
+        const { from, to } = reserved;
         if (reserved.duplicate) {
+          const record = reserved.handoff;
           return {
             handoff: record,
             threadId: record.status === "delivered" ? to.threadId : null,
             duplicate: true,
           };
         }
-        if (record.status === "cut") {
-          yield* traceHandoff(record, from, to, null);
-          return { handoff: record, threadId: null, duplicate: false };
+        if (reserved.handoff.status === "cut") {
+          yield* traceHandoff(reserved.handoff, from, to, null);
+          return { handoff: reserved.handoff, threadId: null, duplicate: false };
         }
         const sent = yield* deliver(
           to,
-          handoffMessage(record, from, parsed.text),
-          { handoffHops: record.hops },
+          handoffMessage(reserved.handoff, from, parsed.text),
+          { handoffHops: reserved.handoff.hops },
           sender.kind === "agent" ? sender.limits : undefined,
         ).pipe(
-          // A failed handoff may be sent again with the same id.
-          Effect.tapError(() =>
+          // Failed or interrupted: the same id may be sent again.
+          Effect.onError(() =>
             storeLock
-              .withPermits(1)(saveHandoff({ ...record, status: "failed" }))
+              .withPermits(1)(saveHandoff({ ...reserved.handoff, status: "failed" }))
               .pipe(Effect.ignore),
           ),
         );
+        const record: ForkBotHandoff = { ...reserved.handoff, status: "delivered" };
+        // A lost write leaves it `pending`, so a retry would send it again; that is logged.
+        yield* storeLock
+          .withPermits(1)(saveHandoff(record))
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("fork bots could not mark a handoff delivered", {
+                handoffId: record.id,
+                reason: error.reason,
+              }),
+            ),
+          );
         yield* traceHandoff(record, from, to, sent.threadId);
         return { handoff: record, threadId: sent.threadId, duplicate: false };
       }),

@@ -95,3 +95,35 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
   expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
   expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
 });
+
+it.effect.each([
+  ["a bot's own thread", { bot: true }, true],
+  ["an ordinary thread", { bot: false }, false],
+  ["a subagent of a bot's thread", { bot: true, subagent: true }, false],
+  ["an outside client", { bot: true, outside: true }, false],
+] as const)("shows bot_handoff to %s: %s", ([, caller, shown]) => {
+  const scope: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    requestNamespace: "provider-session-1",
+    thread:
+      "outside" in caller
+        ? undefined
+        : {
+            threadId: ThreadId.make("thread-1"),
+            providerSessionId: "provider-session-1",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            ...("subagent" in caller ? { subagent: true } : {}),
+          },
+    client:
+      "outside" in caller
+        ? { sessionId: "session-1", label: "Claude Code", access: "auto" }
+        : undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+    bot: caller.bot,
+  };
+  return Effect.sync(McpInvocationContext.hiddenOutsideBotThreads).pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    Effect.map((visible) => expect(visible).toBe(shown)),
+  );
+});
