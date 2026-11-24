@@ -49,6 +49,15 @@ import {
   ForkSetEnabledInput,
   ForkUninstallInput,
 } from "./forkExtensions.ts";
+import {
+  ForkMemoryError,
+  ForkMemoryListInput,
+  ForkMemoryListResult,
+  ForkMemoryNote,
+  ForkMemoryRemoveInput,
+  ForkMemoryRemoveResult,
+  ForkMemoryUpsertInput,
+} from "./forkMemory.ts";
 import { ForkTailnetStatus, ForkTailnetStatusInput } from "./forkTailnet.ts";
 import { ForkNodeExportersStatus } from "./forkMachines.ts";
 import {
@@ -96,6 +105,10 @@ export const FORK_WS_METHODS = {
   forkBotsSetArchived: "forkBots.setArchived",
   forkBotsRemove: "forkBots.remove",
   forkBotsSendMessage: "forkBots.sendMessage",
+  // Fork: per-project memory the coordinator reads and the user curates.
+  forkMemoryList: "forkMemory.list",
+  forkMemoryUpsert: "forkMemory.upsert",
+  forkMemoryRemove: "forkMemory.remove",
 } as const;
 
 // Fork: Extensions settings page.
@@ -306,6 +319,27 @@ const WsForkBotsSendMessageRpc = Rpc.make(FORK_WS_METHODS.forkBotsSendMessage, {
   error: ForkBotsRpcError,
 });
 
+// Fork: per-project memory.
+const ForkMemoryRpcError = Schema.Union([ForkMemoryError, EnvironmentAuthorizationError]);
+
+const WsForkMemoryListRpc = Rpc.make(FORK_WS_METHODS.forkMemoryList, {
+  payload: ForkMemoryListInput,
+  success: ForkMemoryListResult,
+  error: ForkMemoryRpcError,
+});
+
+const WsForkMemoryUpsertRpc = Rpc.make(FORK_WS_METHODS.forkMemoryUpsert, {
+  payload: ForkMemoryUpsertInput,
+  success: ForkMemoryNote,
+  error: ForkMemoryRpcError,
+});
+
+const WsForkMemoryRemoveRpc = Rpc.make(FORK_WS_METHODS.forkMemoryRemove, {
+  payload: ForkMemoryRemoveInput,
+  success: ForkMemoryRemoveResult,
+  error: ForkMemoryRpcError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -334,6 +368,9 @@ export const FORK_RPCS = [
   WsForkBotsSetArchivedRpc,
   WsForkBotsRemoveRpc,
   WsForkBotsSendMessageRpc,
+  WsForkMemoryListRpc,
+  WsForkMemoryUpsertRpc,
+  WsForkMemoryRemoveRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
@@ -351,4 +388,6 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkBotsSetArchived]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsRemove]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
 } as const;

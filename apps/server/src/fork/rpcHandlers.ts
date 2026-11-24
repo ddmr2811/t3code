@@ -11,6 +11,7 @@ import * as ForkFailover from "./failover/ForkFailover.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
+import * as ForkProjectMemory from "./memory/ForkProjectMemory.ts";
 import * as ForkTailnet from "./tailnet/ForkTailnet.ts";
 
 const ForkRpcGroup = RpcGroup.make(...FORK_RPCS);
@@ -28,6 +29,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkCoordination = yield* ForkCoordination.ForkCoordination;
   const forkFailover = yield* ForkFailover.ForkFailover;
   const forkBots = yield* ForkBots.ForkBots;
+  const forkMemory = yield* ForkProjectMemory.ForkProjectMemory;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
     // Extensions settings page.
@@ -69,5 +71,9 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkBotsSetArchived]: (input) => forkBots.setArchived(input),
     [WS_METHODS.forkBotsRemove]: (input) => forkBots.remove(input),
     [WS_METHODS.forkBotsSendMessage]: (input) => forkBots.sendMessage(input),
+    // Project memory, as the user edits it.
+    [WS_METHODS.forkMemoryList]: (input) => forkMemory.list(input),
+    [WS_METHODS.forkMemoryUpsert]: (input) => forkMemory.upsert(input, "user"),
+    [WS_METHODS.forkMemoryRemove]: (input) => forkMemory.remove(input),
   });
 });

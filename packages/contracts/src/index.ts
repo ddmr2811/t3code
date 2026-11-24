@@ -66,6 +66,7 @@ export * from "./forkDashboard.ts";
 export * from "./forkCoordination.ts";
 export * from "./forkFailover.ts";
 export * from "./forkBots.ts";
+export * from "./forkMemory.ts";
 export * from "./forkRpc.ts";
 export * from "./assets.ts";
 export * from "./review.ts";

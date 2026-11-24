@@ -8,6 +8,7 @@ import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkGatewayHttp from "./gateway/http.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
+import * as ForkProjectMemory from "./memory/ForkProjectMemory.ts";
 import * as ForkTailnet from "./tailnet/ForkTailnet.ts";
 
 /** Every fork service, one per server; `server.ts` merges this as a single line. */
@@ -28,8 +29,9 @@ export const ForkLayer = Layer.mergeAll(
   ForkCoordination.layer,
   // Automatic and manual quota model failover persisted in `<stateDir>/fork/failover.json`.
   ForkFailover.layer,
-  // Persistent bot directory; bot chats are ordinary orchestration threads.
-  ForkBots.layer,
+  // Persistent bot directory; bot chats are ordinary orchestration threads. The coordinator
+  // reads project memory, which the RPCs and the agent's MCP tools share.
+  ForkBots.layer.pipe(Layer.provideMerge(ForkProjectMemory.layer)),
 );
 
 /** Every fork HTTP route; `server.ts` merges this beside its own routes. */

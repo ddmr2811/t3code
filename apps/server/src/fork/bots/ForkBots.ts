@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - sha256 of the injected memory has no Effect equivalent.
+import * as NodeCrypto from "node:crypto";
+
 import {
   CommandId,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_MAX_FILE_BYTES,
   type ForkBot,
+  type ForkMemoryNote,
   ForkBotListInput,
   type ForkBotListResult,
   ForkBotRemoveInput,
@@ -40,6 +44,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 import {
   decodeStoredBotDirectory,
@@ -83,11 +88,22 @@ function toModelSelection(bot: ForkBot): ModelSelection {
   };
 }
 
+const COORDINATOR_INSTRUCTIONS = [
+  "--- PAPEL DE COORDINADOR DEL PROYECTO ---",
+  "Coordinas este proyecto. En cada encargo:",
+  "1. Lee la memoria del proyecto: las notas esenciales llegan en <project_memory> cuando cambian; el resto lo buscas con project_memory_search cuando te haga falta.",
+  "2. Reparte el trabajo en hilos hijos con las herramientas de delegación (delegate_task) y no lo hagas tú todo.",
+  "3. Recoge sus resultados y comprueba que responden al encargo.",
+  "4. Actualiza la memoria con project_memory_save sin que te lo pidan, solo con lo importante y duradero (decisiones, convenciones, datos que costó averiguar), y deja el estado del trabajo en el tablero de coordinación del proyecto.",
+  "--- FIN DEL PAPEL DE COORDINADOR ---",
+].join("\n");
+
 function initialBotMessage(bot: ForkBot, text: string): string {
   return [
     `Actúa como el bot «${bot.name}». Rol: ${bot.role}.`,
     "Las instrucciones del operador están delimitadas a continuación; la solicitud del usuario va aparte.",
     "",
+    ...(bot.coordinator ? [COORDINATOR_INSTRUCTIONS, ""] : []),
     "--- INSTRUCCIONES DEL BOT ---",
     bot.instructions,
     "--- FIN DE INSTRUCCIONES ---",
@@ -98,15 +114,41 @@ function initialBotMessage(bot: ForkBot, text: string): string {
   ].join("\n");
 }
 
+/** Null when there is nothing to inject, so an empty memory never sends an empty block. */
+function memoryHash(notes: ReadonlyArray<ForkMemoryNote>): string | null {
+  if (notes.length === 0) return null;
+  return NodeCrypto.createHash("sha256")
+    .update(JSON.stringify(notes.map((note) => note.text)))
+    .digest("hex");
+}
+
+function memoryBlock(notes: ReadonlyArray<ForkMemoryNote>): string {
+  const lines =
+    notes.length === 0 ? ["(sin notas esenciales)"] : notes.map((note) => `- ${note.text}`);
+  return [
+    "<project_memory>",
+    "Notas esenciales del proyecto (sustituyen a las que recibiste antes):",
+    ...lines,
+    "</project_memory>",
+  ].join("\n");
+}
+
 function threadConfigChanged(
   existing: ForkBot,
   next: Pick<
     ForkBot,
-    "role" | "instructions" | "projectId" | "runtimeMode" | "modelSelection" | "name"
+    | "role"
+    | "instructions"
+    | "projectId"
+    | "runtimeMode"
+    | "modelSelection"
+    | "name"
+    | "coordinator"
   >,
 ): boolean {
   return (
     existing.name !== next.name ||
+    existing.coordinator !== next.coordinator ||
     existing.role !== next.role ||
     existing.instructions !== next.instructions ||
     existing.projectId !== next.projectId ||
@@ -155,6 +197,7 @@ const make = Effect.gen(function* () {
   const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const memory = yield* ForkProjectMemory.ForkProjectMemory;
 
   const nowIso = Effect.map(Clock.currentTimeMillis, (now) =>
     DateTime.formatIso(DateTime.makeUnsafe(now)),
@@ -240,6 +283,18 @@ const make = Effect.gen(function* () {
               message: "Another bot already uses this handle.",
             });
           }
+          const coordinator = parsed.coordinator ?? existing?.coordinator ?? false;
+          if (
+            coordinator &&
+            directory.bots.some(
+              (bot) => bot.id !== id && bot.coordinator && bot.projectId === parsed.projectId,
+            )
+          ) {
+            return yield* new ForkBotsError({
+              reason: "conflict",
+              message: "This project already has a coordinator.",
+            });
+          }
           if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
             return yield* new ForkBotsError({
               reason: "limitExceeded",
@@ -263,15 +318,16 @@ const make = Effect.gen(function* () {
             projectId: parsed.projectId,
             runtimeMode,
             modelSelection: parsed.modelSelection,
+            coordinator,
           };
+          // The thread was started with the old prompt, mode, and model; the next message starts
+          // a fresh one so the bot never silently overrides what the user set on that thread.
+          const kept =
+            existing !== undefined && !threadConfigChanged(existing, draft) ? existing : undefined;
           const bot: ForkBot = {
             ...draft,
-            // The thread was started with the old prompt, mode, and model; the next message starts
-            // a fresh one so the bot never silently overrides what the user set on that thread.
-            threadId:
-              existing === undefined || threadConfigChanged(existing, draft)
-                ? null
-                : existing.threadId,
+            threadId: kept?.threadId ?? null,
+            memoryHash: kept?.memoryHash ?? null,
             archived: existing?.archived ?? false,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -332,6 +388,37 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** After a message went out the bot's thread exists, so a failed write is only logged. */
+  const recordDelivery = Effect.fn("ForkBots.recordDelivery")(function* (
+    bot: ForkBot,
+    patch: Partial<Pick<ForkBot, "threadId" | "memoryHash">>,
+  ) {
+    const now = yield* nowIso;
+    const updated: ForkBot = { ...bot, ...patch, updatedAt: now };
+    yield* storeLock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const directory = yield* fileStore.read();
+          yield* fileStore.write({
+            ...directory,
+            bots: directory.bots.map((candidate) =>
+              candidate.id === bot.id ? { ...candidate, ...patch, updatedAt: now } : candidate,
+            ),
+            updatedAt: now,
+          });
+        }),
+      )
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("fork bots could not record the delivered message", {
+            botId: bot.id,
+            reason: error.reason,
+          }),
+        ),
+      );
+    return updated;
+  });
+
   const sendMessage = Effect.fn("ForkBots.sendMessage")(function* (input: ForkBotSendMessageInput) {
     const parsed = yield* decodeSendMessageInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid bot message.")),
@@ -372,6 +459,17 @@ const make = Effect.gen(function* () {
           }
         }
 
+        const essentials = bot.coordinator
+          ? yield* memory
+              .essentials(bot.projectId)
+              .pipe(Effect.mapError(() => unavailable("Could not read the project memory.")))
+          : [];
+        const hash = memoryHash(essentials);
+        // A new thread has seen nothing yet; an existing one gets the block only when it changed.
+        const injects = existingThread === null ? hash !== null : hash !== bot.memoryHash;
+        const withMemory = (text: string) =>
+          injects ? `${memoryBlock(essentials)}\n\n${text}` : text;
+
         if (existingThread === null) {
           yield* validateConfiguration({
             projectId: bot.projectId,
@@ -393,41 +491,19 @@ const make = Effect.gen(function* () {
               interactionMode: "default",
               workspaceStrategy: { type: "root" },
               initialMessage: {
-                text: initialBotMessage(bot, parsed.text),
+                text: withMemory(initialBotMessage(bot, parsed.text)),
                 attachments: [],
               },
               createdBy: "user",
               creationSource: "web",
             })
             .pipe(Effect.mapError(() => dispatchFailed("Could not create the bot thread.")));
-          const now = yield* nowIso;
-          const linked = { ...bot, threadId: launched.threadId, updatedAt: now };
           // The thread already exists and holds the message; failing here would make a retry
           // launch a duplicate, so a lost link only means the next message starts another thread.
-          yield* storeLock
-            .withPermits(1)(
-              Effect.gen(function* () {
-                const directory = yield* fileStore.read();
-                yield* fileStore.write({
-                  ...directory,
-                  bots: directory.bots.map((candidate) =>
-                    candidate.id === bot.id
-                      ? { ...candidate, threadId: launched.threadId, updatedAt: now }
-                      : candidate,
-                  ),
-                  updatedAt: now,
-                });
-              }),
-            )
-            .pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("fork bots could not link the launched thread", {
-                  botId: bot.id,
-                  threadId: launched.threadId,
-                  reason: error.reason,
-                }),
-              ),
-            );
+          const linked = yield* recordDelivery(bot, {
+            threadId: launched.threadId,
+            memoryHash: hash,
+          });
           return { bot: linked, threadId: launched.threadId, queued: false };
         }
 
@@ -438,14 +514,16 @@ const make = Effect.gen(function* () {
             commandId: CommandId.make(messageId),
             threadId: existingThread,
             messageId,
-            text: parsed.text,
+            text: withMemory(parsed.text),
             attachments: [],
             mode: "queue",
             createdBy: "user",
             creationSource: "web",
           })
           .pipe(Effect.mapError(() => dispatchFailed("Could not send the bot message.")));
-        return { bot, threadId: existingThread, queued: sent.delivery === "queued" };
+        // A lost hash only means the next message repeats the same block.
+        const delivered = injects ? yield* recordDelivery(bot, { memoryHash: hash }) : bot;
+        return { bot: delivered, threadId: existingThread, queued: sent.delivery === "queued" };
       }),
     );
   });

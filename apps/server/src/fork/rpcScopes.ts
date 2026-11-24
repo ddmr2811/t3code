@@ -45,6 +45,9 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkBotsSetArchived]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkMemoryList]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

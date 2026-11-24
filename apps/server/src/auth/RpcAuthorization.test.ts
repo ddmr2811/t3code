@@ -141,13 +141,16 @@ describe("RPC authorization scopes", () => {
     );
   });
 
-  it("lets thread readers list bots and requires operate scope for every bot mutation", () => {
+  it("lets thread readers list bots and memory and requires operate scope for their mutations", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.forkBotsList)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkMemoryList)).toBe(AuthOrchestrationReadScope);
     for (const method of [
       WS_METHODS.forkBotsUpsert,
       WS_METHODS.forkBotsSetArchived,
       WS_METHODS.forkBotsRemove,
       WS_METHODS.forkBotsSendMessage,
+      WS_METHODS.forkMemoryUpsert,
+      WS_METHODS.forkMemoryRemove,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }

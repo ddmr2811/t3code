@@ -10,11 +10,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../../config.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -23,6 +25,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettingsService from "../../serverSettings.ts";
+import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkBots from "./ForkBots.ts";
 
 const codex = ProviderInstanceId.make("codex");
@@ -54,12 +57,18 @@ const withBots = <A, E, R>(
     readonly fs: FileSystem.FileSystem;
     readonly launched: Array<ThreadId>;
     readonly sentTo: Array<ThreadId>;
+    /** Every message text the provider received, launches and sends alike, in order. */
+    readonly texts: Array<string>;
+    readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
+    /** A fresh service over the same state directory, as after a server restart. */
+    readonly reopen: Effect.Effect<ForkBots.ForkBots["Service"], never, Scope.Scope>;
   }) => Effect.Effect<A, E, R>,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const launched: Array<ThreadId> = [];
       const sentTo: Array<ThreadId> = [];
+      const texts: Array<string> = [];
       const liveThreads = new Set<ThreadId>();
 
       const mocks = Layer.mergeAll(
@@ -70,8 +79,9 @@ const withBots = <A, E, R>(
             ),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
-          launch: () =>
+          launch: (input) =>
             Effect.sync(() => {
+              texts.push(input.initialMessage?.text ?? "");
               const threadId = ThreadId.make(`thread-bot-${launched.length + 1}`);
               launched.push(threadId);
               liveThreads.add(threadId);
@@ -94,9 +104,10 @@ const withBots = <A, E, R>(
                   _tag: "OrchestratorThreadNotFoundError",
                   threadId,
                 } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
-          sendToThread: ((input: { threadId: ThreadId }) =>
+          sendToThread: ((input: { threadId: ThreadId; text: string }) =>
             Effect.sync(() => {
               sentTo.push(input.threadId);
+              texts.push(input.text);
               return { delivery: "started" } as never;
             })) as ThreadManagement.ThreadManagementServiceShape["sendToThread"],
         }),
@@ -111,7 +122,8 @@ const withBots = <A, E, R>(
         }),
       );
 
-      const testLayer = ForkBots.layer.pipe(
+      const services = ForkBots.layer.pipe(Layer.provideMerge(ForkProjectMemory.layer));
+      const testLayer = services.pipe(
         Layer.provideMerge(
           ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-bots-test-" }),
         ),
@@ -131,6 +143,18 @@ const withBots = <A, E, R>(
           fs: yield* FileSystem.FileSystem,
           launched,
           sentTo,
+          texts,
+          memory: yield* ForkProjectMemory.ForkProjectMemory,
+          reopen: Layer.build(
+            services.pipe(
+              Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+              Layer.provide(mocks),
+              Layer.provide(NodeServices.layer),
+            ),
+          ).pipe(
+            Effect.map((context) => Context.get(context, ForkBots.ForkBots)),
+            Effect.orDie,
+          ),
         });
       }).pipe(Effect.provide(testLayer));
     }),
@@ -214,5 +238,115 @@ describe("ForkBots", () => {
           expect(corrupt.message).not.toContain(stateDir);
         }),
       ),
+  );
+
+  it.effect("queues two simultaneous messages to one bot in one thread, in order", () =>
+    withBots(({ service, launched, sentTo, texts }) =>
+      Effect.gen(function* () {
+        const bot = yield* service.upsert(baseBot);
+        yield* Effect.all(
+          [
+            service.sendMessage({ id: bot.id, text: "primero" }),
+            service.sendMessage({ id: bot.id, text: "segundo" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(launched).toHaveLength(1);
+        expect(sentTo).toEqual(launched);
+        expect(texts[0]).toContain("primero");
+        expect(texts[1]).toBe("segundo");
+      }),
+    ),
+  );
+
+  it.effect("allows one coordinator per project", () =>
+    withBots(({ service }) =>
+      Effect.gen(function* () {
+        const first = yield* service.upsert({ ...baseBot, coordinator: true });
+        expect(
+          yield* service
+            .upsert({ ...baseBot, handle: "otro", coordinator: true })
+            .pipe(Effect.flip),
+        ).toMatchObject({ reason: "conflict" });
+        // An edit that omits the flag keeps it, so the first stays the coordinator.
+        expect((yield* service.upsert({ ...baseBot, id: first.id })).coordinator).toBe(true);
+        yield* service.upsert({ ...baseBot, id: first.id, coordinator: false });
+        expect(
+          (yield* service.upsert({ ...baseBot, handle: "otro", coordinator: true })).coordinator,
+        ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect(
+    "sends the coordinator's essential memory again only when it changed or a new thread starts",
+    () =>
+      withBots(({ service, memory, texts }) =>
+        Effect.gen(function* () {
+          const essential = yield* memory.upsert(
+            { projectId: projectA, text: "Despliega solo los viernes.", inclusion: "essential" },
+            "user",
+          );
+          yield* memory.upsert(
+            { projectId: projectA, text: "Nota que se busca.", inclusion: "searchable" },
+            "agent",
+          );
+          const plain = yield* service.upsert({ ...baseBot, handle: "plano" });
+          yield* service.sendMessage({ id: plain.id, text: "hola" });
+          expect(texts.at(-1)).not.toContain("<project_memory>");
+
+          const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+          yield* service.sendMessage({ id: coordinator.id, text: "uno" });
+          expect(texts.at(-1)).toContain("<project_memory>");
+          expect(texts.at(-1)).toContain("Despliega solo los viernes.");
+          expect(texts.at(-1)).not.toContain("Nota que se busca.");
+
+          yield* service.sendMessage({ id: coordinator.id, text: "dos" });
+          expect(texts.at(-1)).toBe("dos");
+
+          yield* memory.upsert(
+            { ...essential, text: "Despliega los martes.", inclusion: "essential" },
+            "user",
+          );
+          yield* service.sendMessage({ id: coordinator.id, text: "tres" });
+          expect(texts.at(-1)).toContain("Despliega los martes.");
+
+          // Another model means another provider conversation, which has seen no memory.
+          yield* service.upsert({
+            ...baseBot,
+            id: coordinator.id,
+            modelSelection: { instanceId: codex, model: "gpt-5.5" },
+          });
+          yield* service.sendMessage({ id: coordinator.id, text: "cuatro" });
+          expect(texts.at(-1)).toContain("Despliega los martes.");
+
+          // The last essential going away is a change too.
+          yield* memory.remove({ projectId: projectA, id: essential.id });
+          yield* service.sendMessage({ id: coordinator.id, text: "cinco" });
+          expect(texts.at(-1)).toContain("<project_memory>");
+          expect(texts.at(-1)).not.toContain("Despliega");
+        }),
+      ),
+  );
+
+  it.effect("keeps bots, memory and what was injected across a restart", () =>
+    withBots(({ service, memory, texts, reopen }) =>
+      Effect.gen(function* () {
+        yield* memory.upsert(
+          { projectId: projectA, text: "Usa pnpm.", inclusion: "essential" },
+          "user",
+        );
+        const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+        const first = yield* service.sendMessage({ id: coordinator.id, text: "uno" });
+
+        const restarted = yield* reopen;
+        expect((yield* restarted.list({})).bots).toMatchObject([
+          { id: coordinator.id, coordinator: true, threadId: first.threadId },
+        ]);
+        const again = yield* restarted.sendMessage({ id: coordinator.id, text: "dos" });
+        expect(again.threadId).toBe(first.threadId);
+        expect(texts.at(-1)).toBe("dos");
+      }),
+    ),
   );
 });

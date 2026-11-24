@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
@@ -71,6 +72,10 @@ export const ForkBot = Schema.Struct({
   runtimeMode: RuntimeMode,
   modelSelection: ForkFailoverTarget,
   archived: Schema.Boolean,
+  /** The project's one coordinator gets its essential memory injected into each turn. */
+  coordinator: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Hash of the essential memory its thread last received; null until one was sent. */
+  memoryHash: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -94,6 +99,7 @@ export const ForkBotUpsertInput = Schema.Struct({
   projectId: ProjectId,
   runtimeMode: Schema.optionalKey(RuntimeMode),
   modelSelection: ForkFailoverTarget,
+  coordinator: Schema.optionalKey(Schema.Boolean),
 });
 export type ForkBotUpsertInput = typeof ForkBotUpsertInput.Type;
 
