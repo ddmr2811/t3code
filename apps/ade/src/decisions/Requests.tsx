@@ -99,11 +99,11 @@ async function sendOnce(
   unsubscribe = registry.subscribe(
     environmentThreadDetails.pendingRequestsAtom(threadRef),
     (requests) => {
-      const pending =
-        requests !== null &&
-        [...requests.approvals, ...requests.userInputs].some(
-          (request) => request.requestId === requestId,
-        );
+      // null means the detail has not loaded yet, not that the request left.
+      if (requests === null) return;
+      const pending = [...requests.approvals, ...requests.userInputs].some(
+        (request) => request.requestId === requestId,
+      );
       if (pending || resolved) return;
       resolved = true;
       registry.update(sendingAtom, (current) => without(current, requestKey));

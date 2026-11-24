@@ -2,6 +2,7 @@ import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  decisionsByRow,
   groupThreads,
   listedThreads,
   projectMonogram,
@@ -118,6 +119,21 @@ describe("listedThreads", () => {
       }),
     ];
     expect(listedThreads(threads)).toEqual([kept]);
+  });
+});
+
+describe("decisionsByRow", () => {
+  it("puts a fork's decision on the fork's own row and its subagent's under the fork", () => {
+    const at = "2026-11-23T10:00:00.000Z";
+    const lineage = (parentThreadId: string | null, relationshipToParent: string | null) =>
+      ({ rootThreadId: "origin", parentThreadId, relationshipToParent, sideChat: false }) as never;
+    const origin = thread("origin", machineA, "p", at, { lineage: lineage(null, null) });
+    const fork = thread("fork", machineA, "p", at, { lineage: lineage("origin", "fork") });
+    const child = thread("child", machineA, "p", at, { lineage: lineage("fork", "subagent") });
+    const rows = decisionsByRow([fork, child], [origin, fork, child], [origin, fork]);
+    expect([...rows.entries()].map(([key, waiting]) => [key, waiting.map((t) => t.id)])).toEqual([
+      [`${machineA}\u0000fork`, ["fork", "child"]],
+    ]);
   });
 });
 

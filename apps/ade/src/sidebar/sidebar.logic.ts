@@ -67,6 +67,44 @@ export function listedThreads<T extends GroupInput>(threads: ReadonlyArray<T>): 
   );
 }
 
+type LineageInput = Pick<EnvironmentThreadShell, "environmentId" | "id" | "lineage">;
+
+export const lineageKey = (thread: { environmentId: string; id: string }) =>
+  `${thread.environmentId}\u0000${thread.id}`;
+
+/**
+ * Groups waiting threads under the listed row that shows their decision: the thread itself when
+ * listed, else its nearest listed ancestor. Parents, not `rootThreadId`: a fork shares its
+ * origin's root but has its own row. Threads with no listed ancestor are left out.
+ */
+export function decisionsByRow<T extends LineageInput>(
+  waiting: ReadonlyArray<T>,
+  all: ReadonlyArray<T>,
+  listed: ReadonlyArray<T>,
+): Map<string, T[]> {
+  const listedKeys = new Set(listed.map(lineageKey));
+  const byKey = new Map(all.map((thread) => [lineageKey(thread), thread]));
+  const rows = new Map<string, T[]>();
+  for (const thread of waiting) {
+    const seen = new Set<string>();
+    let current: T | undefined = thread;
+    while (current !== undefined && !seen.has(lineageKey(current))) {
+      const key = lineageKey(current);
+      if (listedKeys.has(key)) {
+        rows.set(key, [...(rows.get(key) ?? []), thread]);
+        break;
+      }
+      seen.add(key);
+      const parentId: string | null = current.lineage.parentThreadId;
+      current =
+        parentId === null
+          ? undefined
+          : byKey.get(lineageKey({ environmentId: current.environmentId, id: parentId }));
+    }
+  }
+  return rows;
+}
+
 const SIDEBAR_STORAGE_KEY = "ade.sidebar";
 
 const PROJECT_ACCENTS = ["#ECE6DA", "#8FB4EE", "#96C59A", "#D8D58A", "#E0A3B8", "#86CFCB"] as const;

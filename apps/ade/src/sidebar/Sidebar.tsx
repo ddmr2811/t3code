@@ -53,7 +53,9 @@ import {
   terminalAccessAtom,
 } from "../state.ts";
 import {
+  decisionsByRow,
   groupThreads,
+  lineageKey,
   listedThreads,
   projectAccentColor,
   projectMonogram,
@@ -353,18 +355,18 @@ export function ThreadTree() {
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const needsYou = useAtomValue(needsYouThreadsAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
+  const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const groups = groupThreads(listed, [...catalog.entries.keys()]);
   if (groups.length === 0) return null;
-  // The same waiting threads as the panel, each under the row it belongs to: a subagent's under
-  // its root thread. Phones have the panel only: the sidebar there is a drawer, mostly hidden.
-  const decisionsByRow = new Map<string, EnvironmentThreadShell[]>();
-  for (const thread of narrowViewport ? [] : needsYou) {
-    if (!thread.hasPendingApprovals && !thread.hasPendingUserInput) continue;
-    const rowKey = scopedThreadKey(
-      scopeThreadRef(thread.environmentId, thread.lineage.rootThreadId),
-    );
-    decisionsByRow.set(rowKey, [...(decisionsByRow.get(rowKey) ?? []), thread]);
-  }
+  // The same waiting threads as the panel, each under the row that shows it. Phones have the
+  // panel only: the sidebar there is a drawer, mostly hidden.
+  const rows = decisionsByRow(
+    narrowViewport
+      ? []
+      : needsYou.filter((thread) => thread.hasPendingApprovals || thread.hasPendingUserInput),
+    allShells,
+    listed,
+  );
   const selectThread = (key: string) => {
     setSelected(key);
     setMobileSidebar(false);
@@ -377,9 +379,7 @@ export function ThreadTree() {
             {catalog.entries.get(machine.environmentId)?.target.label ?? machine.environmentId}
           </h2>
           {machine.projects.map((project) => {
-            const waiting = project.threads.some((thread) =>
-              decisionsByRow.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-            );
+            const waiting = project.threads.some((thread) => rows.has(lineageKey(thread)));
             return (
               <div
                 key={project.projectId}
@@ -402,7 +402,7 @@ export function ThreadTree() {
                           selected={key === selected}
                           onSelect={selectThread}
                         />
-                        {decisionsByRow.get(key)?.map((waiting) => (
+                        {rows.get(lineageKey(thread))?.map((waiting) => (
                           <li key={waiting.id} className="ade-tree-decision">
                             {waiting.id === thread.id ? null : (
                               <p className="ade-request-note">Del subagente «{waiting.title}»</p>
