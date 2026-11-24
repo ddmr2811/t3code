@@ -74,7 +74,8 @@ export function AdeBackground() {
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
+    // A data URL lives in memory; past ~10 MB it costs more than a background is worth.
+    if (!file || file.size > 10 * 1024 * 1024) return;
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string" && reader.result.startsWith("data:image/")) {
@@ -115,7 +116,7 @@ export function AdeBackground() {
       </div>
 
       <div
-        className="fixed right-4 bottom-3 z-10 flex items-center rounded-full border border-border bg-[rgb(12_13_16/0.92)] p-[3px] shadow-[0_10px_30px_rgb(0_0_0/0.6)] backdrop-blur-md max-[720px]:top-3 max-[720px]:right-3 max-[720px]:bottom-auto"
+        className="fixed right-4 bottom-3 z-10 flex items-center rounded-full border border-border bg-[rgb(12_13_16/0.92)] p-[3px] shadow-[0_10px_30px_rgb(0_0_0/0.6)] backdrop-blur-md max-[720px]:hidden"
         data-ade-bg-picker=""
       >
         <span

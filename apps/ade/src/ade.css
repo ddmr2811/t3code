@@ -36,11 +36,6 @@
   --ade-canvas: #050608;
   --ade-bg: rgb(10 11 14 / 0.84);
   --ade-surface: rgb(20 22 28 / 0.78);
-  --ade-glass-panel: linear-gradient(180deg, rgb(13 14 17 / 0.8), rgb(10 11 13 / 0.86));
-  --ade-glass-blur: blur(28px) saturate(130%);
-  --ade-glass-shadow:
-    inset 0 0 0 1px rgb(255 255 255 / 0.11), inset 0 1px 0 rgb(255 255 255 / 0.2),
-    0 18px 48px rgb(0 0 0 / 0.6);
 
   /* Bordes y separadores */
   --ade-divider: rgb(255 255 255 / 0.08);
@@ -50,7 +45,6 @@
   --ade-text: #f5f5f5;
   --ade-text-muted: #bdbdc3;
   --ade-text-tertiary: #a4a4ac;
-  --ade-paper: #efeae0;
   --ade-ink: #0a0a0a;
 
   /* Estados */
@@ -58,14 +52,6 @@
   --ade-ok: #7fd6a2;
   --ade-warn: #e2b340;
   --ade-danger: #ff8589;
-
-  /* Colores por proyecto */
-  --ade-project-general: #ece6da;
-  --ade-project-neutralpha: #8fb4ee;
-  --ade-project-carrobles: #96c59a;
-  --ade-project-fork: #d8d58a;
-  --ade-project-dani: #e0a3b8;
-  --ade-project-jarvis: #86cfcb;
 
   /* Radios y tipografía */
   --ade-radius-sm: 6px;
@@ -459,7 +445,7 @@ body {
 
 .ade-needs-you[aria-expanded="true"] .ade-needs-you-action {
   background: var(--ade-text);
-  color: var(--ade-bg);
+  color: var(--ade-ink);
 }
 
 .ade-needs-you-dither {
@@ -638,7 +624,6 @@ body {
   flex-direction: column-reverse;
   min-height: 0;
   overflow-y: auto;
-  background: var(--ade-bg);
 }
 
 .ade-timeline {
@@ -3155,7 +3140,7 @@ body {
     padding: 16px;
     border-right: 0;
     border-bottom: 1px solid var(--ade-divider);
-    background: var(--ade-bg);
+    background: var(--ade-canvas);
   }
 
   .ade-mobile-drawer-close {
@@ -3177,7 +3162,7 @@ body {
     z-index: 20;
     padding: 16px;
     border-left: 0;
-    background: var(--ade-bg);
+    background: var(--ade-canvas);
   }
 
   .ade-bots-layout {
@@ -3205,7 +3190,7 @@ body {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
     border-top: 1px solid var(--ade-border);
-    background: var(--ade-surface);
+    background: var(--ade-canvas);
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
