@@ -39,6 +39,12 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkFailoverGetState]: AuthOrchestrationReadScope,
   [WS_METHODS.forkFailoverSetConfig]: AuthProvidersManageScope,
   [WS_METHODS.forkFailoverSwitchThread]: AuthOrchestrationOperateScope,
+  // Bots follow thread reads for discovery and orchestration operate for writes and messages.
+  [WS_METHODS.forkBotsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkBotsUpsert]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkBotsSetArchived]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkBotsRemove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

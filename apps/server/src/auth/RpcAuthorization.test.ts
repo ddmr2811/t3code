@@ -140,6 +140,18 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets thread readers list bots and requires operate scope for every bot mutation", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkBotsList)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.forkBotsUpsert,
+      WS_METHODS.forkBotsSetArchived,
+      WS_METHODS.forkBotsRemove,
+      WS_METHODS.forkBotsSendMessage,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("lets file readers see a task folder and takes source control to add a repository to it", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(

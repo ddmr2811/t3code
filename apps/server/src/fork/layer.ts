@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 import * as ForkActivity from "./activity/ForkActivity.ts";
+import * as ForkBots from "./bots/ForkBots.ts";
 import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
@@ -27,6 +28,8 @@ export const ForkLayer = Layer.mergeAll(
   ForkCoordination.layer,
   // Automatic and manual quota model failover persisted in `<stateDir>/fork/failover.json`.
   ForkFailover.layer,
+  // Persistent bot directory; bot chats are ordinary orchestration threads.
+  ForkBots.layer,
 );
 
 /** Every fork HTTP route; `server.ts` merges this beside its own routes. */

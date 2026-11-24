@@ -4,6 +4,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup";
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ForkActivity from "./activity/ForkActivity.ts";
+import * as ForkBots from "./bots/ForkBots.ts";
 import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
@@ -26,6 +27,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkGateway = yield* ForkGateway.ForkGateway;
   const forkCoordination = yield* ForkCoordination.ForkCoordination;
   const forkFailover = yield* ForkFailover.ForkFailover;
+  const forkBots = yield* ForkBots.ForkBots;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
     // Extensions settings page.
@@ -61,5 +63,11 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkFailoverGetState]: () => forkFailover.getState,
     [WS_METHODS.forkFailoverSetConfig]: (input) => forkFailover.setConfig(input),
     [WS_METHODS.forkFailoverSwitchThread]: (input) => forkFailover.switchThread(input),
+    // Persistent bot directory.
+    [WS_METHODS.forkBotsList]: (input) => forkBots.list(input),
+    [WS_METHODS.forkBotsUpsert]: (input) => forkBots.upsert(input),
+    [WS_METHODS.forkBotsSetArchived]: (input) => forkBots.setArchived(input),
+    [WS_METHODS.forkBotsRemove]: (input) => forkBots.remove(input),
+    [WS_METHODS.forkBotsSendMessage]: (input) => forkBots.sendMessage(input),
   });
 });

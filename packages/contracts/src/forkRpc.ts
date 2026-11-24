@@ -25,6 +25,18 @@ import {
   ForkFailoverSwitchThreadResult,
 } from "./forkFailover.ts";
 import {
+  ForkBot,
+  ForkBotListInput,
+  ForkBotListResult,
+  ForkBotRemoveInput,
+  ForkBotRemoveResult,
+  ForkBotSendMessageInput,
+  ForkBotSendMessageResult,
+  ForkBotSetArchivedInput,
+  ForkBotsError,
+  ForkBotUpsertInput,
+} from "./forkBots.ts";
+import {
   ForkAuthorizeCompleteInput,
   ForkAuthorizeEvent,
   ForkExtensionAgent,
@@ -78,6 +90,12 @@ export const FORK_WS_METHODS = {
   forkFailoverGetState: "forkFailover.getState",
   forkFailoverSetConfig: "forkFailover.setConfig",
   forkFailoverSwitchThread: "forkFailover.switchThread",
+  // Fork: persistent named bots and their front-layer chat.
+  forkBotsList: "forkBots.list",
+  forkBotsUpsert: "forkBots.upsert",
+  forkBotsSetArchived: "forkBots.setArchived",
+  forkBotsRemove: "forkBots.remove",
+  forkBotsSendMessage: "forkBots.sendMessage",
 } as const;
 
 // Fork: Extensions settings page.
@@ -255,6 +273,39 @@ const WsForkFailoverSwitchThreadRpc = Rpc.make(FORK_WS_METHODS.forkFailoverSwitc
   error: ForkFailoverRpcError,
 });
 
+// Fork: persistent bot directory.
+const ForkBotsRpcError = Schema.Union([ForkBotsError, EnvironmentAuthorizationError]);
+
+const WsForkBotsListRpc = Rpc.make(FORK_WS_METHODS.forkBotsList, {
+  payload: ForkBotListInput,
+  success: ForkBotListResult,
+  error: ForkBotsRpcError,
+});
+
+const WsForkBotsUpsertRpc = Rpc.make(FORK_WS_METHODS.forkBotsUpsert, {
+  payload: ForkBotUpsertInput,
+  success: ForkBot,
+  error: ForkBotsRpcError,
+});
+
+const WsForkBotsSetArchivedRpc = Rpc.make(FORK_WS_METHODS.forkBotsSetArchived, {
+  payload: ForkBotSetArchivedInput,
+  success: ForkBot,
+  error: ForkBotsRpcError,
+});
+
+const WsForkBotsRemoveRpc = Rpc.make(FORK_WS_METHODS.forkBotsRemove, {
+  payload: ForkBotRemoveInput,
+  success: ForkBotRemoveResult,
+  error: ForkBotsRpcError,
+});
+
+const WsForkBotsSendMessageRpc = Rpc.make(FORK_WS_METHODS.forkBotsSendMessage, {
+  payload: ForkBotSendMessageInput,
+  success: ForkBotSendMessageResult,
+  error: ForkBotsRpcError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -278,6 +329,11 @@ export const FORK_RPCS = [
   WsForkFailoverGetStateRpc,
   WsForkFailoverSetConfigRpc,
   WsForkFailoverSwitchThreadRpc,
+  WsForkBotsListRpc,
+  WsForkBotsUpsertRpc,
+  WsForkBotsSetArchivedRpc,
+  WsForkBotsRemoveRpc,
+  WsForkBotsSendMessageRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
@@ -291,4 +347,8 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkCoordinationRemove]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkFailoverSetConfig]: AuthProvidersManageScope,
   [FORK_WS_METHODS.forkFailoverSwitchThread]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsUpsert]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsSetArchived]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsRemove]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
 } as const;
