@@ -47,11 +47,12 @@
   --ade-text-tertiary: #a4a4ac;
   --ade-ink: #0a0a0a;
 
-  /* Estados */
+  /* Estados: un solo acento (naranja: activo o te espera), verde solo «Hecho», rojo solo errores */
   --ade-accent: #ff6a1f;
   --ade-ok: #7fd6a2;
-  --ade-warn: #e2b340;
   --ade-danger: #ff8589;
+  /* Desactivado: se distingue por el color, no por la opacidad, y se sigue leyendo (≥ 4,5:1) */
+  --ade-text-disabled: #8e8e96;
 
   /* Radios y tipografía */
   --ade-panel-width: 460px;
@@ -287,21 +288,22 @@ body {
   grid-row: 1 / span 2;
 }
 
+/* A connected machine is the normal state, so grey; busy is active, so the accent. */
 [data-tone="ok"] .ade-dot {
-  background: #4cc38a;
+  background: var(--ade-text-muted);
 }
 
 [data-tone="busy"] .ade-dot {
-  background: #e2b340;
+  background: var(--ade-accent);
 }
 
 [data-tone="error"] .ade-dot {
-  background: #e5484d;
+  background: var(--ade-danger);
 }
 
 [data-tone="error"] .ade-machine-status,
 .ade-pairing-error {
-  color: #ff8589;
+  color: var(--ade-danger);
 }
 
 .ade-pairing {
@@ -359,11 +361,6 @@ body {
   color: #0a0a0a;
   font: 600 13px var(--ade-font-sans);
   cursor: pointer;
-}
-
-.ade-button:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 
 .ade-sidebar {
@@ -521,7 +518,6 @@ body {
 .ade-thread:hover,
 .ade-thread:focus-visible {
   background: var(--ade-surface);
-  outline: none;
 }
 
 .ade-thread[aria-current="true"] {
@@ -549,19 +545,11 @@ body {
 }
 
 .ade-thread-state[data-state="working"] {
-  color: #e2b340;
+  color: var(--ade-accent);
 }
 
 .ade-thread-state[data-state="error"] {
-  color: #ff8589;
-}
-
-.ade-thread-view {
-  display: grid;
-  justify-items: start;
-  gap: 8px;
-  max-width: 640px;
-  padding: 32px;
+  color: var(--ade-danger);
 }
 
 .ade-thread-view h1 {
@@ -602,11 +590,11 @@ body {
   z-index: 1;
   display: flex;
   flex-direction: column;
+  gap: 8px;
   /* The title's one line would otherwise set the view's width on a phone. */
   min-width: 0;
   min-height: 0;
   height: 100%;
-  max-width: none;
   padding: 0;
 }
 
@@ -922,7 +910,7 @@ body {
 }
 
 .ade-tool-status[data-status="failed"] {
-  color: #e5484d;
+  color: var(--ade-danger);
 }
 
 .ade-reasoning > .ade-md {
@@ -955,9 +943,9 @@ body {
 .ade-error {
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid #5c2326;
+  border: 1px solid color-mix(in srgb, var(--ade-danger) 35%, transparent);
   border-radius: var(--ade-radius-md);
-  color: #ff9592;
+  color: var(--ade-danger);
   font-size: 13px;
 }
 
@@ -1072,11 +1060,6 @@ body {
   color: #0a0a0a;
 }
 
-.ade-composer-send:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 .ade-composer-images {
   display: flex;
   flex-wrap: wrap;
@@ -1174,10 +1157,6 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.ade-picker-menu label {
-  display: flex;
 }
 
 .ade-picker-menu label svg[width] {
@@ -1589,11 +1568,6 @@ body {
   margin-top: 0;
 }
 
-.ade-request .ade-button-quiet:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
 .ade-request-broad {
   display: grid;
   gap: 6px;
@@ -1685,12 +1659,13 @@ body {
   color: var(--ade-text);
 }
 
+/* Diff lines keep the usual added/removed colours, from the same tokens. */
 [data-sign="+"] {
-  color: #4cc38a;
+  color: var(--ade-ok);
 }
 
 [data-sign="−"] {
-  color: #ff8589;
+  color: var(--ade-danger);
 }
 
 .ade-diff {
@@ -1794,36 +1769,6 @@ body {
 
 .ade-diff-file > .ade-diff-note {
   padding: 12px;
-}
-
-.ade-button-quiet:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Why a control is off, shown on hover; a disabled button takes no pointer events itself. */
-.ade-why-anchor {
-  position: relative;
-  flex: none;
-}
-
-.ade-why {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 2;
-  width: 260px;
-  padding: 8px 10px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-sm);
-  background: var(--ade-surface);
-  color: var(--ade-text-muted);
-  font-size: 12px;
-  visibility: hidden;
-}
-
-.ade-why-anchor:hover .ade-why {
-  visibility: visible;
 }
 
 .ade-terminal {
@@ -1996,7 +1941,6 @@ body {
 .ade-view-link:focus-visible {
   background: var(--ade-surface);
   color: var(--ade-text);
-  outline: none;
 }
 
 .ade-view-link[aria-current="page"] {
@@ -2107,7 +2051,7 @@ body {
 }
 
 [data-level="high"] {
-  color: var(--ade-warn);
+  color: var(--ade-accent);
 }
 
 [data-level="full"] {
@@ -2195,7 +2139,6 @@ body {
 .ade-board-card:hover,
 .ade-board-card:focus-visible {
   background: var(--ade-surface);
-  outline: none;
 }
 
 .ade-session-title {
@@ -2377,7 +2320,7 @@ body {
   border: 0;
   border-radius: var(--ade-radius-sm);
   background: rgb(10 11 14 / 0.7);
-  color: #ff7f3b;
+  color: var(--ade-accent);
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
@@ -2386,8 +2329,8 @@ body {
 
 .ade-home-needs-you:hover,
 .ade-home-needs-you:focus-visible {
-  background: rgb(255 106 31 / 0.2);
-  color: #ff945c;
+  background: color-mix(in srgb, var(--ade-accent) 20%, transparent);
+  color: var(--ade-accent);
   outline: 2px solid var(--ade-accent);
   outline-offset: 2px;
 }
@@ -2584,7 +2527,6 @@ body {
 .ade-filter-chip:focus-visible {
   border-color: var(--ade-text-muted);
   color: var(--ade-text);
-  outline: none;
 }
 
 .ade-filter-chip[aria-pressed="true"] {
@@ -2641,8 +2583,8 @@ body {
 }
 
 .ade-chip[data-kind="question"] {
-  border-color: color-mix(in srgb, var(--ade-warn) 55%, var(--ade-border));
-  color: var(--ade-warn);
+  border-color: color-mix(in srgb, var(--ade-accent) 55%, var(--ade-border));
+  color: var(--ade-accent);
 }
 
 .ade-decision-footer {
@@ -2670,7 +2612,6 @@ body {
 .ade-backlayer-link:focus-visible {
   border-color: var(--ade-accent);
   color: var(--ade-accent);
-  outline: none;
 }
 
 .ade-backlayer-hint {
@@ -2920,7 +2861,7 @@ body {
 }
 
 .ade-coord-card[data-coord-status="waiting"] {
-  border-color: color-mix(in srgb, var(--ade-warn) 50%, var(--ade-border));
+  border-color: color-mix(in srgb, var(--ade-accent) 50%, var(--ade-border));
 }
 
 .ade-coord-card-head {
@@ -2946,7 +2887,7 @@ body {
 }
 
 .ade-coord-status[data-coord-status="working"] {
-  color: var(--ade-warn);
+  color: var(--ade-accent);
 }
 
 .ade-coord-status[data-coord-status="waiting"] {
@@ -3448,8 +3389,7 @@ body {
 }
 
 .ade-chip[data-failover-status="skipped"] {
-  border-color: color-mix(in srgb, var(--ade-warn) 55%, var(--ade-border));
-  color: var(--ade-warn);
+  color: var(--ade-text-muted);
 }
 
 .ade-chip[data-failover-status="failed"] {
@@ -3624,14 +3564,14 @@ body {
   }
 
   .ade-rail-needs-you {
-    background: rgb(255 106 31 / 0.15);
+    background: color-mix(in srgb, var(--ade-accent) 15%, transparent);
     color: var(--ade-accent);
-    box-shadow: inset 0 0 0 1px rgb(255 106 31 / 0.4);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ade-accent) 40%, transparent);
   }
 
   .ade-rail-needs-you:hover,
   .ade-rail-needs-you[aria-expanded="true"] {
-    background: rgb(255 106 31 / 0.24);
+    background: color-mix(in srgb, var(--ade-accent) 24%, transparent);
     color: var(--ade-accent);
     box-shadow: inset 0 0 0 1px var(--ade-accent);
   }
@@ -3760,7 +3700,7 @@ body {
     height: 9px;
     border-radius: 999px;
     background: var(--ade-danger);
-    box-shadow: 0 0 0 2px rgb(255 133 137 / 0.25);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ade-danger) 25%, transparent);
   }
 
   .ade-bg-popover {
@@ -3944,7 +3884,7 @@ body {
   }
 
   .ade-mobile-nav-item:disabled {
-    opacity: 0.45;
+    color: var(--ade-text-disabled);
     cursor: default;
   }
 
@@ -4457,4 +4397,28 @@ body {
   .ade-search-button kbd {
     display: none;
   }
+}
+
+/* Keyboard focus is always visible: the accent, 3:1 or more on every surface. Zero specificity,
+   so a component that draws its own ring keeps it. */
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 2px;
+}
+
+/* Placeholders and disabled controls, last so they win over each component's own colours.
+   Disabled reads as off by its colour, never by fading below what can be read. */
+::placeholder {
+  color: var(--ade-text-muted);
+  opacity: 1;
+}
+
+.ade-button:disabled,
+.ade-button-quiet:disabled,
+.ade-composer-send:disabled {
+  border-color: var(--ade-divider);
+  background: var(--ade-surface);
+  color: var(--ade-text-disabled);
+  opacity: 1;
+  cursor: not-allowed;
 }

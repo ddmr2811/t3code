@@ -19,7 +19,7 @@ import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
-import { shortcutsFree } from "./panels/FloatingPanel.tsx";
+import { shortcutsFree, toolPanelAtom } from "./panels/FloatingPanel.tsx";
 import { ToolPanels } from "./panels/ToolPanels.tsx";
 import { Search } from "./search/Search.tsx";
 import { SearchButton, searchOpenAtom } from "./search/SearchButton.tsx";
@@ -32,6 +32,7 @@ import {
 import { Overview, viewAtom, ViewNav } from "./overview/Overview.tsx";
 import {
   mobileSidebarOpenAtom,
+  crowdedViewportAtom,
   narrowViewportAtom,
   NeedsYouBlock,
   ProjectRail,
@@ -164,6 +165,10 @@ function Shell() {
   const [view, setView] = useAtom(viewAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const narrowViewport = useAtomValue(narrowViewportAtom);
+  const crowdedViewport = useAtomValue(crowdedViewportAtom);
+  const toolPanelOpen = useAtomValue(toolPanelAtom) !== null;
+  const decisionsOpen = useDecisionsPanel().open;
+  const panelOpen = toolPanelOpen || decisionsOpen;
   const hasMachines = useAtomValue(environmentCatalog.catalogValueAtom).entries.size > 0;
   // Start collapsed on desktop unless a pairing link arrived in the URL and needs the form.
   const [sidebarExpanded, setSidebarExpanded] = useState(
@@ -195,7 +200,10 @@ function Shell() {
   const toggleHint = useShortcutHint("mod+b");
   const newThreadHint = useShortcutHint("mod+shift+o");
   // Keep the sidebar expanded while there are no machines so the pairing UI stays reachable.
-  const collapsed = !narrowViewport && !sidebarExpanded && hasMachines;
+  // A panel on a window under 1200 px folds the sidebar to its rail while it is open, so the
+  // reading column keeps its room; the saved choice stays as it was.
+  const collapsed =
+    !narrowViewport && hasMachines && (!sidebarExpanded || (crowdedViewport && panelOpen));
   const shortcutLabel = toggleHint.text || "Ctrl+B";
   const newThreadShortcutLabel = newThreadHint.text || "Ctrl+Shift+O";
   const isHome = hasMachines && !threadOpen && view === "inicio";
