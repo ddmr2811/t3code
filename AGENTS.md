@@ -210,6 +210,12 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 - Our users drive agents all day and notice a dropped frame, a lying spinner, and a stale label. No continuously repainting animations; they peg the GPU on high-refresh displays.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
 
+## Diseño de interfaz
+
+Usa la skill `design-taste-frontend` (TasteSkill). Ejecuta `start.mjs` y no des el trabajo por terminado hasta `GATE: PASS` de `gate.mjs`. No la mezcles con `frontend-design`, `emil-design-eng` ni `unslop-ui` en el mismo encargo.
+
+En el ADE solo se aplica la tipografía, la paleta, el espaciado, los bordes y las microinteracciones, dentro del estilo mínimo (fondo `#0A0A0A`, Geist, Phosphor, naranja de acento, `prefers-reduced-motion`), sin hero a pantalla completa, fotos ni shaders. UI SDK sigue siendo la base de componentes.
+
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
