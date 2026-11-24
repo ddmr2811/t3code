@@ -30,7 +30,7 @@ import {
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer, runCommand } from "../composer/Composer.tsx";
 import { RequestCards, ThreadRequests } from "../decisions/Requests.tsx";
-import { isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
+import { isSnoozed, isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import {
   availableMachineProviderCatalog,
@@ -65,6 +65,7 @@ import {
   threadState,
 } from "./sidebar.logic.ts";
 import { useCutHandoffs } from "../decisions/HandoffNotices.tsx";
+import { snoozeClockAtom, snoozesAtom } from "../decisions/snoozed.ts";
 
 const STATE_VIEW = {
   "needs-you": { Glyph: WarningCircleIcon, text: "Te necesita" },
@@ -98,6 +99,49 @@ const needsYouThreadsAtom = stableList("ade-needs-you", (threads, get) => {
   return selectNeedsYouThreads(threads).filter((thread) => operable.has(thread.environmentId));
 });
 
+const threadKeyOf = (thread: EnvironmentThreadShell) =>
+  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+
+const NO_REQUEST_IDS: ReadonlyArray<string> = [];
+
+/** What «Luego» hides right now: not due, and its thread asks nothing new since. */
+const snoozedKeysAtom = (() => {
+  let previous: ReadonlyArray<string> = [];
+  return Atom.make((get) => {
+    const now = get(snoozeClockAtom);
+    const waiting = new Map(
+      get(needsYouThreadsAtom).map((thread) => [threadKeyOf(thread), thread]),
+    );
+    const next = Object.entries(get(snoozesAtom)).flatMap(([key, snooze]) => {
+      if (key.startsWith("handoff:")) return isSnoozed(snooze, NO_REQUEST_IDS, now) ? [key] : [];
+      const thread = waiting.get(key);
+      if (thread === undefined) return [];
+      const requests =
+        thread.hasPendingApprovals || thread.hasPendingUserInput
+          ? get(
+              environmentThreadDetails.pendingRequestsAtom(
+                scopeThreadRef(thread.environmentId, thread.id),
+              ),
+            )
+          : { approvals: [], userInputs: [] };
+      const ids =
+        requests === null
+          ? null
+          : [...requests.approvals, ...requests.userInputs].map((request) => request.requestId);
+      return isSnoozed(snooze, ids, now) ? [key] : [];
+    });
+    if (arrayElementsEqual(previous, next)) return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel("ade-snoozed-keys"));
+})();
+
+// The rail and the tree mark only what waits now; what «Luego» hid shows in the panel.
+const waitingThreadsAtom = stableList("ade-waiting-now", (_threads, get) => {
+  const snoozed = get(snoozedKeysAtom);
+  return get(needsYouThreadsAtom).filter((thread) => !snoozed.includes(threadKeyOf(thread)));
+});
+
 const decisionsChoiceAtom = Atom.make<DecisionsPanelChoice | null>(null).pipe(Atom.keepAlive);
 
 /** Controls the mobile sidebar drawer on narrow viewports (≤ 720 px); unused on desktop. */
@@ -127,16 +171,17 @@ export const crowdedViewportAtom = viewportAtom("(max-width: 1199px)", "ade-crow
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
   const threads = useAtomValue(needsYouThreadsAtom);
+  const snoozedKeys = useAtomValue(snoozedKeysAtom);
   // A bot handoff cut for too many hops also waits for the user, so it counts and opens the panel.
   const cutHandoffKeys = useCutHandoffs().map((notice) => notice.key);
   const [choice, setChoice] = useAtom(decisionsChoiceAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
-  const keys = [
-    ...threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
-    ...cutHandoffKeys,
-  ];
+  const allKeys = [...threads.map(threadKeyOf), ...cutHandoffKeys];
+  // Counters and the opening on new arrivals leave out what «Luego» hid.
+  const keys = allKeys.filter((key) => !snoozedKeys.includes(key));
+  const snoozedCount = allKeys.length - keys.length;
   const [toolPanel, setToolPanel] = useAtom(toolPanelAtom);
-  const effectiveChoice = reconcileTrayChoice(choice, keys, narrowViewport);
+  const effectiveChoice = reconcileTrayChoice(choice, allKeys, narrowViewport);
   useEffect(() => {
     if (effectiveChoice !== choice) {
       setChoice(effectiveChoice);
@@ -144,9 +189,16 @@ export function useDecisionsPanel() {
   }, [choice, effectiveChoice, setChoice]);
   return {
     threads,
+    snoozedKeys,
+    waitingKeys: keys,
     count: keys.length,
+    snoozedCount,
     // One panel at a time: an open terminal or activity keeps decisions waiting behind it.
-    open: toolPanel === null && isTrayOpenForViewport(effectiveChoice, keys, narrowViewport),
+    // With only snoozed ones left it opens when asked, to bring them back, never by itself.
+    open:
+      toolPanel === null &&
+      (isTrayOpenForViewport(effectiveChoice, keys, narrowViewport) ||
+        (keys.length === 0 && snoozedCount > 0 && effectiveChoice?.open === true)),
     setOpen: (open: boolean) => {
       if (open) setToolPanel(null);
       setChoice({ open, seenKeys: keys });
@@ -198,7 +250,7 @@ export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean
 }
 
 export function NeedsYouBlock(props: { compact?: boolean }) {
-  const { count, open, setOpen } = useDecisionsPanel();
+  const { count, snoozedCount, open, setOpen } = useDecisionsPanel();
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const words = count === 1 ? "te necesita" : "te necesitan";
   if (props.compact) {
@@ -230,6 +282,20 @@ export function NeedsYouBlock(props: { compact?: boolean }) {
       <div className="ade-needs-you" data-empty>
         <span className="ade-needs-you-count">0</span>
         <span>{words}</span>
+        {snoozedCount === 0 ? null : (
+          <button
+            type="button"
+            className="ade-link"
+            aria-expanded={open}
+            aria-controls="ade-decisions"
+            onClick={() => {
+              setMobileSidebar(false);
+              setOpen(!open);
+            }}
+          >
+            {snoozedCount === 1 ? "1 pospuesta" : `${snoozedCount} pospuestas`}
+          </button>
+        )}
       </div>
     );
   }
@@ -322,7 +388,7 @@ export function ProjectRail() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const operable = useAtomValue(operableEnvironmentIdsAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
-  const needsYou = useAtomValue(needsYouThreadsAtom);
+  const needsYou = useAtomValue(waitingThreadsAtom);
   const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const projects = railProjects(
     listed,
@@ -383,7 +449,7 @@ export function ThreadTree() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
-  const needsYou = useAtomValue(needsYouThreadsAtom);
+  const needsYou = useAtomValue(waitingThreadsAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
   const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
   const decisions = useDecisionsPanel();

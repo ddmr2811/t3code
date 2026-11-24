@@ -127,6 +127,11 @@ export const trayHasFocus = () =>
 
 const focusTray = () => document.querySelector<HTMLElement>(".ade-tray")?.focus();
 
+/** Keeps Y, N and S working after an answer from inside the tray: the answered control goes. */
+export const focusTrayFrom = (element: Element) => {
+  if (element.closest(".ade-tray") !== null) focusTray();
+};
+
 // A file read changes nothing and a file edit comes back with the turn's checkpoint; a command,
 // a permission or an MCP request may not, so its «Sí» asks twice.
 const REVERSIBLE: ReadonlySet<ProviderRequestKind> = new Set(["file-read", "file-change"]);
@@ -187,7 +192,11 @@ function ApprovalCard(props: {
   const broad = choices.filter((choice) => choice.broad);
   const [armed, setArmed] = useState(false);
   const canYes = choices.some((choice) => choice.decision === "accept");
-  const canNo = choices.some((choice) => choice.decision === "decline");
+  // An ACP agent may offer no «decline»; its «cancel» is then the «No».
+  const noDecision =
+    choices.find((choice) => choice.decision === "decline")?.decision ??
+    choices.find((choice) => choice.decision === "cancel")?.decision;
+  const canNo = noDecision !== undefined;
   const ready = props.tray === true && canAnswer && sent === null;
   const yes = () => {
     if (!REVERSIBLE.has(approval.requestKind) && !armed) return setArmed(true);
@@ -195,8 +204,9 @@ function ApprovalCard(props: {
     void respond("accept");
   };
   const no = () => {
+    if (noDecision === undefined) return;
     focusTray();
-    void respond("decline");
+    void respond(noDecision);
   };
   useShortcut("y", yes, { when: () => ready && canYes && trayHasFocus(), description: "Sí" });
   useShortcut("n", no, { when: () => ready && canNo && trayHasFocus(), description: "No" });
@@ -249,7 +259,7 @@ function ApprovalCard(props: {
             ) : null}
             {canNo ? (
               <button type="button" className="ade-button-quiet" disabled={!ready} onClick={no}>
-                {sent === "decline" ? "Enviando…" : "No"} <kbd>N</kbd>
+                {sent === noDecision ? "Enviando…" : "No"} <kbd>N</kbd>
               </button>
             ) : null}
           </div>
@@ -292,7 +302,12 @@ function ApprovalCard(props: {
   );
 }
 
-function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPendingUserInput }) {
+function QuestionCard(props: {
+  threadRef: ScopedThreadRef;
+  prompt: ThreadPendingUserInput;
+  /** Inside a decision card whose chip already says «Pregunta». */
+  inCard?: boolean;
+}) {
   const { threadRef, prompt } = props;
   const registry = useContext(RegistryContext);
   const canAnswer = useCanAnswer(threadRef) && prompt.responseCapability !== "not_resumable";
@@ -320,6 +335,7 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
       onSubmit={(event) => {
         event.preventDefault();
         if (resolved === null || sent !== null) return;
+        focusTrayFrom(event.currentTarget);
         void run("answer", () =>
           runCommand(
             registry,
@@ -330,7 +346,7 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
         );
       }}
     >
-      <p className="ade-request-tag">Pregunta</p>
+      {props.inCard === true ? null : <p className="ade-request-tag">Pregunta</p>}
       <fieldset disabled={!canAnswer || sent !== null}>
         {prompt.questions.map((question) => {
           const draft = answers[question.id];
@@ -410,7 +426,8 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
             type="button"
             className="ade-button-quiet"
             disabled={!canAnswer || sent !== null}
-            onClick={() =>
+            onClick={(event) => {
+              focusTrayFrom(event.currentTarget);
               void run("dismiss", () =>
                 runCommand(
                   registry,
@@ -418,8 +435,8 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
                   { ...target, input: request },
                   "No se pudo descartar la pregunta",
                 ),
-              )
-            }
+              );
+            }}
           >
             {sent === "dismiss" ? "Descartando…" : "Descartar la pregunta"}
           </button>
@@ -486,6 +503,7 @@ export function RequestCards(props: {
   threadRef: ScopedThreadRef;
   subscribe: boolean;
   whole?: boolean;
+  inCard?: boolean;
 }) {
   // Without a pending request there is nothing worth a detail subscription.
   const requests = useAtomValue(
@@ -505,7 +523,12 @@ export function RequestCards(props: {
         <ApprovalCard key={approval.requestId} threadRef={props.threadRef} approval={approval} />
       ))}
       {requests.userInputs.map((prompt) => (
-        <QuestionCard key={prompt.requestId} threadRef={props.threadRef} prompt={prompt} />
+        <QuestionCard
+          key={prompt.requestId}
+          threadRef={props.threadRef}
+          prompt={prompt}
+          inCard={props.inCard === true}
+        />
       ))}
       {props.whole === true ? (
         <OrphanedAnswers threadRef={props.threadRef} requests={requests} />
@@ -527,7 +550,7 @@ export function FirstRequest(props: { threadRef: ScopedThreadRef; subscribe: boo
   }
   const prompt = requests?.userInputs[0];
   if (prompt === undefined) return null;
-  return <QuestionCard key={prompt.requestId} threadRef={props.threadRef} prompt={prompt} />;
+  return <QuestionCard key={prompt.requestId} threadRef={props.threadRef} prompt={prompt} inCard />;
 }
 
 /** Above the composer: what the selected thread and its subagents wait on. */

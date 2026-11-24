@@ -209,10 +209,16 @@ export function buildPendingNotificationEvent(
   };
 }
 
-/** «Luego»: each decision key with the time it comes back, in ms. Nothing is dropped from the server. */
-export type SnoozedUntil = Readonly<Record<string, number>>;
+/** «Luego»: when a decision comes back, and the requests it had then. Nothing leaves the server. */
+export interface Snooze {
+  readonly until: number;
+  readonly requestIds: ReadonlyArray<string>;
+}
+export type Snoozes = Readonly<Record<string, Snooze>>;
 
-const SNOOZED_STORAGE_KEY = "ade.decisions.snoozed";
+const SNOOZES_STORAGE_KEY = "ade.decisions.snoozed";
+// Tomorrow at 08:00 is at most ~32 h away; anything further was not written by this code.
+const MAX_SNOOZE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** Tomorrow at 08:00 local time, whatever the hour it is snoozed at. */
 export function snoozeUntilTomorrow(now: DateTime.DateTime): number {
@@ -223,30 +229,73 @@ export function snoozeUntilTomorrow(now: DateTime.DateTime): number {
   );
 }
 
-export function isSnoozed(snoozed: SnoozedUntil, key: string, now: number): boolean {
-  return (snoozed[key] ?? 0) > now;
+/**
+ * Hidden until its time, and only while the thread asks nothing it did not ask when snoozed.
+ * `pendingRequestIds` is null while the thread's requests are still loading.
+ */
+export function isSnoozed(
+  snooze: Snooze | undefined,
+  pendingRequestIds: ReadonlyArray<string> | null,
+  now: number,
+): boolean {
+  if (snooze === undefined || snooze.until <= now) return false;
+  return (
+    pendingRequestIds === null || pendingRequestIds.every((id) => snooze.requestIds.includes(id))
+  );
 }
 
-/** What this browser has snoozed and has not come back yet; a damaged entry is ignored. */
-export function readSnoozed(now: number, storage?: Pick<Storage, "getItem">): SnoozedUntil {
+/** Drops what is due and what no longer waits, so a later wait on the same thread starts fresh. */
+export function pruneSnoozes(
+  snoozes: Snoozes,
+  waitingKeys: ReadonlyArray<string>,
+  now: number,
+): Snoozes {
+  return Object.fromEntries(
+    Object.entries(snoozes).filter(
+      ([key, snooze]) => snooze.until > now && waitingKeys.includes(key),
+    ),
+  );
+}
+
+/** The nearest return time still ahead, for the one timer that brings it back. */
+export function nextSnoozeReturn(snoozes: Snoozes, now: number): number | null {
+  const ahead = Object.values(snoozes)
+    .map((snooze) => snooze.until)
+    .filter((until) => until > now);
+  return ahead.length === 0 ? null : Math.min(...ahead);
+}
+
+const isSnooze = (value: unknown, now: number): value is Snooze => {
+  if (typeof value !== "object" || value === null) return false;
+  const { until, requestIds } = value as Record<string, unknown>;
+  return (
+    typeof until === "number" &&
+    Number.isFinite(until) &&
+    until > now &&
+    until <= now + MAX_SNOOZE_MS &&
+    Array.isArray(requestIds) &&
+    requestIds.every((id) => typeof id === "string")
+  );
+};
+
+/** What this browser has snoozed and is not due yet; a damaged entry is ignored. */
+export function readSnoozes(now: number, storage?: Pick<Storage, "getItem">): Snoozes {
   try {
     const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
-    const parsed: unknown = JSON.parse(store?.getItem(SNOOZED_STORAGE_KEY) ?? "{}");
+    const parsed: unknown = JSON.parse(store?.getItem(SNOOZES_STORAGE_KEY) ?? "{}");
     if (typeof parsed !== "object" || parsed === null) return {};
     return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, number] => typeof entry[1] === "number" && entry[1] > now,
-      ),
+      Object.entries(parsed).filter((entry): entry is [string, Snooze] => isSnooze(entry[1], now)),
     );
   } catch {
     return {};
   }
 }
 
-export function writeSnoozed(snoozed: SnoozedUntil, storage?: Pick<Storage, "setItem">): void {
+export function writeSnoozes(snoozes: Snoozes, storage?: Pick<Storage, "setItem">): void {
   try {
     const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
-    store?.setItem(SNOOZED_STORAGE_KEY, JSON.stringify(snoozed));
+    store?.setItem(SNOOZES_STORAGE_KEY, JSON.stringify(snoozes));
   } catch {
     // Private browsing may refuse storage; the snooze then lasts until the page reloads.
   }

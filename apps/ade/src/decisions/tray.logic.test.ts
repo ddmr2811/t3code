@@ -11,10 +11,10 @@ import {
   filterPendingItems,
   isSnoozed,
   isTrayOpenForViewport,
-  readSnoozed,
+  readSnoozes,
   reconcileTrayChoice,
   snoozeUntilTomorrow,
-  writeSnoozed,
+  writeSnoozes,
   type PendingSeenByEnvironment,
   type PendingThreadInput,
 } from "./tray.logic.ts";
@@ -182,17 +182,33 @@ describe("tray.logic", () => {
       );
     const until = snoozeUntilTomorrow(local(1, 31, 23, 30));
     expect(until).toBe(DateTime.toEpochMillis(local(2, 1, 8, 0)));
-    const snoozed = { "env-a:t1": until };
-    expect(isSnoozed(snoozed, "env-a:t1", until - 60_000)).toBe(true);
-    expect(isSnoozed(snoozed, "env-a:t1", until)).toBe(false);
+    const snooze = { until, requestIds: ["r1"] };
+    expect(isSnoozed(snooze, ["r1"], until - 60_000)).toBe(true);
+    expect(isSnoozed(snooze, ["r1"], until)).toBe(false);
 
     const saved = new Map<string, string>();
     const storage = {
       getItem: (key: string) => saved.get(key) ?? null,
       setItem: (key: string, value: string) => void saved.set(key, value),
     };
-    writeSnoozed({ ...snoozed, "env-a:old": until - 86_400_000 }, storage);
-    expect(readSnoozed(until - 1, storage)).toEqual(snoozed);
-    expect(readSnoozed(until, storage)).toEqual({});
+    writeSnoozes(
+      {
+        "env-a:t1": snooze,
+        "env-a:old": { until: until - 86_400_000, requestIds: [] },
+        "env-a:far": { until: 1e20, requestIds: [] },
+      },
+      storage,
+    );
+    expect(readSnoozes(until - 1, storage)).toEqual({ "env-a:t1": snooze });
+    expect(readSnoozes(until, storage)).toEqual({});
+  });
+
+  it("brings a snoozed thread back as soon as it asks something it did not ask when snoozed", () => {
+    const snooze = { until: 2_000, requestIds: ["approval-1"] };
+    expect(isSnoozed(snooze, ["approval-1"], 1_000)).toBe(true);
+    // Still loading its requests: kept hidden rather than flashing back.
+    expect(isSnoozed(snooze, null, 1_000)).toBe(true);
+    expect(isSnoozed(snooze, ["approval-1", "question-2"], 1_000)).toBe(false);
+    expect(isSnoozed(snooze, ["question-2"], 1_000)).toBe(false);
   });
 });

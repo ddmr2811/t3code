@@ -7,6 +7,7 @@ import { type ReactNode, useContext, useState } from "react";
 import { allBotsAtom, forkBotsDismissHandoffCommand, refreshBots } from "../bots/bots.state.ts";
 import { runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
+import { focusTrayFrom } from "./Requests.tsx";
 
 /** Every cut handoff on every machine, keyed like the decisions panel counts them. */
 export function useCutHandoffs() {
@@ -31,22 +32,24 @@ export function useCutHandoffs() {
 
 /**
  * Handoffs cut for too many hops wait here until the user opens the sender's thread or dismisses
- * them. `only` shows the one the tray is on, with its «Luego».
+ * them. `include` picks the ones to show: the tray's current one, or those not snoozed.
  */
 export function HandoffNotices(props: {
   onOpenBackLayer: (threadKey: string) => void;
-  only?: string;
+  include: (key: string) => boolean;
   later?: ReactNode;
 }) {
   const registry = useContext(RegistryContext);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const [error, setError] = useState<string | null>(null);
-  const notices = useCutHandoffs().filter(
-    (notice) => props.only === undefined || notice.key === props.only,
-  );
+  // Sent once: the notice leaves when the bots refresh, so a sent key stays disabled.
+  const [dismissing, setDismissing] = useState<ReadonlySet<string>>(new Set());
+  const notices = useCutHandoffs().filter((notice) => props.include(notice.key));
   if (notices.length === 0) return null;
 
-  const dismiss = async (environmentId: EnvironmentId, id: string) => {
+  const dismiss = async (key: string, environmentId: EnvironmentId, id: string) => {
+    if (dismissing.has(key)) return;
+    setDismissing((current) => new Set(current).add(key));
     setError(null);
     const failure = await runCommand(
       registry,
@@ -54,7 +57,10 @@ export function HandoffNotices(props: {
       { environmentId, input: { id } },
       "No se pudo descartar el aviso",
     );
-    if (failure !== null) return setError(failure);
+    if (failure !== null) {
+      setDismissing((current) => new Set([...current].filter((sent) => sent !== key)));
+      return setError(failure);
+    }
     refreshBots(registry, environmentId);
   };
 
@@ -77,7 +83,8 @@ export function HandoffNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   )
           }
-          onDismiss={() => void dismiss(environmentId, handoff.id)}
+          dismissing={dismissing.has(key)}
+          onDismiss={() => void dismiss(key, environmentId, handoff.id)}
         />
       ))}
       {error === null ? null : (
@@ -97,6 +104,7 @@ function HandoffNotice(props: {
   environmentId: EnvironmentId;
   onOpen: (() => void) | null;
   onDismiss: () => void;
+  dismissing: boolean;
   later?: ReactNode;
 }) {
   const canDismiss = useAtomValue(
@@ -128,10 +136,13 @@ function HandoffNotice(props: {
         <button
           type="button"
           className="ade-button-quiet"
-          onClick={props.onDismiss}
-          disabled={canDismiss !== true}
+          onClick={(event) => {
+            focusTrayFrom(event.currentTarget);
+            props.onDismiss();
+          }}
+          disabled={canDismiss !== true || props.dismissing}
         >
-          Descartar
+          {props.dismissing ? "Descartando…" : "Descartar"}
         </button>
         {props.later}
       </div>

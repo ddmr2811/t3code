@@ -7,8 +7,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useShortcut } from "@ui-sdk/react/shortcuts";
-import * as DateTime from "effect/DateTime";
-import { type ReactNode, useContext, useMemo, useRef, useState } from "react";
+import { type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 import { FloatingPanel } from "../panels/FloatingPanel.tsx";
@@ -26,15 +25,19 @@ import {
   buildPendingTrayItems,
   countPendingByKind,
   filterPendingItems,
-  isSnoozed,
+  nextSnoozeReturn,
   type PendingTrayFilterKind,
   type PendingTrayItem,
   type PendingTrayKind,
-  readSnoozed,
-  type SnoozedUntil,
-  snoozeUntilTomorrow,
-  writeSnoozed,
+  type Snoozes,
 } from "./tray.logic.ts";
+import {
+  bringBackDecision,
+  snoozeClockAtom,
+  snoozeDecision,
+  snoozesAtom,
+  tickSnoozeClock,
+} from "./snoozed.ts";
 
 const KIND_LABELS: Record<PendingTrayKind, string> = {
   approval: "Aprobación",
@@ -59,11 +62,11 @@ const FILTER_ORDER: ReadonlyArray<PendingTrayFilterKind> = [
   "guest",
 ];
 
-type TrayMode = "una" | "todas" | "pospuestas";
+type TrayMode = "una" | "lista" | "pospuestas";
 
 const MODE_LABELS: Record<TrayMode, string> = {
   una: "Una a una",
-  todas: "Todas",
+  lista: "Lista",
   pospuestas: "Pospuestas",
 };
 
@@ -145,6 +148,17 @@ function OneAtATime(props: {
 }) {
   const ref = useRef<HTMLElement>(null);
   const current = props.waiting[0];
+  // Y, N and S need focus here; take it on open only when nothing else holds it.
+  useEffect(() => {
+    const active = document.activeElement;
+    if (
+      active === null ||
+      active === document.body ||
+      active.closest('[aria-controls="ade-decisions"]')
+    ) {
+      ref.current?.focus({ preventScroll: true });
+    }
+  }, []);
   const later = () => {
     if (current === undefined) return;
     ref.current?.focus();
@@ -169,7 +183,7 @@ function OneAtATime(props: {
         <p className="ade-request-note">No queda nada por decidir ahora.</p>
       ) : current.item === null ? (
         <HandoffNotices
-          only={current.key}
+          include={(key) => key === current.key}
           onOpenBackLayer={props.onOpenBackLayer}
           later={laterButton}
         />
@@ -188,7 +202,7 @@ function OneAtATime(props: {
 /** What «Luego» set aside, each with its way back. */
 function SnoozedList(props: {
   entries: ReadonlyArray<TrayEntry>;
-  snoozed: SnoozedUntil;
+  snoozed: Snoozes;
   onBringBack: (key: string) => void;
 }) {
   return (
@@ -200,7 +214,7 @@ function SnoozedList(props: {
           </span>
           <span className="ade-snoozed-title">{entry.title}</span>
           <span className="ade-request-note">
-            Vuelve el {RETURN_TIME.format(props.snoozed[entry.key])}
+            Vuelve el {RETURN_TIME.format(props.snoozed[entry.key]?.until ?? 0)}
           </span>
           <button
             type="button"
@@ -221,7 +235,9 @@ function SnoozedList(props: {
  */
 export function DecisionsPanel() {
   const registry = useContext(RegistryContext);
-  const { threads, count, open, setOpen } = useDecisionsPanel();
+  const { threads, snoozedKeys, waitingKeys, count, open, setOpen } = useDecisionsPanel();
+  const snoozes = useAtomValue(snoozesAtom);
+  const clock = useAtomValue(snoozeClockAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const selectThread = useAtomSet(selectedThreadKeyAtom);
   const alertsEnabled = useAtomValue(pendingAlertsEnabledAtom);
@@ -230,10 +246,20 @@ export function DecisionsPanel() {
   const [kindFilter, setKindFilter] = useState<PendingTrayFilterKind>("all");
   const [machineFilter, setMachineFilter] = useState<EnvironmentId | "all">("all");
   const [mode, setMode] = useState<TrayMode>("una");
-  const [snoozed, setSnoozed] = useState(() =>
-    readSnoozed(DateTime.toEpochMillis(DateTime.nowUnsafe())),
-  );
   const handoffs = useCutHandoffs();
+
+  // One timer to the nearest return, and a re-check when the tab shows again after sleeping.
+  useEffect(() => {
+    const tick = () => tickSnoozeClock(registry);
+    const due = nextSnoozeReturn(snoozes, clock);
+    // @effect-diagnostics-next-line globalTimers:off -- a React effect, outside any Effect program.
+    const timer = due === null ? undefined : setTimeout(tick, due - clock);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [clock, registry, snoozes]);
 
   const items = useMemo(
     () =>
@@ -243,6 +269,10 @@ export function DecisionsPanel() {
       ),
     [catalog.entries, threads],
   );
+  const waitingItems = useMemo(
+    () => items.filter((item) => !snoozedKeys.includes(item.key)),
+    [items, snoozedKeys],
+  );
 
   const openBackLayer = (threadKey: string) => {
     selectThread(threadKey);
@@ -251,11 +281,11 @@ export function DecisionsPanel() {
     }
   };
 
-  usePendingTrayNotifications(items, openBackLayer);
+  // A snoozed decision that comes back, on time or with a new request, alerts as new.
+  usePendingTrayNotifications(waitingItems, openBackLayer);
 
   if (!open) return null;
 
-  const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
   const queue: ReadonlyArray<TrayEntry> = [
     ...handoffs.map((notice) => ({
       key: notice.key,
@@ -272,29 +302,20 @@ export function DecisionsPanel() {
       item,
     })),
   ];
-  const waiting = queue.filter((entry) => !isSnoozed(snoozed, entry.key, now));
-  const setAside = queue.filter((entry) => isSnoozed(snoozed, entry.key, now));
+  const waiting = queue.filter((entry) => !snoozedKeys.includes(entry.key));
+  const setAside = queue.filter((entry) => snoozedKeys.includes(entry.key));
   const effectiveMode = mode === "pospuestas" && setAside.length === 0 ? "una" : mode;
-  const modeCounts: Record<TrayMode, number> = {
-    una: waiting.length,
-    todas: queue.length,
-    pospuestas: setAside.length,
-  };
-  const snooze = (key: string, until: number | null) => {
-    const { [key]: _previous, ...rest } = snoozed;
-    const next = until === null ? rest : { ...rest, [key]: until };
-    setSnoozed(next);
-    writeSnoozed(next);
-  };
 
-  const counts = countPendingByKind(items);
-  const machinesInTray = [...new Map(items.map((item) => [item.environmentId, item.machineLabel]))];
+  const counts = countPendingByKind(waitingItems);
+  const machinesInTray = [
+    ...new Map(waitingItems.map((item) => [item.environmentId, item.machineLabel])),
+  ];
   const effectiveMachine =
     machineFilter !== "all" && machinesInTray.some(([id]) => id === machineFilter)
       ? machineFilter
       : "all";
   const effectiveKind = kindFilter !== "all" && counts[kindFilter] === 0 ? "all" : kindFilter;
-  const visible = filterPendingItems(items, {
+  const visible = filterPendingItems(waitingItems, {
     kind: effectiveKind,
     environmentId: effectiveMachine,
   });
@@ -343,7 +364,7 @@ export function DecisionsPanel() {
         </p>
       )}
       <div className="ade-filter-chips" role="group" aria-label="Cómo ver los pendientes">
-        {(["una", "todas", "pospuestas"] as const)
+        {(["una", "lista", "pospuestas"] as const)
           .filter((option) => option !== "pospuestas" || setAside.length > 0)
           .map((option) => (
             <button
@@ -353,29 +374,31 @@ export function DecisionsPanel() {
               aria-pressed={effectiveMode === option}
               onClick={() => setMode(option)}
             >
-              {MODE_LABELS[option]} <span>{modeCounts[option]}</span>
+              {MODE_LABELS[option]}
+              {option === "pospuestas" ? <span> {setAside.length}</span> : null}
             </button>
           ))}
       </div>
       {effectiveMode === "una" ? (
         <OneAtATime
           waiting={waiting}
-          onLater={(key) => snooze(key, snoozeUntilTomorrow(DateTime.nowUnsafe()))}
+          onLater={(key) => {
+            setMode("una");
+            // Snoozing the last one must not close the panel under the user's hands.
+            setOpen(true);
+            snoozeDecision(registry, key, [...waitingKeys, ...snoozedKeys]);
+          }}
           onOpenBackLayer={openBackLayer}
         />
       ) : null}
       {effectiveMode === "pospuestas" ? (
         <SnoozedList
           entries={setAside}
-          snoozed={snoozed}
-          onBringBack={(key) => {
-            snooze(key, null);
-            // The last one back: the next «Luego» must not jump to this list.
-            if (setAside.length === 1) setMode("una");
-          }}
+          snoozed={snoozes}
+          onBringBack={(key) => bringBackDecision(registry, key)}
         />
       ) : null}
-      {effectiveMode !== "todas" ? null : items.length > 1 ||
+      {effectiveMode !== "lista" ? null : waitingItems.length > 1 ||
         effectiveKind !== "all" ||
         effectiveMachine !== "all" ? (
         <div className="ade-tray-filters" role="group" aria-label="Filtrar pendientes">
@@ -412,9 +435,12 @@ export function DecisionsPanel() {
           ) : null}
         </div>
       ) : null}
-      {effectiveMode !== "todas" ? null : (
+      {effectiveMode !== "lista" ? null : (
         <>
-          <HandoffNotices onOpenBackLayer={openBackLayer} />
+          <HandoffNotices
+            include={(key) => !snoozedKeys.includes(key)}
+            onOpenBackLayer={openBackLayer}
+          />
           {visible.length === 0 ? (
             <p className="ade-request-note">Ningún pendiente coincide con el filtro actual.</p>
           ) : (
