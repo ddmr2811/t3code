@@ -1,4 +1,5 @@
-import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
@@ -14,8 +15,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
-import { lazy, memo, Suspense, useEffect, useState } from "react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { lazy, memo, Suspense, useContext, useEffect, useMemo, useState } from "react";
 
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import {
@@ -23,16 +24,26 @@ import {
   selectNeedsYouThreads,
 } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
-import { Composer } from "../composer/Composer.tsx";
+import { Composer, runCommand } from "../composer/Composer.tsx";
 import { ThreadRequests } from "../decisions/Requests.tsx";
 import { isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
+import {
+  availableMachineInstanceIds,
+  findBackupCandidateForThread,
+} from "../failover/failover.logic.ts";
+import {
+  forkFailoverGetStateQuery,
+  forkFailoverSwitchThreadCommand,
+  refreshFailoverState,
+} from "../failover/failover.state.ts";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
   environmentProjects,
   environmentThreadDetails,
   environmentThreadShells,
   operableEnvironmentIdsAtom,
+  serverEnvironment,
   terminalAccessAtom,
 } from "../state.ts";
 import { groupThreads, listedThreads, type ThreadState, threadState } from "./sidebar.logic.ts";
@@ -298,6 +309,76 @@ function ThreadChangesButton(props: {
   );
 }
 
+function ThreadFailoverButton(props: {
+  threadRef: ScopedThreadRef;
+  thread: EnvironmentThreadShell;
+  onError: (error: string | null) => void;
+}) {
+  const registry = useContext(RegistryContext);
+  const canSwitch = useAtomValue(
+    forkFailoverSwitchThreadCommand.permissionAtom(props.threadRef.environmentId),
+  );
+  const failoverResult = useAtomValue(
+    forkFailoverGetStateQuery({ environmentId: props.threadRef.environmentId, input: {} }),
+  );
+  const failoverState = AsyncResult.getOrElse(failoverResult, () => null);
+  const serverConfig = useAtomValue(
+    serverEnvironment.configValueAtom(props.threadRef.environmentId),
+  );
+  const running =
+    useAtomValue(environmentThreadDetails.queueWorkflowAtom(props.threadRef))?.activeRun != null;
+  const [switching, setSwitching] = useState(false);
+
+  const candidate = useMemo(
+    () =>
+      findBackupCandidateForThread(
+        failoverState?.config ?? null,
+        props.thread.modelSelection,
+        availableMachineInstanceIds(serverConfig),
+      ),
+    [failoverState?.config, props.thread.modelSelection, serverConfig],
+  );
+
+  if (!canSwitch || candidate === null) return null;
+
+  const handleSwitch = async () => {
+    if (switching || running) return;
+    setSwitching(true);
+    props.onError(null);
+    const failure = await runCommand(
+      registry,
+      forkFailoverSwitchThreadCommand,
+      {
+        environmentId: props.threadRef.environmentId,
+        input: {
+          threadId: props.threadRef.threadId,
+          resume: threadState(props.thread) === "error",
+        },
+      },
+      "No se pudo cambiar al modelo de respaldo",
+    );
+    setSwitching(false);
+    if (failure !== null) {
+      props.onError(failure);
+      return;
+    }
+    refreshFailoverState(registry, props.threadRef.environmentId);
+  };
+
+  return (
+    <button
+      type="button"
+      className="ade-button-quiet ade-failover-quick-switch"
+      disabled={switching || running}
+      aria-label={`Cambiar a respaldo (${candidate.instanceId}/${candidate.model})`}
+      onClick={() => void handleSwitch()}
+    >
+      <ArrowsLeftRightIcon size={14} aria-hidden />
+      <span>{switching ? "Cambiando…" : "Cambiar a respaldo"}</span>
+    </button>
+  );
+}
+
 function TerminalButton(props: { environmentId: EnvironmentId; onOpen: () => void }) {
   const allowed = useAtomValue(terminalAccessAtom(props.environmentId));
   return (
@@ -351,6 +432,7 @@ export function SelectedThread() {
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
   const ref = key === null ? null : parseScopedThreadKey(key);
   const [terminal, setTerminal] = useState<{ key: string; pairing: string } | null>(null);
+  const [failoverError, setFailoverError] = useState<{ key: string; message: string } | null>(null);
   const openDiff = (range: DiffRange) => {
     if (key === null) return;
     setTerminal(null);
@@ -394,6 +476,13 @@ export function SelectedThread() {
           </div>
         )}
         <div className="ade-thread-view-actions">
+          {machine === null || thread === null || key === null ? null : (
+            <ThreadFailoverButton
+              threadRef={ref}
+              thread={thread}
+              onError={(message) => setFailoverError(message === null ? null : { key, message })}
+            />
+          )}
           {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
           {key === null || pairing === null || thread === null ? null : (
             <TerminalButton
@@ -406,6 +495,11 @@ export function SelectedThread() {
           </button>
         </div>
       </header>
+      {failoverError !== null && failoverError.key === key ? (
+        <p className="ade-error ade-thread-failover-error" role="alert">
+          {failoverError.message}
+        </p>
+      ) : null}
       {machine === null ? null : terminalOpen && thread !== null ? (
         <ThreadTerminal
           key={key}

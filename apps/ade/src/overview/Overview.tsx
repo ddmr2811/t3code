@@ -1,4 +1,5 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { KanbanIcon } from "@phosphor-icons/react/dist/csr/Kanban";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
@@ -16,6 +17,8 @@ import { allCoordinationEntriesAtom } from "../coordination/coordination.state.t
 import { ProjectBoard } from "../coordination/ProjectBoard.tsx";
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
 import { ExtensionPanel, MachineExtensions } from "../extensions/Extensions.tsx";
+import { allFailoverStatesAtom } from "../failover/failover.state.ts";
+import { FailoverPanel } from "../failover/FailoverPanel.tsx";
 import { useMachineStatus } from "../Machines.tsx";
 import {
   listedThreadsAtom,
@@ -28,13 +31,13 @@ import type { ThreadState } from "../sidebar/sidebar.logic.ts";
 import { serverEnvironment } from "../state.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
 
-export type View = "resumen" | "proyectos" | "tablero";
+export type View = "resumen" | "proyectos" | "tablero" | "respaldo";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
 const readView = (): View => {
   const value = new URLSearchParams(window.location.search).get("vista");
-  if (value === "tablero" || value === "proyectos") return value;
+  if (value === "tablero" || value === "proyectos" || value === "respaldo") return value;
   return "resumen";
 };
 export const viewAtom = Atom.writable(
@@ -124,6 +127,7 @@ export function ViewNav() {
       {link("resumen", "Resumen", SquaresFourIcon)}
       {link("proyectos", "Proyectos", FoldersIcon)}
       {link("tablero", "Tablero", KanbanIcon)}
+      {link("respaldo", "Respaldo", ArrowsLeftRightIcon)}
     </nav>
   );
 }
@@ -387,6 +391,38 @@ function CoordinationSummaryCard() {
   );
 }
 
+function FailoverSummaryCard() {
+  const { byEnv, errors } = useAtomValue(allFailoverStatesAtom);
+  const setView = useAtomSet(viewAtom);
+  const states = [...byEnv.values()].filter((state) => state !== null);
+  const activeCount = states.filter((state) => state.config.enabled).length;
+  const totalChains = states.reduce((sum, state) => sum + state.config.chains.length, 0);
+  const switchedEvents = states.reduce(
+    (sum, state) => sum + state.recentEvents.filter((event) => event.status === "switched").length,
+    0,
+  );
+  return (
+    <section className="ade-summary-card">
+      <h2 className="ade-label">Respaldo de modelos</h2>
+      <p className="ade-summary-figure" data-level={errors.length > 0 ? "high" : undefined}>
+        {activeCount > 0 ? "Activo" : "Manual"}
+      </p>
+      <p className="ade-summary-caption">
+        {totalChains === 0
+          ? "Sin cadenas configuradas ante límites de cuota"
+          : `${totalChains === 1 ? "1 cadena" : `${totalChains} cadenas`} · ${switchedEvents} ${switchedEvents === 1 ? "relevo reciente" : "relevos recientes"}`}
+      </p>
+      <button
+        type="button"
+        className="ade-button-quiet ade-summary-action"
+        onClick={() => setView("respaldo")}
+      >
+        Configurar respaldo
+      </button>
+    </section>
+  );
+}
+
 function Summary() {
   return (
     <div className="ade-summary">
@@ -394,6 +430,7 @@ function Summary() {
       <div className="ade-summary-cards">
         <MachinesCard />
         <CoordinationSummaryCard />
+        <FailoverSummaryCard />
         <UsageCard />
         <PullRequestsCard />
       </div>
@@ -453,5 +490,6 @@ export function Overview() {
     );
   }
   if (view === "proyectos") return <ProjectBoard />;
+  if (view === "respaldo") return <FailoverPanel />;
   return view === "tablero" ? <Board /> : <Summary />;
 }

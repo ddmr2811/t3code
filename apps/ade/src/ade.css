@@ -2561,6 +2561,299 @@ body {
   margin-top: 0;
 }
 
+/* Quota model failover panel & thread quick-switch. */
+.ade-failover {
+  max-width: 960px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.ade-failover-machine-picker select {
+  box-sizing: border-box;
+  min-width: 180px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 13px var(--ade-font-sans);
+}
+
+.ade-failover-form {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+}
+
+.ade-failover-fieldset {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ade-failover-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+  cursor: pointer;
+}
+
+.ade-failover-toggle input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--ade-accent);
+}
+
+.ade-failover-toggle span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ade-failover-toggle small {
+  color: var(--ade-text-muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.ade-failover-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.ade-failover-form label:not(.ade-failover-toggle) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-failover-form input:not([type="checkbox"]),
+.ade-failover-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 13px/1.4 var(--ade-font-sans);
+}
+
+.ade-failover-chains-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ade-failover-chains-header h2,
+.ade-failover-history h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ade-failover-chains-header .ade-button-quiet,
+.ade-failover-chain-head .ade-button-quiet,
+.ade-failover-add-target .ade-button-quiet,
+.ade-failover-quick-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0;
+}
+
+.ade-failover-chains {
+  display: grid;
+  gap: 12px;
+}
+
+.ade-failover-chain {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+}
+
+.ade-failover-chain-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ade-failover-chain-name {
+  flex: 1 1 200px;
+}
+
+.ade-failover-chain-matchers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.ade-failover-targets {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-failover-target-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+}
+
+.ade-failover-target-rank {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--ade-divider);
+  color: var(--ade-text-muted);
+  font: 600 11.5px var(--ade-font-mono);
+}
+
+.ade-failover-target-label {
+  flex: 1 1 140px;
+  min-width: 0;
+  font: 500 13px var(--ade-font-sans);
+  overflow-wrap: anywhere;
+}
+
+.ade-failover-target-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.ade-failover-target-actions .ade-button-quiet {
+  display: inline-grid;
+  place-items: center;
+  margin-top: 0;
+  padding: 6px 8px;
+}
+
+.ade-failover-add-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ade-failover-add-target select {
+  flex: 1 1 200px;
+}
+
+.ade-failover-notice {
+  margin: 0;
+  color: var(--ade-ok);
+  font-size: 13px;
+}
+
+.ade-failover-history {
+  display: grid;
+  gap: 12px;
+}
+
+.ade-failover-events {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-failover-event {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+}
+
+.ade-failover-event-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ade-failover-event-head .ade-coord-updated {
+  margin-left: auto;
+}
+
+.ade-chip[data-failover-status="switched"] {
+  border-color: color-mix(in srgb, var(--ade-ok) 55%, var(--ade-border));
+  color: var(--ade-ok);
+}
+
+.ade-chip[data-failover-status="skipped"] {
+  border-color: color-mix(in srgb, var(--ade-warn) 55%, var(--ade-border));
+  color: var(--ade-warn);
+}
+
+.ade-chip[data-failover-status="failed"] {
+  border-color: color-mix(in srgb, var(--ade-danger) 55%, var(--ade-border));
+  color: var(--ade-danger);
+}
+
+.ade-failover-event-route {
+  margin: 0;
+  font: 500 13.5px var(--ade-font-sans);
+  overflow-wrap: anywhere;
+}
+
+.ade-failover-event-detail {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.ade-failover-event-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.ade-thread-failover-error {
+  margin: 0;
+  padding: 8px 32px 0;
+}
+
 @media (max-width: 720px) {
   html,
   body,
@@ -2618,7 +2911,7 @@ body {
     bottom: 0;
     z-index: 30;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     border-top: 1px solid var(--ade-border);
     background: var(--ade-surface);
     padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -2631,11 +2924,12 @@ body {
     justify-content: center;
     gap: 2px;
     min-height: 56px;
-    padding: 6px 4px;
+    min-width: 0;
+    padding: 6px 2px;
     border: 0;
     background: none;
     color: var(--ade-text-muted);
-    font: 500 11px var(--ade-font-sans);
+    font: 500 10.5px var(--ade-font-sans);
     cursor: pointer;
   }
 
@@ -2683,8 +2977,31 @@ body {
   .ade-tray-machine-filter select,
   .ade-projects-search input,
   .ade-coord-form input,
-  .ade-coord-form select {
+  .ade-coord-form select,
+  .ade-failover-form input:not([type="checkbox"]),
+  .ade-failover-form select,
+  .ade-failover-machine-picker select,
+  .ade-failover-target-actions .ade-button-quiet {
     min-height: 44px;
+  }
+
+  .ade-failover-target-actions .ade-button-quiet {
+    min-width: 44px;
+  }
+
+  .ade-failover-limits,
+  .ade-failover-chain-matchers {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ade-failover-machine-picker,
+  .ade-failover-machine-picker select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ade-thread-failover-error {
+    padding: 8px 16px 0;
   }
 
   .ade-dither {

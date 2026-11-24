@@ -1,4 +1,5 @@
 import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
 import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
@@ -37,7 +38,7 @@ function MobileBottomNav() {
   const { threads, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
   const pendingCount = threads.length;
 
-  const goView = (target: "resumen" | "proyectos") => {
+  const goView = (target: "resumen" | "proyectos" | "respaldo") => {
     setDrawerOpen(false);
     setTrayOpen(false);
     setView(target);
@@ -66,6 +67,17 @@ function MobileBottomNav() {
       >
         <FoldersIcon size={20} aria-hidden />
         <span>Proyectos</span>
+      </button>
+      <button
+        type="button"
+        className="ade-mobile-nav-item"
+        aria-current={
+          !drawerOpen && !trayOpen && !threadOpen && view === "respaldo" ? "page" : undefined
+        }
+        onClick={() => goView("respaldo")}
+      >
+        <ArrowsLeftRightIcon size={20} aria-hidden />
+        <span>Respaldo</span>
       </button>
       <button
         type="button"
