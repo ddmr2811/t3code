@@ -21,6 +21,7 @@ import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { listedThreadsAtom, selectedThreadKeyAtom } from "../sidebar/Sidebar.tsx";
 import { serverEnvironment } from "../state.ts";
 import { botThreadState, type BotDraft, validateBotDraft } from "./bots.logic.ts";
+import { ProjectMemory } from "./ProjectMemory.tsx";
 import {
   allBotsAtom,
   forkBotsRemoveCommand,
@@ -112,6 +113,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
   const [chatError, setChatError] = useState<string | null>(null);
   const [messageText, setMessageText] = useState("");
   const [sending, setSending] = useState(false);
+  const [panel, setPanel] = useState<"chat" | "memory">("chat");
 
   const selectedBot = bots.find((bot) => bot.id === selectedBotId) ?? null;
   const openThread = (threadId: ThreadId) =>
@@ -205,6 +207,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
                   setSelectedBotId(bot.id);
                   setMessageText("");
                   setChatError(null);
+                  setPanel("chat");
                 }}
                 aria-pressed={bot.id === selectedBotId}
               >
@@ -215,6 +218,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
                   <strong>{bot.name}</strong>
                   <span className="ade-bot-meta">
                     @{bot.handle} · {bot.role}
+                    {bot.coordinator ? " · Coordinador" : ""}
                   </span>
                   <span className="ade-bot-meta">
                     {bot.modelSelection.instanceId} · {bot.modelSelection.model}
@@ -265,12 +269,33 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
           ))}
         </section>
 
-        <section className="ade-bots-chat" aria-label="Chat del bot seleccionado">
+        <section className="ade-bots-chat" aria-label="Panel del bot seleccionado">
           {selectedBot === null ? (
             <p className="ade-bot-meta">Elige un bot para escribirle.</p>
           ) : (
             <>
               <h2>{selectedBot.name}</h2>
+              {selectedBot.coordinator ? (
+                <div className="ade-bots-tabs" role="group" aria-label="Panel del coordinador">
+                  {(["chat", "memory"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className="ade-button-quiet ade-alert-toggle"
+                      aria-pressed={panel === value}
+                      onClick={() => setPanel(value)}
+                    >
+                      {value === "chat" ? "Chat" : "Memoria"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+          {selectedBot !== null && selectedBot.coordinator && panel === "memory" ? (
+            <ProjectMemory environmentId={environmentId} bot={selectedBot} />
+          ) : selectedBot === null ? null : (
+            <>
               <p className="ade-bot-meta">
                 {selectedBot.threadId === null
                   ? "Tu primer mensaje abre su hilo real en el proyecto."
@@ -339,6 +364,7 @@ function BotEditor(props: {
     runtimeMode: bot?.runtimeMode ?? "approval-required",
     instanceId: bot?.modelSelection.instanceId ?? "",
     model: bot?.modelSelection.model ?? "",
+    coordinator: bot?.coordinator ?? false,
   }));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -379,6 +405,7 @@ function BotEditor(props: {
           projectId: validated.value.projectId,
           runtimeMode: validated.value.runtimeMode,
           modelSelection: { instanceId: validated.value.instanceId, model: validated.value.model },
+          coordinator: validated.value.coordinator,
         },
       },
       "No se pudo guardar el bot",
@@ -482,6 +509,20 @@ function BotEditor(props: {
             </select>
           </label>
         </div>
+        <label className="ade-failover-toggle">
+          <input
+            type="checkbox"
+            checked={draft.coordinator}
+            onChange={(event) => set({ coordinator: event.target.checked })}
+          />
+          <span>
+            Coordinador del proyecto
+            <small>
+              Lee y actualiza la memoria del proyecto y reparte el trabajo en hilos hijos. Solo uno
+              por proyecto.
+            </small>
+          </span>
+        </label>
         <label>
           Instrucciones
           <textarea
@@ -492,8 +533,8 @@ function BotEditor(props: {
         </label>
         {bot?.threadId == null ? null : (
           <p className="ade-bot-meta">
-            Si cambias nombre, rol, instrucciones, proyecto, modelo o permisos, el siguiente mensaje
-            abre un hilo nuevo. El anterior se conserva.
+            Si cambias nombre, rol, instrucciones, proyecto, modelo, permisos o coordinador, el
+            siguiente mensaje abre un hilo nuevo. El anterior se conserva.
           </p>
         )}
         {error === null ? null : (

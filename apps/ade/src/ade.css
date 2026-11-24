@@ -2839,6 +2839,147 @@ body {
   background: rgb(0 0 0 / 0.7);
 }
 
+.ade-bots-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.ade-bots-tabs .ade-button-quiet {
+  margin: 0;
+}
+
+.ade-memory {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ade-memory-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-memory-meter {
+  display: block;
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--ade-border);
+}
+
+.ade-memory-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--ade-accent);
+}
+
+.ade-memory-meter[data-level] > span {
+  background: currentColor;
+}
+
+.ade-memory-new {
+  display: grid;
+  gap: 8px;
+}
+
+.ade-memory-new input:not([type="checkbox"]),
+.ade-memory-new select,
+.ade-memory textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 13px/1.45 var(--ade-font-sans);
+  resize: vertical;
+}
+
+.ade-memory-new-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.ade-memory-new-actions select,
+.ade-memory-new-actions input[type="time"] {
+  width: auto;
+  flex: 1 1 140px;
+}
+
+.ade-memory-new-actions .ade-button-quiet {
+  margin: 0;
+}
+
+.ade-memory-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-memory-note {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+}
+
+.ade-memory-note[data-inclusion="essential"] {
+  border-color: color-mix(in srgb, var(--ade-accent) 45%, var(--ade-border));
+}
+
+.ade-memory-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ade-memory-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ade-memory-note-meta .ade-button-quiet {
+  margin: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.ade-memory-note-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.ade-memory-routines {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ade-border);
+}
+
+.ade-memory-routines h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .ade-failover-form {
   display: grid;
   gap: 16px;

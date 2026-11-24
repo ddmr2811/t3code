@@ -42,6 +42,23 @@ export const forkBotsSendMessageCommand = createEnvironmentRpcCommand(connection
   tag: WS_METHODS.forkBotsSendMessage,
 });
 
+export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "ade:fork-memory:list",
+  tag: WS_METHODS.forkMemoryList,
+  staleTimeMs: 15_000,
+  idleTtlMs: 60_000,
+});
+
+export const forkMemoryUpsertCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:upsert",
+  tag: WS_METHODS.forkMemoryUpsert,
+});
+
+export const forkMemoryRemoveCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:remove",
+  tag: WS_METHODS.forkMemoryRemove,
+});
+
 export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   registry.refresh(forkBotsListQuery({ environmentId, input: {} }));
 }

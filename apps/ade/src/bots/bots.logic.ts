@@ -6,6 +6,8 @@ import {
   type ForkBot,
   type ProjectId,
   type ProviderInstanceId,
+  type ScheduledTaskUpsertInput,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 export interface BotDraft {
@@ -17,6 +19,7 @@ export interface BotDraft {
   readonly runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly instanceId: string;
   readonly model: string;
+  readonly coordinator: boolean;
 }
 
 export interface ValidatedBotDraft {
@@ -28,6 +31,7 @@ export interface ValidatedBotDraft {
   readonly runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly instanceId: ProviderInstanceId;
   readonly model: string;
+  readonly coordinator: boolean;
 }
 
 export function validateBotDraft(
@@ -73,6 +77,7 @@ export function validateBotDraft(
       runtimeMode: draft.runtimeMode,
       instanceId: draft.instanceId as ProviderInstanceId,
       model: draft.model,
+      coordinator: draft.coordinator,
     },
   };
 }
@@ -96,4 +101,60 @@ export function botThreadState(
   }
   // A thread that needs you is still surfaced through the pending tray; this is only a coarse badge.
   return "Listo";
+}
+
+export const NIGHTLY_CONSOLIDATION_PROMPT = [
+  "Consolidación nocturna de la memoria del proyecto.",
+  "1. Repasa todas las notas con project_memory_search (consulta vacía; si hay más de 50, busca por temas).",
+  "2. Fusiona duplicados y notas que dicen lo mismo en una sola con project_memory_save y `replaces`, sin perder información.",
+  "3. Si una nota quedó obsoleta porque otra la sustituye, añádela a `replaces`. No quites por tu cuenta notas del usuario que nada sustituye.",
+  "4. Termina proponiendo, con su id, qué notas esenciales bajarías a buscables y cuáles borrarías, para que el usuario decida.",
+].join("\n");
+
+export type CoordinatorRoutine =
+  | {
+      readonly kind: "daily";
+      readonly title: string;
+      readonly prompt: string;
+      readonly timeOfDay: string;
+    }
+  | { readonly kind: "webhook"; readonly title: string; readonly prompt: string }
+  | { readonly kind: "nightly" };
+
+/** Routines continue the coordinator's own thread, so they run as it, with its memory tools. */
+export function coordinatorRoutineInput(
+  bot: ForkBot,
+  threadId: ThreadId,
+  routine: CoordinatorRoutine,
+): ScheduledTaskUpsertInput {
+  const content =
+    routine.kind === "nightly"
+      ? {
+          title: `Consolidación nocturna · ${bot.name}`,
+          prompt: NIGHTLY_CONSOLIDATION_PROMPT,
+          schedule: { type: "fixed_time", timeOfDay: "03:00" } as const,
+        }
+      : {
+          title: routine.title.trim(),
+          prompt: routine.prompt.trim(),
+          schedule:
+            routine.kind === "daily"
+              ? ({ type: "fixed_time", timeOfDay: routine.timeOfDay } as const)
+              : ({ type: "webhook" } as const),
+        };
+  return {
+    ...content,
+    enabled: true,
+    projectId: bot.projectId,
+    threadId,
+    threadMode: "continue",
+    workspaceStrategy: { type: "root" },
+    modelSelection: {
+      instanceId: bot.modelSelection.instanceId,
+      model: bot.modelSelection.model,
+      ...(bot.modelSelection.options === undefined ? {} : { options: bot.modelSelection.options }),
+    },
+    runtimeMode: bot.runtimeMode,
+    interactionMode: "default",
+  };
 }
