@@ -1,10 +1,15 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import type { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Atom, type AtomRegistry } from "effect/reactivity";
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 
+import { environmentCatalog, environmentShell } from "../connection/runtime.ts";
 import {
+  advancePendingNotificationState,
   buildPendingNotificationEvent,
-  detectNewlyPending,
+  type PendingSeenByEnvironment,
   type PendingTrayItem,
   type PendingTrayNotificationEvent,
 } from "./tray.logic.ts";
@@ -31,6 +36,27 @@ export const pendingAlertsPermissionAtom = Atom.make<PendingAlertsPermission>(
   readPermission(),
 ).pipe(Atom.keepAlive, Atom.withLabel("ade-pending-alerts-permission"));
 
+export const pendingAlertsErrorAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ade-pending-alerts-error"),
+);
+
+let previousHydrated: ReadonlySet<EnvironmentId> = new Set();
+const hydratedEnvironmentIdsAtom = Atom.make((get) => {
+  const next = new Set<EnvironmentId>();
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+    const shell = get(environmentShell.stateValueAtom(environmentId));
+    if (Option.isSome(shell.snapshot)) {
+      next.add(environmentId);
+    }
+  }
+  if (next.size === previousHydrated.size && [...next].every((id) => previousHydrated.has(id))) {
+    return previousHydrated;
+  }
+  previousHydrated = next;
+  return next;
+}).pipe(Atom.withLabel("ade-hydrated-environments"));
+
 /** Hook point for future mobile/web push bridges to observe newly arrived pending tray items. */
 export function subscribePendingTrayEvents(listener: PendingTrayEventListener): () => void {
   listeners.add(listener);
@@ -45,31 +71,53 @@ export async function togglePendingAlerts(
   const currentEnabled = registry.get(pendingAlertsEnabledAtom);
   if (currentEnabled) {
     registry.set(pendingAlertsEnabledAtom, false);
+    registry.set(pendingAlertsErrorAtom, null);
     return readPermission();
   }
   const permission = readPermission();
   registry.set(pendingAlertsPermissionAtom, permission);
-  if (permission === "unsupported" || permission === "denied") {
+  if (permission === "unsupported") {
     registry.set(pendingAlertsEnabledAtom, false);
+    registry.set(pendingAlertsErrorAtom, "Este navegador no admite notificaciones locales.");
     return permission;
   }
-  const granted =
-    permission === "granted" ? "granted" : await window.Notification.requestPermission();
-  registry.set(pendingAlertsPermissionAtom, granted);
-  registry.set(pendingAlertsEnabledAtom, granted === "granted");
-  return granted;
+  if (permission === "denied") {
+    registry.set(pendingAlertsEnabledAtom, false);
+    registry.set(pendingAlertsErrorAtom, "Notificaciones bloqueadas por el navegador.");
+    return permission;
+  }
+  try {
+    const granted =
+      permission === "granted" ? "granted" : await window.Notification.requestPermission();
+    registry.set(pendingAlertsPermissionAtom, granted);
+    registry.set(pendingAlertsEnabledAtom, granted === "granted");
+    registry.set(
+      pendingAlertsErrorAtom,
+      granted === "denied" ? "Notificaciones bloqueadas por el navegador." : null,
+    );
+    return granted;
+  } catch {
+    registry.set(pendingAlertsEnabledAtom, false);
+    registry.set(
+      pendingAlertsErrorAtom,
+      "No se pudo solicitar permiso de notificaciones en este navegador.",
+    );
+    return "unsupported";
+  }
 }
 
 /**
- * Watches pending tray items and notifies listeners (and browser Notification when explicitly
- * opted in) whenever a new pending thread enters the tray after initial load.
+ * Watches pending tray items per hydrated machine and notifies listeners (and browser Notification
+ * when explicitly opted in) whenever a new pending thread enters the tray after initial snapshot.
  */
 export function usePendingTrayNotifications(
   items: ReadonlyArray<PendingTrayItem>,
   onFocusThread?: (threadKey: string) => void,
 ) {
+  const registry = useContext(RegistryContext);
   const alertsEnabled = useAtomValue(pendingAlertsEnabledAtom);
-  const seenKeysRef = useRef<ReadonlySet<string> | null>(null);
+  const hydratedEnvironmentIds = useAtomValue(hydratedEnvironmentIdsAtom);
+  const seenByEnvRef = useRef<PendingSeenByEnvironment>(new Map());
   const onFocusRef = useRef(onFocusThread);
 
   useEffect(() => {
@@ -77,13 +125,20 @@ export function usePendingTrayNotifications(
   }, [onFocusThread]);
 
   useEffect(() => {
-    const newlyPending = detectNewlyPending(seenKeysRef.current, items);
-    seenKeysRef.current = new Set(items.map((item) => item.key));
+    const { nextSeenByEnv, newlyPending } = advancePendingNotificationState(seenByEnvRef.current, {
+      items,
+      hydratedEnvironmentIds,
+    });
+    seenByEnvRef.current = nextSeenByEnv;
     const event = buildPendingNotificationEvent(newlyPending);
     if (event === null) return;
 
     for (const listener of listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // One failing subscriber must not break the tray or other listeners.
+      }
     }
 
     if (
@@ -92,18 +147,27 @@ export function usePendingTrayNotifications(
       typeof window.Notification !== "undefined" &&
       window.Notification.permission === "granted"
     ) {
-      const notification = new window.Notification(event.title, {
-        body: event.body,
-        tag: "ade-pending-tray",
-      });
-      const targetKey = event.threadKeys[0];
-      if (targetKey !== undefined) {
-        notification.onclick = () => {
-          window.focus();
-          onFocusRef.current?.(targetKey);
-          notification.close();
-        };
+      try {
+        const notification = new window.Notification(event.title, {
+          body: event.body,
+          tag: "ade-pending-tray",
+        });
+        const targetKey = event.threadKeys[0];
+        if (targetKey !== undefined) {
+          notification.onclick = () => {
+            window.focus();
+            onFocusRef.current?.(targetKey);
+            notification.close();
+          };
+        }
+      } catch {
+        // Mobile browsers such as Android Chrome reject direct `new Notification()` without a SW.
+        registry.set(pendingAlertsEnabledAtom, false);
+        registry.set(
+          pendingAlertsErrorAtom,
+          "Este navegador no permite notificaciones directas desde la pestaña.",
+        );
       }
     }
-  }, [alertsEnabled, items]);
+  }, [alertsEnabled, hydratedEnvironmentIds, items, registry]);
 }

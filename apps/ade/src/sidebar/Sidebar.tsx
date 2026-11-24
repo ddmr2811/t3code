@@ -20,12 +20,12 @@ import { lazy, memo, Suspense, useState } from "react";
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import {
   type DecisionsPanelChoice,
-  isDecisionsPanelOpen,
   selectNeedsYouThreads,
 } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { ThreadRequests } from "../decisions/Requests.tsx";
+import { isTrayOpenForViewport } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
@@ -77,16 +77,27 @@ export const mobileSidebarOpenAtom = Atom.make(false).pipe(
   Atom.withLabel("ade-mobile-sidebar-open"),
 );
 
+/** Tracks narrow mobile viewports (<= 720 px) so the pending tray stays non-blocking on phones. */
+const narrowViewportAtom = Atom.make((get) => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+  const media = window.matchMedia("(max-width: 720px)");
+  const onChange = () => get.setSelf(media.matches);
+  media.addEventListener("change", onChange);
+  get.addFinalizer(() => media.removeEventListener("change", onChange));
+  return media.matches;
+}).pipe(Atom.keepAlive, Atom.withLabel("ade-narrow-viewport"));
+
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
   const threads = useAtomValue(needsYouThreadsAtom);
   const [choice, setChoice] = useAtom(decisionsChoiceAtom);
+  const narrowViewport = useAtomValue(narrowViewportAtom);
   const keys = threads.map((thread) =>
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
   );
   return {
     threads,
-    open: isDecisionsPanelOpen(choice, keys),
+    open: isTrayOpenForViewport(choice, keys, narrowViewport),
     setOpen: (open: boolean) => setChoice({ open, seenKeys: keys }),
   };
 }
@@ -123,6 +134,7 @@ export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean
 
 export function NeedsYouBlock() {
   const { threads, open, setOpen } = useDecisionsPanel();
+  const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const count = threads.length;
   const words = count === 1 ? "te necesita" : "te necesitan";
   if (count === 0) {
@@ -140,7 +152,11 @@ export function NeedsYouBlock() {
       className="ade-needs-you"
       aria-expanded={open}
       aria-controls="ade-decisions"
-      onClick={() => setOpen(!open)}
+      onClick={() => {
+        const nextOpen = !open;
+        if (nextOpen) setMobileSidebar(false);
+        setOpen(nextOpen);
+      }}
     >
       <span className="ade-needs-you-count">{count}</span>
       <span className="ade-needs-you-words">

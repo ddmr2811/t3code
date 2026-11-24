@@ -2,12 +2,14 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  advancePendingNotificationState,
   buildPendingNotificationEvent,
   buildPendingTrayItems,
   classifyPendingKinds,
   countPendingByKind,
-  detectNewlyPending,
   filterPendingItems,
+  isTrayOpenForViewport,
+  type PendingSeenByEnvironment,
   type PendingThreadInput,
 } from "./tray.logic.ts";
 
@@ -75,26 +77,75 @@ describe("tray.logic", () => {
     ).toEqual([]);
   });
 
-  it("emits notification payloads only for newly arrived items after initial hydration", () => {
-    const items = buildPendingTrayItems(
+  it("tracks initial hydration per machine without firing false alerts for pre-existing items", () => {
+    const label = (env: EnvironmentId) => (env === envA ? "Alfa" : "Beta");
+    let seen: PendingSeenByEnvironment = new Map();
+
+    // 1. Before any machine hydrates, empty render does not seal baselines.
+    const step0 = advancePendingNotificationState(seen, {
+      items: [],
+      hydratedEnvironmentIds: new Set(),
+    });
+    expect(step0.newlyPending).toEqual([]);
+    seen = step0.nextSeenByEnv;
+
+    // 2. Machine A hydrates with a pre-existing pending approval -> no notification.
+    const itemA1 = buildPendingTrayItems(
+      [pendingThread("t1", envA, { hasPendingApprovals: true })],
+      label,
+    );
+    const step1 = advancePendingNotificationState(seen, {
+      items: itemA1,
+      hydratedEnvironmentIds: new Set([envA]),
+    });
+    expect(step1.newlyPending).toEqual([]);
+    seen = step1.nextSeenByEnv;
+
+    // 3. Machine B hydrates later with a pre-existing pending question -> still no notification.
+    const itemsAB = buildPendingTrayItems(
       [
         pendingThread("t1", envA, { hasPendingApprovals: true }),
         pendingThread("t2", envB, { hasPendingUserInput: true }),
       ],
-      (env) => (env === envA ? "Alfa" : "Beta"),
+      label,
     );
+    const step2 = advancePendingNotificationState(seen, {
+      items: itemsAB,
+      hydratedEnvironmentIds: new Set([envA, envB]),
+    });
+    expect(step2.newlyPending).toEqual([]);
+    seen = step2.nextSeenByEnv;
 
-    expect(detectNewlyPending(null, items)).toEqual([]);
+    // 4. A genuinely new question arrives on already-hydrated machine B -> notifies.
+    const itemsAfter = buildPendingTrayItems(
+      [
+        pendingThread("t1", envA, { hasPendingApprovals: true }),
+        pendingThread("t2", envB, { hasPendingUserInput: true }),
+        pendingThread("t3", envB, { hasPendingUserInput: true }),
+      ],
+      label,
+    );
+    const step3 = advancePendingNotificationState(seen, {
+      items: itemsAfter,
+      hydratedEnvironmentIds: new Set([envA, envB]),
+    });
+    expect(step3.newlyPending.map((item) => item.thread.id)).toEqual(["t3"]);
 
-    const arrived = detectNewlyPending(new Set([items[0]!.key]), items);
-    expect(arrived.map((item) => item.thread.id)).toEqual(["t2"]);
-
-    const event = buildPendingNotificationEvent(arrived);
+    const event = buildPendingNotificationEvent(step3.newlyPending);
     expect(event).toMatchObject({
       count: 1,
       title: "Pregunta pendiente · Beta",
-      body: "Hilo t2",
-      threadKeys: [items[1]!.key],
+      body: "Hilo t3",
+      threadKeys: [itemsAfter[2]!.key],
     });
+  });
+
+  it("never auto-opens the full-screen tray on narrow mobile viewports while preserving desktop behavior", () => {
+    expect(isTrayOpenForViewport(null, ["env-a:t1"], true)).toBe(false);
+    expect(isTrayOpenForViewport({ open: true, seenKeys: ["env-a:t1"] }, ["env-a:t1"], true)).toBe(
+      true,
+    );
+    expect(isTrayOpenForViewport({ open: true, seenKeys: ["env-a:t1"] }, [], true)).toBe(false);
+    expect(isTrayOpenForViewport(null, ["env-a:t1"], false)).toBe(true);
   });
 });

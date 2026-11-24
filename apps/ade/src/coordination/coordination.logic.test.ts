@@ -144,6 +144,43 @@ describe("coordination.logic", () => {
       }),
     ).toMatchObject({ ok: false });
 
+    expect(
+      validateCoordinationDraft({
+        projectKey: "ok",
+        projectName: "Bad\u0007Name",
+        agentName: "Bot",
+        status: "working",
+        workingOn: "ok",
+        completedSummary: "",
+        waitingFor: "",
+      }),
+    ).toMatchObject({ ok: false });
+
+    expect(
+      validateCoordinationDraft({
+        projectKey: "ok",
+        projectName: "OK",
+        agentName: "Bot",
+        status: "working",
+        workingOn: "linea 1\nlinea 2\u0000",
+        completedSummary: "",
+        waitingFor: "",
+      }),
+    ).toMatchObject({ ok: false });
+
+    expect(
+      validateCoordinationDraft({
+        projectKey: "ok",
+        projectName: "OK",
+        agentName: "Bot",
+        status: "working",
+        workingOn: "ok",
+        completedSummary: "",
+        waitingFor: "",
+        modelLabel: "gpt\u001b5",
+      }),
+    ).toMatchObject({ ok: false });
+
     const valid = validateCoordinationDraft({
       projectKey: "",
       projectName: "ADE Móvil",

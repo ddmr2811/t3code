@@ -11,6 +11,7 @@ import { environmentCatalog } from "../connection/runtime.ts";
 import { ProjectTitle, selectedThreadKeyAtom, useDecisionsPanel } from "../sidebar/Sidebar.tsx";
 import {
   pendingAlertsEnabledAtom,
+  pendingAlertsErrorAtom,
   pendingAlertsPermissionAtom,
   togglePendingAlerts,
   usePendingTrayNotifications,
@@ -107,9 +108,9 @@ export function DecisionsPanel() {
   const selectThread = useAtomSet(selectedThreadKeyAtom);
   const alertsEnabled = useAtomValue(pendingAlertsEnabledAtom);
   const alertsPermission = useAtomValue(pendingAlertsPermissionAtom);
+  const alertsNote = useAtomValue(pendingAlertsErrorAtom);
   const [kindFilter, setKindFilter] = useState<PendingTrayFilterKind>("all");
   const [machineFilter, setMachineFilter] = useState<EnvironmentId | "all">("all");
-  const [alertsNote, setAlertsNote] = useState<string | null>(null);
 
   const items = useMemo(
     () =>
@@ -144,14 +145,7 @@ export function DecisionsPanel() {
   });
 
   const handleToggleAlerts = async () => {
-    const permission = await togglePendingAlerts(registry);
-    if (permission === "unsupported") {
-      setAlertsNote("Este navegador no admite notificaciones locales.");
-    } else if (permission === "denied") {
-      setAlertsNote("Notificaciones bloqueadas por el navegador.");
-    } else {
-      setAlertsNote(null);
-    }
+    await togglePendingAlerts(registry);
   };
 
   return (

@@ -87,6 +87,7 @@ export interface CoordinationDraft {
 }
 
 const SINGLE_LINE_CONTROL = /[\u0000-\u001f\u007f]/;
+const MULTILINE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const PATH_TRAVERSAL_SEGMENT = /(?:^|[\\/])\.\.(?:$|[\\/])/;
 
 /** Stable, safe project key derived from a project's title or id, matching contract constraints. */
@@ -147,8 +148,11 @@ export function validateCoordinationDraft(
   const modelLabel = draft.modelLabel?.trim();
 
   if (projectName.length === 0) return { ok: false, error: "Indica el nombre del proyecto." };
-  if (projectName.length > FORK_COORDINATION_PROJECT_NAME_MAX_LENGTH) {
-    return { ok: false, error: "El nombre del proyecto es demasiado largo." };
+  if (
+    projectName.length > FORK_COORDINATION_PROJECT_NAME_MAX_LENGTH ||
+    SINGLE_LINE_CONTROL.test(projectName)
+  ) {
+    return { ok: false, error: "El nombre del proyecto no es válido o es demasiado largo." };
   }
   if (
     projectKey.length === 0 ||
@@ -159,20 +163,45 @@ export function validateCoordinationDraft(
     return { ok: false, error: "La clave de proyecto contiene caracteres no permitidos." };
   }
   if (agentName.length === 0) return { ok: false, error: "Indica el agente o hilo responsable." };
-  if (agentName.length > FORK_COORDINATION_AGENT_NAME_MAX_LENGTH) {
-    return { ok: false, error: "El nombre del agente es demasiado largo." };
+  if (
+    agentName.length > FORK_COORDINATION_AGENT_NAME_MAX_LENGTH ||
+    SINGLE_LINE_CONTROL.test(agentName)
+  ) {
+    return { ok: false, error: "El nombre del agente no es válido o es demasiado largo." };
   }
-  if (workingOn.length > FORK_COORDINATION_SHORT_TEXT_MAX_LENGTH) {
-    return { ok: false, error: "«En qué está» supera el límite de 500 caracteres." };
+  if (
+    draft.threadId !== undefined &&
+    (draft.threadId.length > 128 || SINGLE_LINE_CONTROL.test(draft.threadId))
+  ) {
+    return { ok: false, error: "El identificador de hilo no es válido." };
   }
-  if (completedSummary.length > FORK_COORDINATION_SUMMARY_MAX_LENGTH) {
-    return { ok: false, error: "«Qué ha hecho» supera el límite de 1000 caracteres." };
+  if (
+    workingOn.length > FORK_COORDINATION_SHORT_TEXT_MAX_LENGTH ||
+    MULTILINE_CONTROL.test(workingOn)
+  ) {
+    return { ok: false, error: "«En qué está» no es válido o supera el límite de 500 caracteres." };
   }
-  if (waitingFor.length > FORK_COORDINATION_SHORT_TEXT_MAX_LENGTH) {
-    return { ok: false, error: "«Qué espera» supera el límite de 500 caracteres." };
+  if (
+    completedSummary.length > FORK_COORDINATION_SUMMARY_MAX_LENGTH ||
+    MULTILINE_CONTROL.test(completedSummary)
+  ) {
+    return {
+      ok: false,
+      error: "«Qué ha hecho» no es válido o supera el límite de 1000 caracteres.",
+    };
   }
-  if (modelLabel !== undefined && modelLabel.length > FORK_COORDINATION_MODEL_LABEL_MAX_LENGTH) {
-    return { ok: false, error: "El nombre del modelo es demasiado largo." };
+  if (
+    waitingFor.length > FORK_COORDINATION_SHORT_TEXT_MAX_LENGTH ||
+    MULTILINE_CONTROL.test(waitingFor)
+  ) {
+    return { ok: false, error: "«Qué espera» no es válido o supera el límite de 500 caracteres." };
+  }
+  if (
+    modelLabel !== undefined &&
+    (modelLabel.length > FORK_COORDINATION_MODEL_LABEL_MAX_LENGTH ||
+      SINGLE_LINE_CONTROL.test(modelLabel))
+  ) {
+    return { ok: false, error: "El nombre del modelo no es válido o es demasiado largo." };
   }
   if (workingOn === "" && completedSummary === "" && waitingFor === "") {
     return {

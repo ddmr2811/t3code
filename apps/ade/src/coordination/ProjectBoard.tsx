@@ -114,6 +114,13 @@ function CoordinationEditor(props: {
   const [error, setError] = useState<string | null>(null);
   const canWrite = useAtomValue(forkCoordinationUpsertCommand.permissionAtom(environmentId));
 
+  const machineOptions = useMemo(
+    () =>
+      props.operableEnvs.includes(environmentId)
+        ? props.operableEnvs
+        : [environmentId, ...props.operableEnvs],
+    [environmentId, props.operableEnvs],
+  );
   const envProjects = useMemo(
     () => [...(props.projectsByEnv.get(environmentId)?.values() ?? [])],
     [environmentId, props.projectsByEnv],
@@ -190,10 +197,13 @@ function CoordinationEditor(props: {
           Máquina
           <select
             value={environmentId}
-            disabled={props.initial.mode === "edit" || props.operableEnvs.length <= 1}
-            onChange={(event) => setEnvironmentId(event.currentTarget.value as EnvironmentId)}
+            disabled={props.initial.mode === "edit" || machineOptions.length <= 1}
+            onChange={(event) => {
+              setEnvironmentId(event.currentTarget.value as EnvironmentId);
+              setDraft(({ threadId: _removed, ...rest }) => rest);
+            }}
           >
-            {props.operableEnvs.map((id) => (
+            {machineOptions.map((id) => (
               <option key={id} value={id}>
                 {props.machineLabels.get(id) ?? id}
               </option>
@@ -351,7 +361,8 @@ function ProjectBoardCard(props: {
   onRemove: (environmentId: EnvironmentId, id: string) => Promise<void>;
 }) {
   const { item } = props;
-  const canOperate = useAtomValue(forkCoordinationRemoveCommand.permissionAtom(item.environmentId));
+  const canEdit = useAtomValue(forkCoordinationUpsertCommand.permissionAtom(item.environmentId));
+  const canRemove = useAtomValue(forkCoordinationRemoveCommand.permissionAtom(item.environmentId));
   const [removing, setRemoving] = useState(false);
 
   return (
@@ -413,7 +424,7 @@ function ProjectBoardCard(props: {
           <button
             type="button"
             className="ade-button-quiet"
-            disabled={!canOperate}
+            disabled={!canEdit}
             onClick={() => props.onEdit(item)}
           >
             <NotePencilIcon size={14} aria-hidden />
@@ -423,7 +434,7 @@ function ProjectBoardCard(props: {
             <button
               type="button"
               className="ade-button-quiet"
-              disabled={!canOperate || removing}
+              disabled={!canRemove || removing}
               onClick={async () => {
                 setRemoving(true);
                 await props.onRemove(item.environmentId, item.entry!.id);
@@ -498,7 +509,7 @@ export function ProjectBoard() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const threads = useAtomValue(listedThreadsAtom);
   const operableSet = useAtomValue(operableEnvironmentIdsAtom);
-  const { byEnv, loadingCount } = useAtomValue(allCoordinationEntriesAtom);
+  const { byEnv, loadingCount, errors: loadErrors } = useAtomValue(allCoordinationEntriesAtom);
   const projectsByEnv = useAtomValue(allEnvironmentProjectsAtom);
   const openThread = useAtomSet(selectedThreadKeyAtom);
 
@@ -649,6 +660,16 @@ export function ProjectBoard() {
           />
         </label>
       </div>
+
+      {loadErrors.length === 0 ? null : (
+        <div className="ade-error" role="status">
+          {loadErrors.map((failure) => (
+            <p key={failure.environmentId} className="ade-coord-load-error">
+              {machineLabels.get(failure.environmentId) ?? failure.environmentId}: {failure.message}
+            </p>
+          ))}
+        </div>
+      )}
 
       {removeError === null ? null : (
         <p className="ade-error" role="alert">

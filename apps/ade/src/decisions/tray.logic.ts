@@ -2,6 +2,11 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
 
+import {
+  type DecisionsPanelChoice,
+  isDecisionsPanelOpen,
+} from "../../../web/src/fork/decisions/decisions.logic.ts";
+
 export type PendingTrayKind = "approval" | "question" | "plan" | "guest";
 export type PendingTrayFilterKind = "all" | PendingTrayKind;
 
@@ -37,6 +42,8 @@ export interface PendingTrayNotificationEvent {
   readonly body: string;
   readonly threadKeys: ReadonlyArray<string>;
 }
+
+export type PendingSeenByEnvironment = ReadonlyMap<EnvironmentId, ReadonlySet<string>>;
 
 export function classifyPendingKinds(thread: PendingThreadInput): ReadonlyArray<PendingTrayKind> {
   const kinds: PendingTrayKind[] = [];
@@ -99,15 +106,58 @@ export function filterPendingItems<T extends PendingThreadInput>(
 }
 
 /**
- * Returns only items whose thread key was not present in `previousKeys`.
- * When `previousKeys` is `null` (initial hydration), returns empty so existing items do not spam.
+ * Tracks initial hydration independently per enabled machine: a machine's first snapshot seeds its
+ * baseline without emitting notifications, and only keys arriving after that snapshot trigger alerts.
  */
-export function detectNewlyPending<T extends PendingThreadInput>(
-  previousKeys: ReadonlySet<string> | null,
-  currentItems: ReadonlyArray<PendingTrayItem<T>>,
-): ReadonlyArray<PendingTrayItem<T>> {
-  if (previousKeys === null) return [];
-  return currentItems.filter((item) => !previousKeys.has(item.key));
+export function advancePendingNotificationState<T extends PendingThreadInput>(
+  seenByEnv: PendingSeenByEnvironment,
+  input: {
+    readonly items: ReadonlyArray<PendingTrayItem<T>>;
+    readonly hydratedEnvironmentIds: ReadonlySet<EnvironmentId>;
+  },
+): {
+  readonly nextSeenByEnv: PendingSeenByEnvironment;
+  readonly newlyPending: ReadonlyArray<PendingTrayItem<T>>;
+} {
+  const itemsByEnv = new Map<EnvironmentId, PendingTrayItem<T>[]>();
+  for (const item of input.items) {
+    const list = itemsByEnv.get(item.environmentId);
+    if (list === undefined) itemsByEnv.set(item.environmentId, [item]);
+    else list.push(item);
+  }
+
+  const nextSeenByEnv = new Map<EnvironmentId, ReadonlySet<string>>();
+  const newlyPending: PendingTrayItem<T>[] = [];
+
+  for (const environmentId of input.hydratedEnvironmentIds) {
+    const currentItems = itemsByEnv.get(environmentId) ?? [];
+    const currentKeys = new Set(currentItems.map((item) => item.key));
+    const previousKeys = seenByEnv.get(environmentId);
+    if (previousKeys !== undefined) {
+      for (const item of currentItems) {
+        if (!previousKeys.has(item.key)) {
+          newlyPending.push(item);
+        }
+      }
+    }
+    nextSeenByEnv.set(environmentId, currentKeys);
+  }
+
+  return { nextSeenByEnv, newlyPending };
+}
+
+/**
+ * Desktop auto-opens the non-blocking side rail on new pending items; narrow mobile viewports stay
+ * non-blocking and only open the full-screen tray when the user explicitly opens it.
+ */
+export function isTrayOpenForViewport(
+  choice: DecisionsPanelChoice | null,
+  waitingKeys: ReadonlyArray<string>,
+  narrowViewport: boolean,
+): boolean {
+  if (waitingKeys.length === 0) return false;
+  if (narrowViewport) return choice?.open === true;
+  return isDecisionsPanelOpen(choice, waitingKeys);
 }
 
 const KIND_SINGULAR: Record<PendingTrayKind, string> = {
