@@ -27,7 +27,9 @@ messages and stack traces; error text can quote a value the app was handling.
 ## Turning it on
 
 To send product events and relay traces from the server, set `T3CODE_TELEMETRY_ENABLED=true` in
-its environment before starting it. Unset, or any other value, keeps both off. Relay tracing stays
+its environment before starting it. `yes`, `on`, `1` and `y` also turn it on. Unset, empty,
+`false`, `no`, `off`, `0` and `n` keep both off. Write the value in lowercase and use only these:
+the server does not accept anything else. Relay tracing stays
 off even then when `T3CODE_OTEL_SDK_DISABLED=true` or `OTEL_SDK_DISABLED=true` turns OpenTelemetry
 export off.
 

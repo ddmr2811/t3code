@@ -90,9 +90,6 @@ export class AnalyticsService extends Context.Service<
 
     readonly flush: Effect.Effect<void>;
 
-    /** Whether events are sent now. Callers check it before reading anything only analytics needs. */
-    readonly enabled: Effect.Effect<boolean>;
-
     /**
      * Records `install.owner_observed` for each owner of this install that the
      * server read itself or a connecting client reported. Each owner is sent once
@@ -369,7 +366,7 @@ export const make = Effect.gen(function* () {
     flush.pipe(Effect.timeout(SHUTDOWN_FLUSH_TIMEOUT), Effect.ignore),
   );
 
-  return AnalyticsService.of({ record, flush, enabled: telemetryEnabled, recordOwners });
+  return AnalyticsService.of({ record, flush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
