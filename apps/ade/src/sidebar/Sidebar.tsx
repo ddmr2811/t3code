@@ -15,7 +15,7 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { lazy, memo, Suspense, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useState } from "react";
 
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import {
@@ -25,7 +25,7 @@ import {
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer } from "../composer/Composer.tsx";
 import { ThreadRequests } from "../decisions/Requests.tsx";
-import { isTrayOpenForViewport } from "../decisions/tray.logic.ts";
+import { isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import {
@@ -95,9 +95,15 @@ export function useDecisionsPanel() {
   const keys = threads.map((thread) =>
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
   );
+  const effectiveChoice = reconcileTrayChoice(choice, keys, narrowViewport);
+  useEffect(() => {
+    if (effectiveChoice !== choice) {
+      setChoice(effectiveChoice);
+    }
+  }, [choice, effectiveChoice, setChoice]);
   return {
     threads,
-    open: isTrayOpenForViewport(choice, keys, narrowViewport),
+    open: isTrayOpenForViewport(effectiveChoice, keys, narrowViewport),
     setOpen: (open: boolean) => setChoice({ open, seenKeys: keys }),
   };
 }

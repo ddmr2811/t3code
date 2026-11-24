@@ -160,6 +160,21 @@ export function isTrayOpenForViewport(
   return isDecisionsPanelOpen(choice, waitingKeys);
 }
 
+/**
+ * Clears stale `open: true` state once the pending tray empties on narrow viewports so a later
+ * pending item cannot unexpectedly pop open the full-screen mobile overlay.
+ */
+export function reconcileTrayChoice(
+  choice: DecisionsPanelChoice | null,
+  waitingKeys: ReadonlyArray<string>,
+  narrowViewport: boolean,
+): DecisionsPanelChoice | null {
+  if (narrowViewport && waitingKeys.length === 0 && choice?.open === true) {
+    return null;
+  }
+  return choice;
+}
+
 const KIND_SINGULAR: Record<PendingTrayKind, string> = {
   approval: "Aprobación pendiente",
   question: "Pregunta pendiente",

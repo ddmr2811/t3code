@@ -1,11 +1,11 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { useContext, useEffect, useRef } from "react";
 
-import { environmentCatalog, environmentShell } from "../connection/runtime.ts";
+import { environmentShell } from "../connection/runtime.ts";
+import { operableEnvironmentIdsAtom } from "../state.ts";
 import {
   advancePendingNotificationState,
   buildPendingNotificationEvent,
@@ -44,7 +44,9 @@ export const pendingAlertsErrorAtom = Atom.make<string | null>(null).pipe(
 let previousHydrated: ReadonlySet<EnvironmentId> = new Set();
 const hydratedEnvironmentIdsAtom = Atom.make((get) => {
   const next = new Set<EnvironmentId>();
-  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+  // Only count environments that are BOTH operable and have received their initial shell snapshot,
+  // matching `needsYouThreadsAtom` so startup or transient session failures never fire false alerts.
+  for (const environmentId of get(operableEnvironmentIdsAtom)) {
     const shell = get(environmentShell.stateValueAtom(environmentId));
     if (Option.isSome(shell.snapshot)) {
       next.add(environmentId);

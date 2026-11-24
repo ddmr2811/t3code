@@ -9,6 +9,7 @@ import {
   countPendingByKind,
   filterPendingItems,
   isTrayOpenForViewport,
+  reconcileTrayChoice,
   type PendingSeenByEnvironment,
   type PendingThreadInput,
 } from "./tray.logic.ts";
@@ -138,14 +139,33 @@ describe("tray.logic", () => {
       body: "Hilo t3",
       threadKeys: [itemsAfter[2]!.key],
     });
+    // 5. If machine B temporarily drops out of hydrated/operable set and returns with the same items,
+    //    it re-seeds its baseline cleanly without firing duplicate alerts.
+    const dropOut = advancePendingNotificationState(step3.nextSeenByEnv, {
+      items: itemA1,
+      hydratedEnvironmentIds: new Set([envA]),
+    });
+    expect(dropOut.newlyPending).toEqual([]);
+    const recover = advancePendingNotificationState(dropOut.nextSeenByEnv, {
+      items: itemsAfter,
+      hydratedEnvironmentIds: new Set([envA, envB]),
+    });
+    expect(recover.newlyPending).toEqual([]);
   });
 
-  it("never auto-opens the full-screen tray on narrow mobile viewports while preserving desktop behavior", () => {
+  it("never auto-opens the full-screen tray on narrow mobile viewports, including after emptying", () => {
     expect(isTrayOpenForViewport(null, ["env-a:t1"], true)).toBe(false);
-    expect(isTrayOpenForViewport({ open: true, seenKeys: ["env-a:t1"] }, ["env-a:t1"], true)).toBe(
-      true,
-    );
-    expect(isTrayOpenForViewport({ open: true, seenKeys: ["env-a:t1"] }, [], true)).toBe(false);
+    const opened = { open: true, seenKeys: ["env-a:t1"] };
+    expect(isTrayOpenForViewport(opened, ["env-a:t1"], true)).toBe(true);
+    expect(isTrayOpenForViewport(opened, [], true)).toBe(false);
+
+    // Sequence open -> [] -> [t2]: reconciling when empty clears stale open:true so t2 stays non-blocking.
+    const afterEmpty = reconcileTrayChoice(opened, [], true);
+    expect(afterEmpty).toBeNull();
+    expect(isTrayOpenForViewport(afterEmpty, ["env-a:t2"], true)).toBe(false);
+
+    // Desktop keeps auto-opening behavior unchanged.
+    expect(reconcileTrayChoice(opened, [], false)).toBe(opened);
     expect(isTrayOpenForViewport(null, ["env-a:t1"], false)).toBe(true);
   });
 });
