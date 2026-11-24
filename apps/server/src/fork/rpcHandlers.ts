@@ -6,6 +6,7 @@ import * as SessionStore from "../auth/SessionStore.ts";
 import * as ForkActivity from "./activity/ForkActivity.ts";
 import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
+import * as ForkFailover from "./failover/ForkFailover.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
@@ -24,6 +25,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkActivity = yield* ForkActivity.ForkActivity;
   const forkGateway = yield* ForkGateway.ForkGateway;
   const forkCoordination = yield* ForkCoordination.ForkCoordination;
+  const forkFailover = yield* ForkFailover.ForkFailover;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
     // Extensions settings page.
@@ -55,5 +57,9 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkCoordinationList]: (input) => forkCoordination.list(input),
     [WS_METHODS.forkCoordinationUpsert]: (input) => forkCoordination.upsert(input),
     [WS_METHODS.forkCoordinationRemove]: (input) => forkCoordination.remove(input),
+    // Quota model failover.
+    [WS_METHODS.forkFailoverGetState]: () => forkFailover.getState,
+    [WS_METHODS.forkFailoverSetConfig]: (input) => forkFailover.setConfig(input),
+    [WS_METHODS.forkFailoverSwitchThread]: (input) => forkFailover.switchThread(input),
   });
 });

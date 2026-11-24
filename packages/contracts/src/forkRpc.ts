@@ -16,6 +16,15 @@ import {
   ForkCoordinationUpsertInput,
 } from "./forkCoordination.ts";
 import {
+  ForkFailoverConfig,
+  ForkFailoverError,
+  ForkFailoverGetStateInput,
+  ForkFailoverSetConfigInput,
+  ForkFailoverState,
+  ForkFailoverSwitchThreadInput,
+  ForkFailoverSwitchThreadResult,
+} from "./forkFailover.ts";
+import {
   ForkAuthorizeCompleteInput,
   ForkAuthorizeEvent,
   ForkExtensionAgent,
@@ -65,6 +74,10 @@ export const FORK_WS_METHODS = {
   forkCoordinationList: "forkCoordination.list",
   forkCoordinationUpsert: "forkCoordination.upsert",
   forkCoordinationRemove: "forkCoordination.remove",
+  // Fork: automatic/manual quota model failover per machine.
+  forkFailoverGetState: "forkFailover.getState",
+  forkFailoverSetConfig: "forkFailover.setConfig",
+  forkFailoverSwitchThread: "forkFailover.switchThread",
 } as const;
 
 // Fork: Extensions settings page.
@@ -221,6 +234,27 @@ const WsForkCoordinationRemoveRpc = Rpc.make(FORK_WS_METHODS.forkCoordinationRem
   error: ForkCoordinationRpcError,
 });
 
+// Fork: quota model failover.
+const ForkFailoverRpcError = Schema.Union([ForkFailoverError, EnvironmentAuthorizationError]);
+
+const WsForkFailoverGetStateRpc = Rpc.make(FORK_WS_METHODS.forkFailoverGetState, {
+  payload: ForkFailoverGetStateInput,
+  success: ForkFailoverState,
+  error: ForkFailoverRpcError,
+});
+
+const WsForkFailoverSetConfigRpc = Rpc.make(FORK_WS_METHODS.forkFailoverSetConfig, {
+  payload: ForkFailoverSetConfigInput,
+  success: ForkFailoverConfig,
+  error: ForkFailoverRpcError,
+});
+
+const WsForkFailoverSwitchThreadRpc = Rpc.make(FORK_WS_METHODS.forkFailoverSwitchThread, {
+  payload: ForkFailoverSwitchThreadInput,
+  success: ForkFailoverSwitchThreadResult,
+  error: ForkFailoverRpcError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -241,6 +275,9 @@ export const FORK_RPCS = [
   WsForkCoordinationListRpc,
   WsForkCoordinationUpsertRpc,
   WsForkCoordinationRemoveRpc,
+  WsForkFailoverGetStateRpc,
+  WsForkFailoverSetConfigRpc,
+  WsForkFailoverSwitchThreadRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
@@ -252,4 +289,6 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkExtensionsAuthorizeComplete]: AuthProvidersManageScope,
   [FORK_WS_METHODS.forkCoordinationUpsert]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkCoordinationRemove]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkFailoverSetConfig]: AuthProvidersManageScope,
+  [FORK_WS_METHODS.forkFailoverSwitchThread]: AuthOrchestrationOperateScope,
 } as const;

@@ -82,6 +82,7 @@ import * as ForkMachines from "./fork/machines/ForkMachines.ts";
 import * as ForkInsights from "./fork/insights/ForkInsights.ts";
 import * as ForkActivity from "./fork/activity/ForkActivity.ts";
 import * as ForkCoordination from "./fork/coordination/ForkCoordination.ts";
+import * as ForkFailover from "./fork/failover/ForkFailover.ts";
 import * as ForkGateway from "./fork/gateway/ForkGateway.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -846,6 +847,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ForkInsights.ForkInsights)({}),
   Layer.mock(ForkActivity.ForkActivity)({}),
   Layer.mock(ForkCoordination.ForkCoordination)({}),
+  Layer.mock(ForkFailover.ForkFailover)({}),
   Layer.mock(ForkGateway.ForkGateway)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),

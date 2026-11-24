@@ -128,6 +128,18 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("separates quota failover reads, provider config updates, and manual thread switches", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkFailoverGetState)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkFailoverSetConfig)).toBe(
+      AuthProvidersManageScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkFailoverSwitchThread)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("lets file readers see a task folder and takes source control to add a repository to it", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(

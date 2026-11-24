@@ -158,6 +158,7 @@ describe("command permissions", () => {
     { method: WS_METHODS.workspaceAddTaskFolderRepository, scope: AuthSourceControlWriteScope },
     { method: WS_METHODS.providerMcpSignInStart, scope: AuthProvidersManageScope },
     { method: WS_METHODS.providerMcpSignInComplete, scope: AuthProvidersManageScope },
+    { method: WS_METHODS.forkFailoverSetConfig, scope: AuthProvidersManageScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
@@ -229,6 +230,7 @@ describe("command permissions", () => {
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     WS_METHODS.forkCoordinationUpsert,
     WS_METHODS.forkCoordinationRemove,
+    WS_METHODS.forkFailoverSwitchThread,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.gen(function* () {
       const registry = yield* setup;
