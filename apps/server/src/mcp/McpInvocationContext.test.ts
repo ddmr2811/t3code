@@ -101,7 +101,7 @@ it.effect.each([
   ["an ordinary thread", { bot: false }, false],
   ["a subagent of a bot's thread", { bot: true, subagent: true }, false],
   ["an outside client", { bot: true, outside: true }, false],
-] as const)("shows bot_handoff to %s: %s", ([, caller, shown]) => {
+] as const)("hiddenOutsideBotThreads lists bot_handoff for %s: %s", ([, caller, shown]) => {
   const scope: McpInvocationContext.McpInvocationScope = {
     environmentId: EnvironmentId.make("environment-1"),
     requestNamespace: "provider-session-1",

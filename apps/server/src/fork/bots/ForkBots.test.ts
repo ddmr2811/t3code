@@ -597,6 +597,19 @@ describe("ForkBots", () => {
               .handoff({ id: "handoff:self", fromId: ana.id, toHandle: "ana", text: "yo" }, asAgent)
               .pipe(Effect.flip),
           ).toMatchObject({ reason: "invalidInput" });
+
+          // An archived bot cannot hand work over.
+          const sentBefore = texts.length;
+          yield* restarted.setArchived({ id: ana.id, archived: true });
+          expect(
+            yield* restarted
+              .handoff(
+                { id: "handoff:archived", fromId: ana.id, toHandle: "beto", text: "x" },
+                asAgent,
+              )
+              .pipe(Effect.flip),
+          ).toMatchObject({ reason: "invalidInput" });
+          expect(texts).toHaveLength(sentBefore);
         }),
       ),
     );

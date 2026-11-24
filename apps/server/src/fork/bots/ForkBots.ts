@@ -252,7 +252,20 @@ const make = Effect.gen(function* () {
     write: (directory: StoredBotDirectory) =>
       rawStore.write(directory).pipe(Effect.andThen(remember(directory))),
   };
-  yield* fileStore.read().pipe(Effect.ignore);
+  // A handoff still `pending` at start was cut short by a stop; it may be sent again.
+  yield* fileStore.read().pipe(
+    Effect.flatMap((directory) =>
+      directory.handoffs.some((handoff) => handoff.status === "pending")
+        ? fileStore.write({
+            ...directory,
+            handoffs: directory.handoffs.map((handoff) =>
+              handoff.status === "pending" ? { ...handoff, status: "failed" as const } : handoff,
+            ),
+          })
+        : Effect.void,
+    ),
+    Effect.ignore,
+  );
   const storeLock = yield* Semaphore.make(1);
   const botLocks = yield* KeyedLock.make<ForkBot["id"]>();
   const projects = yield* ProjectService.ProjectService;
@@ -725,7 +738,7 @@ const make = Effect.gen(function* () {
     let extra = all.length - FORK_BOTS_HANDOFF_HISTORY;
     const handoffs = all
       .filter((candidate) => {
-        if (extra <= 0 || candidate.status === "cut") return true;
+        if (extra <= 0 || candidate.status === "cut" || candidate.id === handoff.id) return true;
         extra -= 1;
         return false;
       })
@@ -815,6 +828,7 @@ const make = Effect.gen(function* () {
           sender.kind === "agent" ? sender.limits : undefined,
         ).pipe(
           // Failed or interrupted: the same id may be sent again.
+          // By design at least once: an interruption after the message was queued sends it again.
           Effect.onError(() =>
             storeLock
               .withPermits(1)(saveHandoff({ ...reserved.handoff, status: "failed" }))
