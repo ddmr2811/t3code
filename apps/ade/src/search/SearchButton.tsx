@@ -21,13 +21,14 @@ export function SearchButton(props: { variant?: "rail" | "icon" }) {
       <button
         type="button"
         className="ade-search-button"
+        aria-label="Buscar"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-keyshortcuts={hint.ariaKeyshortcuts}
         onClick={() => setOpen(true)}
       >
         <MagnifyingGlassIcon size={15} aria-hidden />
-        <span className="ade-search-button-text">{LABEL}</span>
+        <span className="ade-search-button-text">Buscar</span>
         <kbd>{keys}</kbd>
       </button>
     );

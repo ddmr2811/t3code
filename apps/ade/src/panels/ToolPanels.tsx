@@ -18,20 +18,14 @@ import { lazy, Suspense, useContext } from "react";
 import { environmentCatalog } from "../connection/runtime.ts";
 import {
   listedThreadsAtom,
-  narrowViewportAtom,
   ProjectTitle,
   selectedThreadKeyAtom,
   ThreadStateBadge,
-  useDecisionsPanel,
 } from "../sidebar/Sidebar.tsx";
 import { threadState } from "../sidebar/sidebar.logic.ts";
 import { environmentProjects, environmentThreadShells, terminalAccessAtom } from "../state.ts";
-import {
-  FloatingPanel,
-  isFocusInTerminal,
-  type ToolPanel,
-  toolPanelAtom,
-} from "./FloatingPanel.tsx";
+import { FloatingPanel, shortcutsFree, toolPanelAtom } from "./FloatingPanel.tsx";
+import { terminalAfterShortcut, type ToolPanel } from "./panels.logic.ts";
 
 // Ghostty's wasm loads with the first terminal opened.
 const TerminalView = lazy(() => import("../terminal/TerminalView.tsx"));
@@ -49,44 +43,37 @@ function clockTime(iso: string): string {
   });
 }
 
+type Catalog = ReturnType<typeof readCatalog>;
 const readCatalog = (registry: AtomRegistry.AtomRegistry) =>
   registry.get(environmentCatalog.catalogValueAtom);
-type Catalog = ReturnType<typeof readCatalog>;
 
 // The route's id is new each time the machine is paired.
-function pairingOf(catalog: Catalog, ref: ScopedThreadRef | null): string | null {
+function pairingOf(catalog: Catalog, key: string | null): string | null {
+  const ref = key === null ? null : parseScopedThreadKey(key);
   const target = ref === null ? undefined : catalog.entries.get(ref.environmentId)?.target;
   return target === undefined ? null : credentialConnectionId(connectionRouteId(target));
 }
 
-const refOf = (key: string | null) => (key === null ? null : parseScopedThreadKey(key));
-
-/** Opens a tool panel in place of whatever panel is open. */
-export function useOpenToolPanel() {
-  const registry = useContext(RegistryContext);
-  const decisions = useDecisionsPanel();
-  return (kind: ToolPanel["kind"]) => {
-    if (decisions.open) decisions.setOpen(false);
-    registry.set(
-      toolPanelAtom,
-      kind === "actividad"
-        ? { kind }
-        : {
-            kind,
-            pairing: pairingOf(readCatalog(registry), refOf(registry.get(selectedThreadKeyAtom))),
-          },
-    );
-  };
+/** Opens a tool panel in place of the one open; the terminal for the thread on screen. */
+export function openToolPanel(registry: AtomRegistry.AtomRegistry, kind: ToolPanel["kind"]) {
+  const key = registry.get(selectedThreadKeyAtom);
+  registry.set(
+    toolPanelAtom,
+    kind === "actividad" ? { kind } : { kind, key, pairing: pairingOf(readCatalog(registry), key) },
+  );
 }
 
 /** The open tool panel, if any, and Ctrl+J for the terminal. */
 export function ToolPanels() {
+  const registry = useContext(RegistryContext);
   const [panel, setPanel] = useAtom(toolPanelAtom);
-  const openToolPanel = useOpenToolPanel();
   useShortcut(
     "mod+j",
-    () => (panel?.kind === "terminal" ? setPanel(null) : openToolPanel("terminal")),
-    { when: () => !isFocusInTerminal(), description: "Abrir o cerrar la terminal" },
+    () => {
+      const key = registry.get(selectedThreadKeyAtom);
+      setPanel(terminalAfterShortcut(panel, key, pairingOf(readCatalog(registry), key)));
+    },
+    { when: shortcutsFree, description: "Abrir o cerrar la terminal" },
   );
   if (panel === null) return null;
   const close = () => setPanel(null);
@@ -107,19 +94,23 @@ export function ToolPanels() {
       key="terminal"
       label="Terminal"
       icon={<TerminalWindowIcon size={16} aria-hidden />}
+      wide
       onClose={close}
     >
-      <TerminalBody pairing={panel.pairing} onClose={close} />
+      <TerminalBody threadKey={panel.key} pairing={panel.pairing} onClose={close} />
     </FloatingPanel>
   );
 }
 
-/** The selected thread's shell, or why there is none. */
-function TerminalBody(props: { pairing: string | null; onClose: () => void }) {
-  const key = useAtomValue(selectedThreadKeyAtom);
-  const ref = refOf(key);
+/** The shell of the thread the terminal was opened for, or why there is none. */
+function TerminalBody(props: {
+  threadKey: string | null;
+  pairing: string | null;
+  onClose: () => void;
+}) {
+  const ref = props.threadKey === null ? null : parseScopedThreadKey(props.threadKey);
   const currentPairing = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) =>
-    pairingOf(catalog, ref),
+    pairingOf(catalog, props.threadKey),
   );
   const thread = useAtomValue(
     ref === null ? NO_THREAD : environmentThreadShells.quietThreadShellAtom(ref),
@@ -127,7 +118,7 @@ function TerminalBody(props: { pairing: string | null; onClose: () => void }) {
   const allowed = useAtomValue(ref === null ? NO_ACCESS : terminalAccessAtom(ref.environmentId));
   const note = (text: string) => <p className="ade-panel-note">{text}</p>;
   if (ref === null) {
-    return note("La terminal se abre en la carpeta de un hilo. Abre uno y vuelve a pulsar Ctrl+J.");
+    return note("La terminal se abre en la carpeta de un hilo. Abre uno y pulsa Ctrl+J.");
   }
   if (currentPairing === null) return note("La máquina de este hilo ya no está emparejada.");
   if (!allowed) {
@@ -137,10 +128,12 @@ function TerminalBody(props: { pairing: string | null; onClose: () => void }) {
   }
   // A terminal opened under another pairing is not opened again by itself.
   if (props.pairing !== currentPairing) {
-    return note("La máquina se emparejó de nuevo. Abre la terminal otra vez con Ctrl+J.");
+    return note("La máquina se emparejó de nuevo. Pulsa Ctrl+J para abrir otra terminal.");
   }
   if (thread === null) return note("Cargando el hilo…");
-  return <ThreadTerminal key={key} threadRef={ref} thread={thread} onClose={props.onClose} />;
+  return (
+    <ThreadTerminal key={props.threadKey} threadRef={ref} thread={thread} onClose={props.onClose} />
+  );
 }
 
 /** A shell in the thread's worktree, or in its project's folder when it has none. */
@@ -171,8 +164,6 @@ function ThreadTerminal(props: {
 function Activity() {
   const listed = useAtomValue(listedThreadsAtom);
   const setSelected = useAtomSet(selectedThreadKeyAtom);
-  const setPanel = useAtomSet(toolPanelAtom);
-  const narrowViewport = useAtomValue(narrowViewportAtom);
   const recent = [...listed].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 15);
   if (recent.length === 0) return <p className="ade-panel-note">Aún no hay actividad.</p>;
   return (
@@ -181,15 +172,7 @@ function Activity() {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return (
           <li key={key}>
-            <button
-              type="button"
-              className="ade-activity-row"
-              onClick={() => {
-                setSelected(key);
-                // On a phone the panel covers the thread it just opened.
-                if (narrowViewport) setPanel(null);
-              }}
-            >
+            <button type="button" className="ade-activity-row" onClick={() => setSelected(key)}>
               <time dateTime={thread.updatedAt}>{clockTime(thread.updatedAt)}</time>
               <ThreadStateBadge state={threadState(thread)} />
               <span className="ade-activity-title">{thread.title}</span>

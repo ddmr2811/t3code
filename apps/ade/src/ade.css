@@ -610,11 +610,13 @@ body {
   padding: 0;
 }
 
+/* On a narrow window the actions move to a second line instead of squeezing the title out. */
 .ade-thread-view-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--ade-divider);
 }
@@ -1328,7 +1330,7 @@ body {
 /* One floating panel at a time (Terminal, Actividad, Decisiones): a column of its own, so the
    reading column moves aside instead of being covered. */
 .ade-shell:has(> .ade-panel) {
-  grid-template-columns: 280px 1fr var(--ade-panel-width);
+  grid-template-columns: 280px 1fr min(var(--ade-panel-width), 45vw);
 }
 
 .ade-shell > * {
@@ -1360,14 +1362,20 @@ body {
   }
 }
 
-/* The terminal needs a height of its own; the others fit their content. */
-.ade-panel:has(> .ade-terminal) {
-  height: min(640px, calc(100% - 2 * var(--ade-panel-gap)));
+/* The terminal: wide enough for 80 columns, and the whole height; the others fit their content.
+   45vw caps every panel so a narrow desktop window keeps it inside. */
+.ade-shell:has(> .ade-panel[data-wide]) {
+  --ade-panel-width: clamp(460px, 40vw, 760px);
+}
+
+.ade-panel[data-wide] {
+  align-self: stretch;
   overflow: hidden;
 }
 
 .ade-panel-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   color: var(--ade-text-muted);
@@ -1403,6 +1411,14 @@ body {
 .ade-panel .ade-terminal-header {
   flex-wrap: wrap;
   padding: 0 0 8px;
+}
+
+.ade-terminal-cwd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ade-panel .ade-terminal-mount {
@@ -3482,7 +3498,7 @@ body {
   }
 
   .ade-shell:has(> .ade-panel) {
-    grid-template-columns: 280px minmax(0, 1fr) var(--ade-panel-width);
+    grid-template-columns: 280px minmax(0, 1fr) min(var(--ade-panel-width), 45vw);
   }
 
   .ade-shell[data-sidebar="collapsed"] {
@@ -3490,7 +3506,7 @@ body {
   }
 
   .ade-shell[data-sidebar="collapsed"]:has(> .ade-panel) {
-    grid-template-columns: 68px minmax(0, 1fr) var(--ade-panel-width);
+    grid-template-columns: 68px minmax(0, 1fr) min(var(--ade-panel-width), 45vw);
   }
 
   .ade-sidebar {
@@ -3853,8 +3869,7 @@ body {
   }
 
   /* On a phone the panel takes the screen above the bottom bar. */
-  .ade-panel,
-  .ade-panel:has(> .ade-terminal) {
+  .ade-panel {
     position: fixed;
     inset: 0 0 calc(57px + env(safe-area-inset-bottom, 0px)) 0;
     z-index: 20;
@@ -3872,16 +3887,6 @@ body {
       opacity: 0;
       translate: 0 16px;
     }
-  }
-
-  .ade-search {
-    top: 12px;
-    width: calc(100vw - 24px);
-  }
-
-  .ade-search-button-text,
-  .ade-search-button kbd {
-    display: none;
   }
 
   .ade-bots-layout {
@@ -4090,6 +4095,7 @@ body {
 
 /* Thread header, v7: project mark, title, state and plan step; actions and «N te necesitan». */
 .ade-thread-view-title {
+  flex: 1 1 18em;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4437,5 +4443,18 @@ body {
   .ade-search-backdrop,
   .ade-main > * {
     transition: none;
+  }
+}
+
+/* After the base rules above, which share their specificity. */
+@media (max-width: 720px) {
+  .ade-search {
+    top: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .ade-search-button-text,
+  .ade-search-button kbd {
+    display: none;
   }
 }

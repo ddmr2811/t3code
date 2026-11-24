@@ -151,6 +151,13 @@ export function useDecisionsPanel() {
   };
 }
 
+/** On a phone a panel covers the screen: going to a thread or a view closes it. */
+export function closePanelsOnPhone<A>(ctx: Atom.WriteContext<A>) {
+  if (!ctx.get(narrowViewportAtom)) return;
+  ctx.set(toolPanelAtom, null);
+  ctx.set(decisionsChoiceAtom, null);
+}
+
 // The selected thread lives in `?hilo=`, so a reload opens it again. Each choice is a history
 // entry, so Back returns to the thread before.
 const readSelectedFromUrl = () => new URLSearchParams(window.location.search).get("hilo");
@@ -162,6 +169,7 @@ export const selectedThreadKeyAtom = Atom.writable(
     return readSelectedFromUrl();
   },
   (ctx, key: string | null) => {
+    closePanelsOnPhone(ctx);
     if (key === readSelectedFromUrl()) return;
     const url = new URL(window.location.href);
     if (key === null) url.searchParams.delete("hilo");

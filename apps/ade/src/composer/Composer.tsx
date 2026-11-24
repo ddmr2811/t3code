@@ -244,6 +244,8 @@ function Picker<T extends string>(props: {
       className={props.compact ? "ade-picker ade-picker-chip" : "ade-picker"}
       onKeyDown={(event) => {
         if (event.key === "Escape" && menu.current?.open) {
+          // Only the menu closes, not the panel or the dialog around it.
+          event.preventDefault();
           close();
           menu.current.querySelector("summary")?.focus();
         }

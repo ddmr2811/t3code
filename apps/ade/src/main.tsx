@@ -19,7 +19,7 @@ import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
-import { isFocusInTerminal, toolPanelAtom } from "./panels/FloatingPanel.tsx";
+import { shortcutsFree } from "./panels/FloatingPanel.tsx";
 import { ToolPanels } from "./panels/ToolPanels.tsx";
 import { Search } from "./search/Search.tsx";
 import { SearchButton, searchOpenAtom } from "./search/SearchButton.tsx";
@@ -53,11 +53,9 @@ function MobileBottomNav() {
   const { count: pendingCount, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
 
   const setSearchOpen = useAtomSet(searchOpenAtom);
-  const setToolPanel = useAtomSet(toolPanelAtom);
   const goView = (target: "inicio" | "proyectos" | "bots") => {
     setDrawerOpen(false);
     setTrayOpen(false);
-    setToolPanel(null);
     setView(target);
   };
 
@@ -184,16 +182,14 @@ function Shell() {
   const showMachines = () => {
     if (narrowViewport) setDrawerOpen(true);
     else setExpanded(true);
-    requestAnimationFrame(() =>
-      document.querySelector<HTMLElement>('.ade-sidebar [aria-label="Añadir máquina"]')?.focus(),
-    );
+    requestAnimationFrame(() => document.getElementById("ade-add-machine")?.focus());
   };
   useShortcut("mod+b", toggleSidebar, {
-    when: () => !narrowViewport && hasMachines && !isFocusInTerminal(),
+    when: () => !narrowViewport && hasMachines && shortcutsFree(),
     description: "Alternar la barra lateral",
   });
   useShortcut("mod+shift+o", openHome, {
-    when: () => hasMachines && !isFocusInTerminal(),
+    when: () => hasMachines && shortcutsFree(),
     description: "Nuevo hilo",
   });
   const toggleHint = useShortcutHint("mod+b");
@@ -319,12 +315,13 @@ function Shell() {
             </>
           )}
         </aside>
-        <main className="ade-main">
+        {/* Focusable so a closing panel has somewhere to give focus back to. */}
+        <main className="ade-main" tabIndex={-1}>
           <MainContent />
         </main>
         <DecisionsPanel />
         <ToolPanels />
-        {hasMachines ? <Search onShowMachines={showMachines} onNewThread={openHome} /> : null}
+        <Search onShowMachines={showMachines} onNewThread={openHome} />
         <MobileBottomNav />
       </div>
     </>
