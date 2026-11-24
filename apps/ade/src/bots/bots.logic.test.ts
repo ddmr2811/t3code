@@ -77,9 +77,9 @@ describe("bots.logic", () => {
     expect(nightly.schedule).toEqual({ type: "fixed_time", timeOfDay: "03:00" });
     expect(daily).toMatchObject({
       title: "Parte",
-      prompt: "Resume el día",
       schedule: { type: "fixed_time", timeOfDay: "08:30" },
     });
+    expect(daily.prompt.endsWith("\n\nResume el día")).toBe(true);
     expect(webhook.schedule).toEqual({ type: "webhook" });
   });
 });

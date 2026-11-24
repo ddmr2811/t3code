@@ -147,6 +147,12 @@ const make = Effect.gen(function* () {
               message: `Note ${id} to replace was not found in project ${parsed.projectId}.`,
             });
           }
+          if (origin === "agent" && (note.origin !== "agent" || note.inclusion !== "searchable")) {
+            return yield* new ForkMemoryError({
+              reason: "invalidInput",
+              message: `Note ${id} was written or promoted by the user; an agent can only propose replacing it.`,
+            });
+          }
         }
         const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
         const note: ForkMemoryNote = {

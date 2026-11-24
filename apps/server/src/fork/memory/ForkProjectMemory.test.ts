@@ -91,6 +91,42 @@ describe("ForkProjectMemory", () => {
     ),
   );
 
+  it.effect("lets an agent merge only searchable agent notes, never the user's or essentials", () =>
+    withMemory((memory) =>
+      Effect.gen(function* () {
+        const save = (
+          text: string,
+          origin: "user" | "agent",
+          inclusion: "essential" | "searchable",
+        ) => memory.upsert({ projectId: projectA, text, inclusion }, origin);
+        const fromUser = yield* save("Despliegue solo los viernes", "user", "searchable");
+        const promoted = yield* save("Usa pnpm", "agent", "essential");
+        const fromAgent = yield* save("Tests con Vitest", "agent", "searchable");
+
+        for (const protectedNote of [fromUser, promoted]) {
+          expect(
+            yield* memory
+              .upsert({ projectId: projectA, text: "Fusión", inclusion: "searchable" }, "agent", [
+                protectedNote.id,
+              ])
+              .pipe(Effect.flip),
+          ).toMatchObject({ reason: "invalidInput" });
+        }
+        yield* memory.upsert(
+          { projectId: projectA, text: "Tests con Vitest y Playwright", inclusion: "searchable" },
+          "agent",
+          [fromAgent.id],
+        );
+        expect(
+          (yield* memory.list({ projectId: projectA })).notes.map((note) => note.id),
+        ).not.toContain(fromAgent.id);
+        expect((yield* memory.list({ projectId: projectA })).notes.map((note) => note.id)).toEqual(
+          expect.arrayContaining([fromUser.id, promoted.id]),
+        );
+      }),
+    ),
+  );
+
   it.effect("finds notes that contain every word, in any case", () =>
     withMemory((memory) =>
       Effect.gen(function* () {

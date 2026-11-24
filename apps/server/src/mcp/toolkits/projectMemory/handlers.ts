@@ -50,12 +50,14 @@ export const layer = McpToolAccess.toLayer(ProjectMemoryToolkit, {
       };
     }),
   ),
-  project_memory_save: McpToolAccess.actsAsCaller(({ text, inclusion, replaces }) =>
+  project_memory_save: McpToolAccess.actsAsCaller(({ text, replaces }) =>
     Effect.gen(function* () {
       const memory = yield* ForkProjectMemory.ForkProjectMemory;
       const note = yield* memory
         .upsert(
-          { projectId: yield* callerProject, text, inclusion: inclusion ?? "searchable" },
+          // Essential notes reach the coordinator's turn, which may run with more access than
+          // this caller, so only the user promotes a note there.
+          { projectId: yield* callerProject, text, inclusion: "searchable" },
           "agent",
           replaces,
         )

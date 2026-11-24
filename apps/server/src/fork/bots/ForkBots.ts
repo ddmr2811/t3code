@@ -43,6 +43,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
@@ -119,7 +120,10 @@ function memoryHash(notes: ReadonlyArray<ForkMemoryNote>): string | null {
 
 function memoryBlock(notes: ReadonlyArray<ForkMemoryNote>): string {
   const lines =
-    notes.length === 0 ? ["(sin notas esenciales)"] : notes.map((note) => `- ${note.text}`);
+    notes.length === 0
+      ? ["(sin notas esenciales)"]
+      : // A note cannot close the block or open a tag of its own.
+        notes.map((note) => `- ${note.text.replaceAll("<", "‹").replaceAll(">", "›")}`);
   return [
     "<project_memory>",
     "Notas esenciales del proyecto (sustituyen a las que recibiste antes):",
@@ -191,6 +195,32 @@ const make = Effect.gen(function* () {
   const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+
+  /**
+   * A routine copies the mode and model of the thread it continues. When the bot leaves that
+   * thread, its routines would keep running there unseen, so they are paused.
+   */
+  const pauseRoutines = Effect.fn("ForkBots.pauseRoutines")(function* (
+    botId: ForkBot["id"],
+    threadId: ThreadId,
+  ) {
+    yield* Effect.gen(function* () {
+      const { tasks } = yield* scheduledTasks.list();
+      for (const task of tasks) {
+        if (task.threadId !== threadId || !task.enabled) continue;
+        yield* scheduledTasks.setEnabled({ id: task.id, enabled: false });
+      }
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("fork bots could not pause the routines of a previous thread", {
+          botId,
+          threadId,
+          error,
+        }),
+      ),
+    );
+  });
   const memory = yield* ForkProjectMemory.ForkProjectMemory;
 
   const nowIso = Effect.map(Clock.currentTimeMillis, (now) =>
@@ -329,6 +359,9 @@ const make = Effect.gen(function* () {
               ? [...directory.bots, bot]
               : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
           yield* fileStore.write({ ...directory, bots, updatedAt: now });
+          if (existing?.threadId != null && kept === undefined) {
+            yield* pauseRoutines(id, existing.threadId);
+          }
           return bot;
         }),
       ),
@@ -369,10 +402,12 @@ const make = Effect.gen(function* () {
       storeLock.withPermits(1)(
         Effect.gen(function* () {
           const directory = yield* fileStore.read();
+          const removed = directory.bots.find((bot) => bot.id === parsed.id);
+          if (removed === undefined) return { id: parsed.id, removed: false };
           const bots = directory.bots.filter((bot) => bot.id !== parsed.id);
-          if (bots.length === directory.bots.length) return { id: parsed.id, removed: false };
           const now = yield* nowIso;
           yield* fileStore.write({ ...directory, bots, updatedAt: now });
+          if (removed.threadId !== null) yield* pauseRoutines(removed.id, removed.threadId);
           // The T3 thread is deliberately untouched: removing a bot never deletes its history.
           return { id: parsed.id, removed: true };
         }),

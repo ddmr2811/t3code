@@ -106,8 +106,8 @@ export function botThreadState(
 export const NIGHTLY_CONSOLIDATION_PROMPT = [
   "Consolidación nocturna de la memoria del proyecto.",
   "1. Repasa todas las notas con project_memory_search (consulta vacía; si hay más de 50, busca por temas).",
-  "2. Fusiona duplicados y notas que dicen lo mismo en una sola con project_memory_save y `replaces`, sin perder información.",
-  "3. Si una nota quedó obsoleta porque otra la sustituye, añádela a `replaces`. No quites por tu cuenta notas del usuario que nada sustituye.",
+  "2. Fusiona duplicados entre notas de agentes en una sola con project_memory_save y `replaces`, sin perder información. Las notas del usuario y las esenciales no se pueden sustituir: si sobran o se repiten, propónlo.",
+  "3. Si una nota de agente quedó obsoleta porque otra la sustituye, añádela a `replaces`.",
   "4. Termina proponiendo, con su id, qué notas esenciales bajarías a buscables y cuáles borrarías, para que el usuario decida.",
 ].join("\n");
 
@@ -136,7 +136,8 @@ export function coordinatorRoutineInput(
         }
       : {
           title: routine.title.trim(),
-          prompt: routine.prompt.trim(),
+          // Routines skip the bot's own messages, so they never get the injected essentials.
+          prompt: `Antes de empezar, consulta la memoria del proyecto con project_memory_search.\n\n${routine.prompt.trim()}`,
           schedule:
             routine.kind === "daily"
               ? ({ type: "fixed_time", timeOfDay: routine.timeOfDay } as const)

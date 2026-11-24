@@ -24,6 +24,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkBots from "./ForkBots.ts";
@@ -56,6 +57,8 @@ const withBots = <A, E, R>(
     readonly stateDir: string;
     readonly fs: FileSystem.FileSystem;
     readonly launched: Array<ThreadId>;
+    /** Scheduled tasks on the server, as the routines the ADE creates for a bot's thread. */
+    readonly routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }>;
     readonly sentTo: Array<ThreadId>;
     /** Every message text the provider received, launches and sends alike, in order. */
     readonly texts: Array<string>;
@@ -70,6 +73,7 @@ const withBots = <A, E, R>(
       const sentTo: Array<ThreadId> = [];
       const texts: Array<string> = [];
       const liveThreads = new Set<ThreadId>();
+      const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
       const mocks = Layer.mergeAll(
         Layer.mock(ProjectService.ProjectService)({
@@ -120,6 +124,16 @@ const withBots = <A, E, R>(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         }),
+        Layer.mock(ScheduledTasks.ScheduledTaskService)({
+          list: () =>
+            Effect.sync(() => ({ tasks: routines.map((task) => ({ ...task })) }) as never),
+          setEnabled: (input) =>
+            Effect.sync(() => {
+              const task = routines.find((candidate) => candidate.id === input.id);
+              if (task !== undefined) task.enabled = input.enabled;
+              return {} as never;
+            }),
+        }),
       );
 
       const services = ForkBots.layer.pipe(Layer.provideMerge(ForkProjectMemory.layer));
@@ -142,6 +156,7 @@ const withBots = <A, E, R>(
           stateDir: config.stateDir,
           fs: yield* FileSystem.FileSystem,
           launched,
+          routines,
           sentTo,
           texts,
           memory: yield* ForkProjectMemory.ForkProjectMemory,
@@ -200,6 +215,31 @@ describe("ForkBots", () => {
           expect(next.threadId).not.toBe(linked.threadId);
         }
         expect(launched).toHaveLength(4);
+      }),
+    ),
+  );
+
+  it.effect("pauses the routines of a thread the bot leaves, so none keeps its old mode", () =>
+    withBots(({ service, routines }) =>
+      Effect.gen(function* () {
+        const bot = yield* service.upsert({ ...baseBot, runtimeMode: "full-access" });
+        const { threadId } = yield* service.sendMessage({ id: bot.id, text: "hola" });
+        routines.push(
+          { id: "nightly", threadId, enabled: true },
+          { id: "other-thread", threadId: ThreadId.make("thread-ajeno"), enabled: true },
+        );
+
+        yield* service.upsert({ ...baseBot, id: bot.id, runtimeMode: "approval-required" });
+        expect(routines.map((task) => [task.id, task.enabled])).toEqual([
+          ["nightly", false],
+          ["other-thread", true],
+        ]);
+
+        // Removing the bot pauses the routines of its current thread too.
+        const next = yield* service.sendMessage({ id: bot.id, text: "otra vez" });
+        routines.push({ id: "daily", threadId: next.threadId, enabled: true });
+        yield* service.remove({ id: bot.id });
+        expect(routines.find((task) => task.id === "daily")?.enabled).toBe(false);
       }),
     ),
   );
