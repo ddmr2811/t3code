@@ -10,7 +10,7 @@
   --color-popover: var(--ade-surface);
   --color-popover-foreground: var(--ade-text);
   --color-primary: var(--ade-accent);
-  --color-primary-foreground: var(--ade-bg);
+  --color-primary-foreground: var(--ade-ink);
   --color-secondary: var(--ade-divider);
   --color-secondary-foreground: var(--ade-text);
   --color-muted: var(--ade-divider);
@@ -18,7 +18,7 @@
   --color-accent: var(--ade-surface);
   --color-accent-foreground: var(--ade-text);
   --color-destructive: var(--ade-danger);
-  --color-destructive-foreground: var(--ade-bg);
+  --color-destructive-foreground: var(--ade-ink);
   --color-border: var(--ade-border);
   --color-input: var(--ade-border);
   --color-ring: var(--ade-accent);
@@ -29,27 +29,50 @@
   --font-mono: var(--ade-font-mono);
 }
 
-/* Dark v4 palette, from themes/t3-fork-v4.json. */
 :root {
   color-scheme: dark;
-  --ade-bg: #0a0a0a;
-  --ade-surface: #161616;
-  --ade-divider: #1c1c1c;
-  --ade-border: #2b2b2b;
+
+  /* Superficies y vidrio */
+  --ade-canvas: #050608;
+  --ade-bg: rgb(10 11 14 / 0.84);
+  --ade-surface: rgb(20 22 28 / 0.78);
+  --ade-glass-panel: linear-gradient(180deg, rgb(13 14 17 / 0.8), rgb(10 11 13 / 0.86));
+  --ade-glass-blur: blur(28px) saturate(130%);
+  --ade-glass-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.11), inset 0 1px 0 rgb(255 255 255 / 0.2),
+    0 18px 48px rgb(0 0 0 / 0.6);
+
+  /* Bordes y separadores */
+  --ade-divider: rgb(255 255 255 / 0.08);
+  --ade-border: rgb(255 255 255 / 0.14);
+
+  /* Texto y tinta (grises subidos para contraste AA sobre vidrio) */
   --ade-text: #f5f5f5;
-  --ade-text-muted: #a6a6ab;
-  --ade-text-tertiary: #6f6f75;
-  --ade-accent: #d97757;
-  --ade-ok: #4cc38a;
+  --ade-text-muted: #bdbdc3;
+  --ade-text-tertiary: #a4a4ac;
+  --ade-paper: #efeae0;
+  --ade-ink: #0a0a0a;
+
+  /* Estados */
+  --ade-accent: #ff6a1f;
+  --ade-ok: #7fd6a2;
   --ade-warn: #e2b340;
   --ade-danger: #ff8589;
+
+  /* Colores por proyecto */
+  --ade-project-general: #ece6da;
+  --ade-project-neutralpha: #8fb4ee;
+  --ade-project-carrobles: #96c59a;
+  --ade-project-fork: #d8d58a;
+  --ade-project-dani: #e0a3b8;
+  --ade-project-jarvis: #86cfcb;
+
+  /* Radios y tipografía */
   --ade-radius-sm: 6px;
   --ade-radius-md: 8px;
   --ade-radius-lg: 12px;
   --ade-font-sans: "Geist", system-ui, sans-serif;
   --ade-font-mono: "Geist Mono", ui-monospace, monospace;
-  --dither-ink: var(--ade-accent);
-  --dither-cell: 3px;
 }
 
 html,
@@ -60,13 +83,69 @@ body,
 }
 
 body {
-  background: var(--ade-bg);
+  background: var(--ade-canvas);
   color: var(--ade-text);
   font: 14px/1.5 var(--ade-font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
+/* Fondo fijo en CSS puro: luna quieta o paisaje de atardecer, sin canvas ni bucles. */
+.ade-bg-moon {
+  background:
+    radial-gradient(
+      circle at 80% 20%,
+      rgb(244 239 228 / 0.19) 0,
+      rgb(217 212 200 / 0.14) clamp(76px, 8.5vw, 138px),
+      rgb(154 160 166 / 0.08) clamp(104px, 11.5vw, 186px),
+      transparent calc(clamp(104px, 11.5vw, 186px) + 2px)
+    ),
+    radial-gradient(
+      circle at 80% 20%,
+      rgb(185 198 214 / 0.11) 0,
+      rgb(69 86 106 / 0.07) clamp(180px, 22vw, 360px),
+      transparent clamp(320px, 42vw, 680px)
+    ),
+    radial-gradient(
+      ellipse 72% 28% at 22% 96%,
+      rgb(15 21 29 / 0.72) 0,
+      rgb(15 21 29 / 0.72) 58%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 82% 32% at 78% 102%,
+      rgb(20 27 37 / 0.68) 0,
+      rgb(20 27 37 / 0.68) 58%,
+      transparent 60%
+    ),
+    linear-gradient(180deg, #040507 0%, #090d13 42%, #111822 76%, #070a0f 100%);
+}
+
+.ade-bg-image-default {
+  background:
+    radial-gradient(
+      circle at 80% 34%,
+      rgb(255 240 212 / 0.42) 0,
+      rgb(233 199 160 / 0.18) clamp(110px, 14vw, 220px),
+      transparent clamp(240px, 32vw, 480px)
+    ),
+    radial-gradient(
+      ellipse 78% 28% at 28% 92%,
+      rgb(34 54 46 / 0.9) 0,
+      rgb(34 54 46 / 0.9) 58%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 84% 30% at 76% 100%,
+      rgb(16 32 26 / 0.95) 0,
+      rgb(16 32 26 / 0.95) 58%,
+      transparent 60%
+    ),
+    linear-gradient(180deg, #162840 0%, #3a6a7d 54%, #b59472 82%, #111c18 100%);
+}
+
 .ade-shell {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: 280px 1fr;
   height: 100%;
@@ -127,15 +206,6 @@ body {
   display: grid;
   place-items: center;
   overflow: hidden;
-}
-
-.ade-dither {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 660px; /* 220 cells of 3px: the fade ends at zero */
-  height: 160px;
-  pointer-events: none;
 }
 
 .ade-empty {
@@ -568,7 +638,6 @@ body {
   flex-direction: column-reverse;
   min-height: 0;
   overflow-y: auto;
-  /* The dither stays a header accent; turns scroll over solid ground. */
   background: var(--ade-bg);
 }
 
@@ -1788,11 +1857,6 @@ body {
 /* Resumen, Proyectos and Tablero: hairlines and tonal steps, colour only for what needs you or is full. */
 .ade-main:has(.ade-summary, .ade-board, .ade-projects) {
   place-items: stretch;
-}
-
-/* The board's column heads sit where the grain is. */
-.ade-main:has(.ade-board) .ade-dither {
-  display: none;
 }
 
 .ade-views {
@@ -3230,10 +3294,6 @@ body {
 
   .ade-thread-failover-error {
     padding: 8px 16px 0;
-  }
-
-  .ade-dither {
-    display: none;
   }
 
   .ade-summary,

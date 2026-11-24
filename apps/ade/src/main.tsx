@@ -10,9 +10,8 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { StrictMode, useContext, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
-// Shared with apps/web's fork rather than copied: same fonts, same dither code.
-import { gradientFillStyle } from "../../web/src/fork/dither/style.ts";
 import "./ade.css";
+import { AdeBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
@@ -137,38 +136,36 @@ function Shell() {
     [registry],
   );
   return (
-    <div className="ade-shell" data-mobile-drawer={drawerOpen ? "open" : undefined}>
-      <aside className="ade-sidebar">
-        <div className="ade-brand-row">
-          <div className="ade-brand">ADE</div>
-          <button
-            type="button"
-            className="ade-icon-button ade-mobile-drawer-close"
-            aria-label="Cerrar menú lateral"
-            onClick={() => setDrawerOpen(false)}
-          >
-            <XIcon size={18} aria-hidden />
-          </button>
-        </div>
-        <NeedsYouBlock />
-        <ViewNav />
-        <ThreadTree />
-        <MachinesSidebar />
-        <div className="ade-sidebar-footer">
-          <ConnectionSummary />
-        </div>
-      </aside>
-      <main className="ade-main">
-        <span
-          aria-hidden
-          className="ade-dither"
-          style={gradientFillStyle({ edge: "right", length: 220, from: 0.6, to: 0 })}
-        />
-        <MainContent />
-      </main>
-      <DecisionsPanel />
-      <MobileBottomNav />
-    </div>
+    <>
+      <AdeBackground />
+      <div className="ade-shell" data-mobile-drawer={drawerOpen ? "open" : undefined}>
+        <aside className="ade-sidebar">
+          <div className="ade-brand-row">
+            <div className="ade-brand">ADE</div>
+            <button
+              type="button"
+              className="ade-icon-button ade-mobile-drawer-close"
+              aria-label="Cerrar menú lateral"
+              onClick={() => setDrawerOpen(false)}
+            >
+              <XIcon size={18} aria-hidden />
+            </button>
+          </div>
+          <NeedsYouBlock />
+          <ViewNav />
+          <ThreadTree />
+          <MachinesSidebar />
+          <div className="ade-sidebar-footer">
+            <ConnectionSummary />
+          </div>
+        </aside>
+        <main className="ade-main">
+          <MainContent />
+        </main>
+        <DecisionsPanel />
+        <MobileBottomNav />
+      </div>
+    </>
   );
 }
 
