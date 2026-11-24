@@ -180,7 +180,8 @@ const make = Effect.gen(function* () {
           projectId: parsed.projectId,
           text: parsed.text,
           inclusion: parsed.inclusion,
-          origin: existing?.origin ?? origin,
+          // A note the user has edited is theirs, so no agent can merge it away afterwards.
+          origin: origin === "user" ? "user" : (existing?.origin ?? origin),
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
         };

@@ -218,12 +218,21 @@ const make = Effect.gen(function* () {
         yield* scheduledTasks.setEnabled({ id: task.id, enabled: false });
       }
     }).pipe(
+      // Failing the change keeps the bot where it was, so no routine is left running unseen.
       Effect.catch((error) =>
         Effect.logWarning("fork bots could not pause the routines of a previous thread", {
           botId,
           threadId,
           error,
-        }),
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              unavailable(
+                `Could not pause the routines of bot ${botId} in thread ${threadId}; nothing was changed.`,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   });
@@ -364,10 +373,10 @@ const make = Effect.gen(function* () {
             existing === undefined
               ? [...directory.bots, bot]
               : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
-          yield* fileStore.write({ ...directory, bots, updatedAt: now });
           if (existing?.threadId != null && kept === undefined) {
             yield* pauseRoutines(id, existing.threadId);
           }
+          yield* fileStore.write({ ...directory, bots, updatedAt: now });
           return bot;
         }),
       ),
@@ -411,9 +420,9 @@ const make = Effect.gen(function* () {
           const removed = directory.bots.find((bot) => bot.id === parsed.id);
           if (removed === undefined) return { id: parsed.id, removed: false };
           const bots = directory.bots.filter((bot) => bot.id !== parsed.id);
+          if (removed.threadId !== null) yield* pauseRoutines(removed.id, removed.threadId);
           const now = yield* nowIso;
           yield* fileStore.write({ ...directory, bots, updatedAt: now });
-          if (removed.threadId !== null) yield* pauseRoutines(removed.id, removed.threadId);
           // The T3 thread is deliberately untouched: removing a bot never deletes its history.
           return { id: parsed.id, removed: true };
         }),

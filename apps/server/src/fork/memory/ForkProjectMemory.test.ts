@@ -115,7 +115,13 @@ describe("ForkProjectMemory", () => {
         const promoted = yield* save("Usa pnpm", "agent", "essential");
         const fromAgent = yield* save("Tests con Vitest", "agent", "searchable");
 
-        for (const protectedNote of [fromUser, promoted]) {
+        const agentNote = yield* save("Puerto 3000", "agent", "searchable");
+        const correctedByUser = yield* memory.upsert(
+          { id: agentNote.id, projectId: projectA, text: "Puerto 3001", inclusion: "searchable" },
+          "user",
+        );
+
+        for (const protectedNote of [fromUser, promoted, correctedByUser]) {
           expect(
             yield* memory
               .upsert({ projectId: projectA, text: "Fusión", inclusion: "searchable" }, "agent", [
