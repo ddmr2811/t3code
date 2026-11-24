@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import { AuthSessionId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -191,6 +192,7 @@ const cliLayer = Layer.mergeAll(
 const runAnswer = Effect.fn("test.runAnswer")(function* (
   args: ReadonlyArray<string>,
   script: Record<string, Array<unknown>>,
+  options?: { readonly isError?: boolean },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -208,9 +210,11 @@ const runAnswer = Effect.fn("test.runAnswer")(function* (
       call: (tool, input) => {
         calls.push({ tool, args: input });
         const next = script[tool]?.shift();
-        return next === undefined
-          ? Effect.die(`unscripted ${tool} call`)
-          : Effect.succeed({ structuredContent: next });
+        if (next === undefined) return Effect.die(`unscripted ${tool} call`);
+        if (options?.isError === true) {
+          return Effect.succeed({ isError: true, content: [{ type: "text", text: String(next) }] });
+        }
+        return Effect.succeed({ structuredContent: next });
       },
     }),
   );
@@ -223,6 +227,12 @@ const runAnswer = Effect.fn("test.runAnswer")(function* (
   ]).pipe(Effect.exit);
   return { exit, calls };
 });
+
+const failureOf = (exit: { readonly _tag: string; readonly cause?: unknown }) => {
+  assert.isTrue(exit._tag === "Failure");
+  const squashed = Cause.squash((exit as { readonly cause: Cause.Cause<unknown> }).cause);
+  return squashed as { readonly _tag?: string; readonly message?: string };
+};
 
 const sizeQuestion = {
   id: "size",
@@ -258,18 +268,190 @@ it.effect("answer sends a spoken option as that option and other text as a custo
   }).pipe(Effect.scoped, Effect.provide(cliLayer)),
 );
 
-it.effect("answer without --request answers nothing when two questions are pending", () =>
+it.effect("answer without --request answers nothing when zero or two questions are pending", () =>
   Effect.gen(function* () {
-    const { exit, calls } = yield* runAnswer(["Large"], {
+    const empty = yield* runAnswer(["Large"], {
+      t3_pending_request: [{ requestIds: [] }],
+    });
+    const emptyErr = failureOf(empty.exit);
+    assert.strictEqual(emptyErr._tag, "ThreadUsageError");
+    assert.include(emptyErr.message ?? "", "has no pending question");
+
+    const two = yield* runAnswer(["Large"], {
       t3_pending_request: [{ requestIds: ["request-1", "request-2"] }],
     });
-
-    assert.isTrue(exit._tag === "Failure");
+    const twoErr = failureOf(two.exit);
+    assert.strictEqual(twoErr._tag, "ThreadUsageError");
+    assert.include(twoErr.message ?? "", "request-1, request-2");
     assert.deepStrictEqual(
-      calls.map((call) => (call.args as { readonly action: string }).action),
+      two.calls.map((call) => (call.args as { readonly action: string }).action),
       ["list"],
     );
   }).pipe(Effect.scoped, Effect.provide(cliLayer)),
+);
+
+it.effect(
+  "answer validates flags before connecting and handles --request trimming and --json",
+  () =>
+    Effect.gen(function* () {
+      // Missing answer, conflicting positional + --answer, blank --request, and empty --answer value fail before MCP.
+      for (const badArgs of [
+        [],
+        ["Large", "--answer", "size=Large"],
+        ["-", "--answer", "size=Large"],
+        ["--request", "   ", "--", "Large"],
+        ["--answer", "size="],
+        ["--answer", "size=   "],
+        ["--answer", "no-equals"],
+      ] as const) {
+        const { exit, calls } = yield* runAnswer(badArgs, {});
+        const err = failureOf(exit);
+        assert.strictEqual(err._tag, "ThreadUsageError", badArgs.join(" "));
+        assert.deepStrictEqual(calls, [], badArgs.join(" "));
+      }
+
+      // Explicit --request trims whitespace, skips `list`, and propagates server errors cleanly.
+      const trimmed = yield* runAnswer(["--request", "  request-9  ", "--json", "--", "Large"], {
+        t3_pending_request: [
+          { requestId: "request-9", questions: [sizeQuestion] },
+          { sequence: 2 },
+        ],
+      });
+      assert.isTrue(trimmed.exit._tag === "Success");
+      assert.deepStrictEqual(
+        trimmed.calls.map((call) => call.args),
+        [
+          { action: "read", threadId, requestId: "request-9" },
+          { action: "respond", threadId, requestId: "request-9", answers: { size: "lg" } },
+        ],
+      );
+
+      const serverRejected = yield* runAnswer(
+        ["--request", "approval-1", "--", "Large"],
+        { t3_pending_request: ["invalid_request"] },
+        { isError: true },
+      );
+      const rejectedErr = failureOf(serverRejected.exit);
+      assert.strictEqual(rejectedErr._tag, "ThreadToolFailedError");
+      assert.include(rejectedErr.message ?? "", "invalid_request");
+    }).pipe(Effect.scoped, Effect.provide(cliLayer)),
+);
+
+it.effect(
+  "answer handles multi-question, multi-select, allowCustomAnswer=false, and Object.prototype ids",
+  () =>
+    Effect.gen(function* () {
+      const questions = [
+        {
+          id: "constructor",
+          question: "Use constructor?",
+          allowCustomAnswer: false,
+          options: [{ label: "Yes" }, { label: "No" }],
+        },
+        {
+          id: "checks",
+          question: "Which checks?",
+          multiSelect: true,
+          allowCustomAnswer: false,
+          options: [
+            { label: "Lint", value: "lint" },
+            { label: "Test", value: "test" },
+          ],
+        },
+        {
+          id: "note",
+          question: "Optional note",
+          required: false,
+          options: [],
+        },
+      ];
+
+      const ok = yield* runAnswer(
+        [
+          "--request",
+          "req-multi",
+          "--answer",
+          "constructor=yes",
+          "--answer",
+          "checks=Lint",
+          "--answer",
+          "checks=Test",
+        ],
+        {
+          t3_pending_request: [{ requestId: "req-multi", questions }, { sequence: 3 }],
+        },
+      );
+      assert.isTrue(ok.exit._tag === "Success");
+      assert.deepStrictEqual(ok.calls.at(-1), {
+        tool: "t3_pending_request",
+        args: {
+          action: "respond",
+          threadId,
+          requestId: "req-multi",
+          answers: { constructor: "Yes", checks: ["lint", "test"] },
+        },
+      });
+
+      // Optional note with `=` in value works; disallowed custom answer and missing required fail.
+      const withEquals = yield* runAnswer(
+        [
+          "--request",
+          "req-multi",
+          "--answer",
+          "constructor=No",
+          "--answer",
+          "checks=Lint",
+          "--answer",
+          "note=a=b=c",
+        ],
+        {
+          t3_pending_request: [{ requestId: "req-multi", questions }, { sequence: 4 }],
+        },
+      );
+      assert.isTrue(withEquals.exit._tag === "Success");
+      assert.deepStrictEqual(withEquals.calls.at(-1), {
+        tool: "t3_pending_request",
+        args: {
+          action: "respond",
+          threadId,
+          requestId: "req-multi",
+          answers: { constructor: "No", checks: ["lint"], note: "a=b=c" },
+        },
+      });
+
+      const customDenied = yield* runAnswer(
+        ["--request", "req-multi", "--answer", "constructor=Maybe", "--answer", "checks=Lint"],
+        { t3_pending_request: [{ requestId: "req-multi", questions }] },
+      );
+      assert.strictEqual(failureOf(customDenied.exit)._tag, "ThreadUsageError");
+
+      const missingReq = yield* runAnswer(["--request", "req-multi", "--answer", "checks=Lint"], {
+        t3_pending_request: [{ requestId: "req-multi", questions }],
+      });
+      const missingErr = failureOf(missingReq.exit);
+      assert.strictEqual(missingErr._tag, "ThreadUsageError");
+      assert.include(missingErr.message ?? "", "constructor");
+
+      const duplicateOption = yield* runAnswer(
+        [
+          "--request",
+          "req-multi",
+          "--answer",
+          "constructor=Yes",
+          "--answer",
+          "checks=Lint",
+          "--answer",
+          "checks=lint",
+        ],
+        { t3_pending_request: [{ requestId: "req-multi", questions }] },
+      );
+      assert.strictEqual(failureOf(duplicateOption.exit)._tag, "ThreadUsageError");
+
+      const positionalOnMulti = yield* runAnswer(["--request", "req-multi", "--", "Yes"], {
+        t3_pending_request: [{ requestId: "req-multi", questions }],
+      });
+      assert.strictEqual(failureOf(positionalOnMulti.exit)._tag, "ThreadUsageError");
+    }).pipe(Effect.scoped, Effect.provide(cliLayer)),
 );
 
 /** Answers each tool call with the next scripted response for that tool. */

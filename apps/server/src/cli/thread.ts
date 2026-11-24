@@ -826,10 +826,15 @@ const messageArgument = Argument.String("message").pipe(
 const threadArgument = Argument.String("thread").pipe(Argument.withDescription("Thread id."));
 
 const decodeThreadIdValue = Schema.decodeUnknownEffect(ThreadId);
+const decodeRequestIdValue = Schema.decodeUnknownEffect(RuntimeRequestId);
 const decodeTitle = Schema.decodeUnknownEffect(TrimmedNonEmptyString);
 const decodeThreadId = (value: string) =>
   decodeThreadIdValue(value.trim()).pipe(
     Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a thread id.` })),
+  );
+const decodeRequestId = (value: string) =>
+  decodeRequestIdValue(value.trim()).pipe(
+    Effect.mapError(() => new ThreadUsageError({ detail: `'${value}' is not a request id.` })),
   );
 
 const threadListCommand = Command.make("list", {
@@ -1018,7 +1023,7 @@ const PendingRequestRead = Schema.Struct({
 const pendingRequestId = Effect.fn("cli.thread.pendingRequestId")(function* (
   tools: ThreadTools,
   threadId: ThreadId,
-  request: Option.Option<string>,
+  request: Option.Option<RuntimeRequestId>,
 ) {
   if (Option.isSome(request)) return request.value;
   const { requestIds } = yield* tools.call(
@@ -1035,31 +1040,62 @@ const pendingRequestId = Effect.fn("cli.thread.pendingRequestId")(function* (
   });
 });
 
+interface ParsedAnswerPair {
+  readonly raw: string;
+  readonly id: string;
+  readonly value: string;
+}
+
+const parseAnswerPairs = Effect.fn("cli.thread.parseAnswerPairs")(function* (
+  pairs: ReadonlyArray<string>,
+) {
+  const parsed: Array<ParsedAnswerPair> = [];
+  for (const pair of pairs) {
+    const separator = pair.indexOf("=");
+    const id = separator < 0 ? "" : pair.slice(0, separator).trim();
+    if (separator < 0 || id.length === 0) {
+      return yield* new ThreadUsageError({
+        detail: `--answer '${pair}' must use the form <question-id>=<text>.`,
+      });
+    }
+    const value = pair.slice(separator + 1).trim();
+    if (value.length === 0) {
+      return yield* new ThreadUsageError({ detail: `Answer for '${id}' is empty.` });
+    }
+    parsed.push({ raw: pair, id, value });
+  }
+  return parsed;
+});
+
 /** Text naming an option, in any case, picks it, as a click in the app would; other text is a custom answer. */
-const answerFor = (question: PendingQuestion, text: string) => {
+const answerFor = Effect.fn("cli.thread.answerFor")(function* (
+  question: PendingQuestion,
+  text: string,
+) {
   const wanted = text.trim();
+  if (wanted.length === 0) {
+    return yield* new ThreadUsageError({ detail: `Answer for '${question.id}' is empty.` });
+  }
   const option = question.options.find(
     (candidate) => candidate.label.trim().toLowerCase() === wanted.toLowerCase(),
   );
   if (option !== undefined) {
     const value = option.value ?? option.label.trim();
-    return Effect.succeed(question.multiSelect === true ? [value] : value);
+    return question.multiSelect === true ? ([value] as const) : value;
   }
   if (question.allowCustomAnswer === false) {
     const labels = question.options.map((candidate) => candidate.label).join(", ");
-    return Effect.fail(
-      new ThreadUsageError({
-        detail: `'${wanted}' is not an option for "${question.question}". Choose one of: ${labels}.`,
-      }),
-    );
+    return yield* new ThreadUsageError({
+      detail: `'${wanted}' is not an option for "${question.question}". Choose one of: ${labels}.`,
+    });
   }
-  return Effect.succeed(wanted);
-};
+  return wanted;
+});
 
 const buildAnswers = Effect.fn("cli.thread.buildAnswers")(function* (
   questions: ReadonlyArray<PendingQuestion>,
   text: Option.Option<string>,
-  pairs: ReadonlyArray<string>,
+  pairs: ReadonlyArray<ParsedAnswerPair>,
 ) {
   const listed = () => questions.map((question) => `${question.id} (${question.question})`);
   if (Option.isSome(text) === pairs.length > 0) {
@@ -1076,30 +1112,47 @@ const buildAnswers = Effect.fn("cli.thread.buildAnswers")(function* (
     }
     return { [only.id]: yield* answerFor(only, text.value) };
   }
-  const answers: Record<string, string | ReadonlyArray<string>> = {};
+  const answers = new Map<string, string | ReadonlyArray<string>>();
   for (const pair of pairs) {
-    const separator = pair.indexOf("=");
-    const id = separator < 0 ? "" : pair.slice(0, separator).trim();
-    const question = questions.find((candidate) => candidate.id === id);
+    const question = questions.find((candidate) => candidate.id === pair.id);
     if (question === undefined) {
       return yield* new ThreadUsageError({
-        detail: `--answer '${pair}' names no question. The questions are: ${listed().join("; ")}.`,
+        detail: `--answer '${pair.raw}' names no question. The questions are: ${listed().join("; ")}.`,
       });
     }
-    if (id in answers) {
-      return yield* new ThreadUsageError({ detail: `--answer ${id} is given more than once.` });
+    const resolved = yield* answerFor(question, pair.value);
+    const existing = answers.get(pair.id);
+    if (existing !== undefined) {
+      if (question.multiSelect !== true) {
+        return yield* new ThreadUsageError({
+          detail: `--answer ${pair.id} is given more than once.`,
+        });
+      }
+      if (!Array.isArray(existing) || !Array.isArray(resolved)) {
+        return yield* new ThreadUsageError({
+          detail: `--answer ${pair.id} cannot mix a custom answer with selected options.`,
+        });
+      }
+      const nextOption = resolved[0]!;
+      if (existing.includes(nextOption)) {
+        return yield* new ThreadUsageError({
+          detail: `--answer ${pair.id} selects '${pair.value}' more than once.`,
+        });
+      }
+      answers.set(pair.id, [...existing, nextOption]);
+      continue;
     }
-    answers[id] = yield* answerFor(question, pair.slice(separator + 1));
+    answers.set(pair.id, resolved);
   }
   const missing = questions.filter(
-    (question) => question.required !== false && !(question.id in answers),
+    (question) => question.required !== false && !answers.has(question.id),
   );
   if (missing.length > 0) {
     return yield* new ThreadUsageError({
       detail: `Answer every question. Missing: ${missing.map((question) => question.id).join(", ")}.`,
     });
   }
-  return answers;
+  return Object.fromEntries(answers);
 });
 
 const threadAnswerCommand = Command.make("answer", {
@@ -1117,7 +1170,7 @@ const threadAnswerCommand = Command.make("answer", {
   ),
   answers: Flag.String("answer").pipe(
     Flag.withDescription(
-      "Answer to one question as <question-id>=<text>, for a request that asks several. Repeat for each.",
+      "Answer to one question as <question-id>=<text>, for a request that asks several. Repeat for each (or for multiple options on multi-select questions).",
     ),
     Flag.atLeast(0),
   ),
@@ -1127,19 +1180,28 @@ const threadAnswerCommand = Command.make("answer", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
+      const requestedId = Option.isSome(flags.request)
+        ? Option.some(yield* decodeRequestId(flags.request.value))
+        : Option.none();
+      if (Option.isSome(flags.answer) === flags.answers.length > 0) {
+        return yield* new ThreadUsageError({
+          detail: "Pass the answer text, or --answer <question-id>=<text> for each question.",
+        });
+      }
+      const parsedPairs = yield* parseAnswerPairs(flags.answers);
       const text = Option.isSome(flags.answer)
         ? Option.some(yield* readMessageArgument(flags.answer.value))
         : Option.none();
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.answer")(function* (tools) {
-          const requestId = yield* pendingRequestId(tools, threadId, flags.request);
-          const { questions } = yield* tools.call(
+          const targetRequestId = yield* pendingRequestId(tools, threadId, requestedId);
+          const { requestId, questions } = yield* tools.call(
             "t3_pending_request",
-            { action: "read", threadId, requestId },
+            { action: "read", threadId, requestId: targetRequestId },
             PendingRequestRead,
           );
-          const answers = yield* buildAnswers(questions, text, flags.answers);
+          const answers = yield* buildAnswers(questions, text, parsedPairs);
           yield* tools.call(
             "t3_pending_request",
             { action: "respond", threadId, requestId, answers },
