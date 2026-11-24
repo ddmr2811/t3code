@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type ForkBot, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
 
@@ -50,11 +50,9 @@ export const allBotsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const byEnv = new Map<EnvironmentId, ReadonlyArray<ForkBot>>();
   const errors: BotLoadError[] = [];
-  let loadingCount = 0;
 
   for (const environmentId of enabledEnvironmentIds(catalog)) {
     const result = get(forkBotsListQuery({ environmentId, input: {} }));
-    if (result._tag === "Initial") loadingCount += 1;
     if (result._tag === "Failure") {
       const detail = errorDisplayMessage(Cause.squash(result.cause));
       errors.push({
@@ -62,11 +60,8 @@ export const allBotsAtom = Atom.make((get) => {
         message: detail ?? "No se pudo leer el directorio de bots.",
       });
     }
-    byEnv.set(
-      environmentId,
-      AsyncResult.getOrElse(result, () => ({ bots: [], updatedAt: null })).bots,
-    );
+    if (result._tag === "Success") byEnv.set(environmentId, result.value.bots);
   }
 
-  return { byEnv, loadingCount, errors };
+  return { byEnv, errors };
 }).pipe(Atom.withLabel("ade-all-bots"));

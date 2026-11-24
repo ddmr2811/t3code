@@ -35,7 +35,7 @@ const MODEL_SEPARATOR = "\u0000";
 
 export function BotsView() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const { byEnv, loadingCount, errors } = useAtomValue(allBotsAtom);
+  const { byEnv, errors } = useAtomValue(allBotsAtom);
   const enabledEnvs = useMemo(() => [...enabledEnvironmentIds(catalog)], [catalog]);
   const [selectedEnvState, setSelectedEnv] = useState<EnvironmentId | null>(null);
   const selectedEnv =
@@ -85,7 +85,11 @@ export function BotsView() {
       {selectedEnv === null || bots === undefined ? (
         <section className="ade-projects-empty">
           <p>
-            {loadingCount > 0 ? "Cargando bots…" : "No hay máquinas habilitadas en este momento."}
+            {selectedEnv === null
+              ? "No hay máquinas habilitadas en este momento."
+              : errors.some((failure) => failure.environmentId === selectedEnv)
+                ? "No se pudo leer el directorio de bots de esta máquina."
+                : "Cargando bots…"}
           </p>
         </section>
       ) : (
@@ -196,7 +200,12 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
               <button
                 type="button"
                 className="ade-bot-card-main"
-                onClick={() => setSelectedBotId(bot.id)}
+                onClick={() => {
+                  if (bot.id === selectedBotId) return;
+                  setSelectedBotId(bot.id);
+                  setMessageText("");
+                  setChatError(null);
+                }}
                 aria-pressed={bot.id === selectedBotId}
               >
                 <span className="ade-bot-monogram" aria-hidden>
@@ -421,6 +430,9 @@ function BotEditor(props: {
             Proyecto
             <select value={projectId} onChange={(event) => set({ projectId: event.target.value })}>
               {projects.length === 0 ? <option value="">Sin proyectos</option> : null}
+              {projectId !== "" && !projects.some((project) => project.id === projectId) ? (
+                <option value={projectId}>(proyecto no disponible)</option>
+              ) : null}
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.title}
@@ -438,6 +450,12 @@ function BotEditor(props: {
               }}
             >
               {models.length === 0 ? <option value="">Sin modelos disponibles</option> : null}
+              {modelKey !== "" &&
+              !models.some(
+                (option) => `${option.instanceId}${MODEL_SEPARATOR}${option.model}` === modelKey,
+              ) ? (
+                <option value={modelKey}>{draft.model} (no disponible)</option>
+              ) : null}
               {models.map((option) => {
                 const key = `${option.instanceId}${MODEL_SEPARATOR}${option.model}`;
                 return (

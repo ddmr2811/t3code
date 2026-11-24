@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ForkBotUpsertInput,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -159,13 +160,17 @@ describe("ForkBots", () => {
         expect(renamed.threadId).toBe(first.threadId);
         expect(renamed.runtimeMode).toBe("auto");
 
-        for (const change of [
-          { instructions: "Sé exhaustivo." },
-          { runtimeMode: "full-access" as const },
-          { modelSelection: { instanceId: codex, model: "gpt-5.5" } },
-        ]) {
+        // Each edit changes one more field on top of the previous one, so each reset has one cause.
+        const renamedInput = { ...baseBot, id: created.id, handle: "revisora" };
+        const newPrompt: ForkBotUpsertInput = { ...renamedInput, instructions: "Sé exhaustivo." };
+        const newMode: ForkBotUpsertInput = { ...newPrompt, runtimeMode: "full-access" };
+        const newModel: ForkBotUpsertInput = {
+          ...newMode,
+          modelSelection: { instanceId: codex, model: "gpt-5.5" },
+        };
+        for (const edit of [newPrompt, newMode, newModel]) {
           const linked = yield* service.sendMessage({ id: created.id, text: "sigue" });
-          const edited = yield* service.upsert({ ...baseBot, id: created.id, ...change });
+          const edited = yield* service.upsert(edit);
           expect(edited.threadId).toBeNull();
           const next = yield* service.sendMessage({ id: created.id, text: "de nuevo" });
           expect(next.threadId).not.toBe(linked.threadId);
