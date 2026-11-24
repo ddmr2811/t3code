@@ -368,7 +368,11 @@ export function DecisionsPanel() {
         <SnoozedList
           entries={setAside}
           snoozed={snoozed}
-          onBringBack={(key) => snooze(key, null)}
+          onBringBack={(key) => {
+            snooze(key, null);
+            // The last one back: the next «Luego» must not jump to this list.
+            if (setAside.length === 1) setMode("una");
+          }}
         />
       ) : null}
       {effectiveMode !== "todas" ? null : items.length > 1 ||

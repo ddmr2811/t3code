@@ -4427,6 +4427,7 @@ body {
 .ade-tray {
   display: grid;
   gap: 8px;
+  padding: 6px;
   border-radius: var(--ade-radius-lg);
 }
 
