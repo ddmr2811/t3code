@@ -54,6 +54,7 @@
   --ade-danger: #ff8589;
 
   /* Radios y tipografía */
+  --ade-panel-width: 460px;
   --ade-radius-sm: 6px;
   --ade-radius-md: 8px;
   --ade-radius-lg: 12px;
@@ -1324,9 +1325,10 @@ body {
   flex-basis: 100%;
 }
 
-/* Decisions: what the agents wait on, above the composer and in the panel. */
-.ade-shell:has(.ade-decisions) {
-  grid-template-columns: 280px 1fr 400px;
+/* One floating panel at a time (Terminal, Actividad, Decisiones): a column of its own, so the
+   reading column moves aside instead of being covered. */
+.ade-shell:has(> .ade-panel) {
+  grid-template-columns: 280px 1fr var(--ade-panel-width);
 }
 
 .ade-shell > * {
@@ -1334,36 +1336,126 @@ body {
   min-height: 0;
 }
 
-.ade-decisions {
+.ade-panel {
+  --ade-panel-gap: 10px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
+  align-self: start;
+  max-height: calc(100% - 2 * var(--ade-panel-gap));
+  margin: var(--ade-panel-gap) var(--ade-panel-gap) var(--ade-panel-gap) 0;
+  padding: 12px 14px 14px;
   overflow-y: auto;
-  border-left: 1px solid var(--ade-divider);
+  border: 1px solid var(--ade-border);
+  border-radius: 14px;
+  background: var(--ade-surface);
+  box-shadow: 0 18px 48px -20px rgb(0 0 0 / 0.7);
+  transition:
+    opacity 0.3s ease,
+    translate 0.3s ease;
+
+  @starting-style {
+    opacity: 0;
+    translate: 16px 0;
+  }
 }
 
-.ade-decisions > header {
+/* The terminal needs a height of its own; the others fit their content. */
+.ade-panel:has(> .ade-terminal) {
+  height: min(640px, calc(100% - 2 * var(--ade-panel-gap)));
+  overflow: hidden;
+}
+
+.ade-panel-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  color: var(--ade-text-muted);
 }
 
-.ade-decisions > header .ade-label {
+.ade-panel-title {
+  flex: 1;
+  margin: 0;
+  font: 500 11px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ade-panel-count {
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-panel-header .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-panel-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-panel .ade-terminal {
+  border-radius: var(--ade-radius-md);
+}
+
+.ade-panel .ade-terminal-header {
+  flex-wrap: wrap;
+  padding: 0 0 8px;
+}
+
+.ade-panel .ade-terminal-mount {
+  margin: 0;
+}
+
+.ade-activity {
+  display: grid;
   margin: 0;
   padding: 0;
+  list-style: none;
 }
 
-.ade-decisions h2 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+.ade-activity li + li {
+  border-top: 1px solid var(--ade-divider);
 }
 
-.ade-decisions > header .ade-button-quiet {
-  margin-top: 0;
+.ade-activity-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 4px;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text);
+  font: 14px var(--ade-font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ade-activity-row:hover,
+.ade-activity-row:focus-visible {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.ade-activity-row time,
+.ade-activity-project {
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-activity-title,
+.ade-activity-project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-activity-project {
+  max-width: 14em;
 }
 
 .ade-decision {
@@ -2431,14 +2523,6 @@ body {
 }
 
 /* Unified pending tray enhancements (filters, opt-in alerts, 1-tap back-layer jump). */
-.ade-decisions-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
 .ade-alert-toggle {
   display: inline-flex;
   align-items: center;
@@ -3397,16 +3481,16 @@ body {
       0 28px 72px -24px rgb(0 0 0 / 0.8);
   }
 
-  .ade-shell:has(.ade-decisions) {
-    grid-template-columns: 280px minmax(0, 1fr) 400px;
+  .ade-shell:has(> .ade-panel) {
+    grid-template-columns: 280px minmax(0, 1fr) var(--ade-panel-width);
   }
 
   .ade-shell[data-sidebar="collapsed"] {
     grid-template-columns: 68px minmax(0, 1fr);
   }
 
-  .ade-shell[data-sidebar="collapsed"]:has(.ade-decisions) {
-    grid-template-columns: 68px minmax(0, 1fr) 400px;
+  .ade-shell[data-sidebar="collapsed"]:has(> .ade-panel) {
+    grid-template-columns: 68px minmax(0, 1fr) var(--ade-panel-width);
   }
 
   .ade-sidebar {
@@ -3733,7 +3817,7 @@ body {
   }
 
   .ade-shell,
-  .ade-shell:has(.ade-decisions) {
+  .ade-shell:has(> .ade-panel) {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     overflow-x: hidden;
@@ -3768,13 +3852,36 @@ body {
     margin-top: 8px;
   }
 
-  .ade-decisions {
+  /* On a phone the panel takes the screen above the bottom bar. */
+  .ade-panel,
+  .ade-panel:has(> .ade-terminal) {
     position: fixed;
     inset: 0 0 calc(57px + env(safe-area-inset-bottom, 0px)) 0;
     z-index: 20;
+    align-self: stretch;
+    height: auto;
+    max-height: none;
+    margin: 0;
     padding: 16px;
-    border-left: 0;
+    border: 0;
+    border-radius: 0;
     background: var(--ade-canvas);
+    box-shadow: none;
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 16px;
+    }
+  }
+
+  .ade-search {
+    top: 12px;
+    width: calc(100vw - 24px);
+  }
+
+  .ade-search-button-text,
+  .ade-search-button kbd {
+    display: none;
   }
 
   .ade-bots-layout {
@@ -4154,5 +4261,181 @@ body {
 
   .ade-step-chip {
     font-size: 12px;
+  }
+}
+
+/* Ctrl+K: a centred search over a dimmed page. */
+.ade-search-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.5);
+  transition: opacity 0.3s ease;
+}
+
+.ade-search {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  z-index: 41;
+  width: min(620px, calc(100vw - 32px));
+  max-height: 72vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  translate: -50% 0;
+  border: 1px solid var(--ade-border);
+  border-radius: 14px;
+  background: #121418;
+  color: var(--ade-text);
+  box-shadow: 0 28px 72px -24px rgb(0 0 0 / 0.85);
+  transition:
+    opacity 0.3s ease,
+    translate 0.3s ease;
+}
+
+.ade-search-backdrop:is([data-starting-style], [data-ending-style]),
+.ade-search:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+}
+
+.ade-search:is([data-starting-style], [data-ending-style]) {
+  translate: -50% -8px;
+}
+
+.ade-command {
+  display: flex;
+  flex-direction: column;
+  max-height: 72vh;
+}
+
+.ade-command-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ade-divider);
+  color: var(--ade-text-muted);
+}
+
+.ade-command-row input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--ade-text);
+  font: 16px var(--ade-font-sans);
+}
+
+.ade-command-row input::placeholder {
+  color: var(--ade-text-tertiary);
+}
+
+.ade-search kbd,
+.ade-search-button kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--ade-border);
+  border-radius: 5px;
+  color: var(--ade-text-muted);
+  font: 11px var(--ade-font-mono);
+}
+
+.ade-command-list {
+  overflow-y: auto;
+  padding: 6px 8px 8px;
+}
+
+.ade-command-group {
+  padding: 8px 8px 4px;
+  color: var(--ade-text-tertiary);
+  font: 500 10.5px/2 var(--ade-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ade-command-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--ade-radius-md);
+  color: var(--ade-text);
+  cursor: pointer;
+}
+
+.ade-command-item[data-highlighted] {
+  background: rgb(255 255 255 / 0.08);
+}
+
+.ade-command-item[data-disabled] {
+  opacity: 0.5;
+}
+
+.ade-command-item [data-slot="command-item-icon"] {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  color: var(--ade-text-muted);
+}
+
+.ade-command-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-command-aside {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-command [data-slot="command-empty"][data-empty] {
+  padding: 16px;
+}
+
+.ade-search-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: 999px;
+  background: var(--ade-bg);
+  color: var(--ade-text-muted);
+  font: 13px var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-search-button:hover,
+.ade-search-button:focus-visible {
+  color: var(--ade-text);
+}
+
+/* Changing view fades the new one in; nothing moves while at rest. Opacity only: a transform
+   here would turn fixed children into absolute ones. */
+.ade-main > * {
+  transition: opacity 0.3s ease;
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ade-panel,
+  .ade-search,
+  .ade-search-backdrop,
+  .ade-main > * {
+    transition: none;
   }
 }

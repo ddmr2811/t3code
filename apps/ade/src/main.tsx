@@ -1,9 +1,9 @@
-import { RegistryContext, useAtom, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
 import { NotePencilIcon } from "@phosphor-icons/react/dist/csr/NotePencil";
 import { SidebarSimpleIcon } from "@phosphor-icons/react/dist/csr/SidebarSimple";
-import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
+import { MagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { TrayIcon } from "@phosphor-icons/react/dist/csr/Tray";
 import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { XIcon } from "@phosphor-icons/react/dist/csr/X";
@@ -19,6 +19,10 @@ import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
 import { DecisionsPanel } from "./decisions/DecisionsPanel.tsx";
+import { isFocusInTerminal, toolPanelAtom } from "./panels/FloatingPanel.tsx";
+import { ToolPanels } from "./panels/ToolPanels.tsx";
+import { Search } from "./search/Search.tsx";
+import { SearchButton, searchOpenAtom } from "./search/SearchButton.tsx";
 import {
   ConnectionSummary,
   hasInitialPairingRequest,
@@ -48,9 +52,12 @@ function MobileBottomNav() {
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
   const { count: pendingCount, open: trayOpen, setOpen: setTrayOpen } = useDecisionsPanel();
 
-  const goView = (target: "inicio" | "resumen" | "proyectos" | "bots") => {
+  const setSearchOpen = useAtomSet(searchOpenAtom);
+  const setToolPanel = useAtomSet(toolPanelAtom);
+  const goView = (target: "inicio" | "proyectos" | "bots") => {
     setDrawerOpen(false);
     setTrayOpen(false);
+    setToolPanel(null);
     setView(target);
   };
 
@@ -67,16 +74,18 @@ function MobileBottomNav() {
         <NotePencilIcon size={20} aria-hidden />
         <span>Inicio</span>
       </button>
+      {/* Resumen and the other views are in the search, as on the desktop rail. */}
       <button
         type="button"
         className="ade-mobile-nav-item"
-        aria-current={
-          !drawerOpen && !trayOpen && !threadOpen && view === "resumen" ? "page" : undefined
-        }
-        onClick={() => goView("resumen")}
+        aria-haspopup="dialog"
+        onClick={() => {
+          setDrawerOpen(false);
+          setSearchOpen(true);
+        }}
       >
-        <SquaresFourIcon size={20} aria-hidden />
-        <span>Resumen</span>
+        <MagnifyingGlassIcon size={20} aria-hidden />
+        <span>Buscar</span>
       </button>
       <button
         type="button"
@@ -150,11 +159,6 @@ function AdeMark(props: { className?: string }) {
   );
 }
 
-const isFocusInTerminal = () =>
-  typeof document !== "undefined" &&
-  document.activeElement instanceof Element &&
-  document.activeElement.closest(".ade-terminal") !== null;
-
 function Shell() {
   const registry = useContext(RegistryContext);
   const background = useBackground();
@@ -175,6 +179,14 @@ function Shell() {
   const openHome = () => {
     setDrawerOpen(false);
     setView("inicio");
+  };
+  // Machines and pairing live in the expanded sidebar (the drawer on a phone).
+  const showMachines = () => {
+    if (narrowViewport) setDrawerOpen(true);
+    else setExpanded(true);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>('.ade-sidebar [aria-label="Añadir máquina"]')?.focus(),
+    );
   };
   useShortcut("mod+b", toggleSidebar, {
     when: () => !narrowViewport && hasMachines && !isFocusInTerminal(),
@@ -216,6 +228,7 @@ function Shell() {
               {collapsed ? null : <span>ADE</span>}
             </div>
             <div className="ade-brand-actions">
+              {hasMachines && !collapsed ? <SearchButton variant="icon" /> : null}
               {hasMachines && !collapsed ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -283,6 +296,7 @@ function Shell() {
                   Nuevo hilo · {newThreadShortcutLabel}
                 </TooltipContent>
               </Tooltip>
+              <SearchButton variant="rail" />
               <NeedsYouBlock compact />
               <ViewNav compact />
               <span className="ade-rail-sep" aria-hidden />
@@ -309,6 +323,8 @@ function Shell() {
           <MainContent />
         </main>
         <DecisionsPanel />
+        <ToolPanels />
+        {hasMachines ? <Search onShowMachines={showMachines} onNewThread={openHome} /> : null}
         <MobileBottomNav />
       </div>
     </>

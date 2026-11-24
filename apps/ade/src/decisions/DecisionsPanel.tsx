@@ -1,6 +1,7 @@
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { BellIcon } from "@phosphor-icons/react/dist/csr/Bell";
+import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
 import { BellSlashIcon } from "@phosphor-icons/react/dist/csr/BellSlash";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -8,6 +9,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useContext, useMemo, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
+import { FloatingPanel } from "../panels/FloatingPanel.tsx";
 import { ProjectTitle, selectedThreadKeyAtom, useDecisionsPanel } from "../sidebar/Sidebar.tsx";
 import {
   pendingAlertsEnabledAtom,
@@ -150,13 +152,16 @@ export function DecisionsPanel() {
   };
 
   return (
-    <aside id="ade-decisions" className="ade-decisions" aria-label="Decisiones">
-      <header>
-        <div>
-          <p className="ade-label">{count === 1 ? "1 pendiente" : `${count} pendientes`}</p>
-          <h2>Decisiones</h2>
-        </div>
-        <div className="ade-decisions-header-actions">
+    <FloatingPanel
+      id="ade-decisions"
+      label="Decisiones"
+      icon={<BellSimpleRingingIcon size={16} aria-hidden />}
+      onClose={() => setOpen(false)}
+      actions={
+        <>
+          <span className="ade-panel-count">
+            {count === 1 ? "1 pendiente" : `${count} pendientes`}
+          </span>
           <button
             type="button"
             className="ade-button-quiet ade-alert-toggle"
@@ -177,11 +182,9 @@ export function DecisionsPanel() {
             )}
             <span>{alertsEnabled ? "Avisos" : "Sin avisos"}</span>
           </button>
-          <button type="button" className="ade-button-quiet" onClick={() => setOpen(false)}>
-            Cerrar
-          </button>
-        </div>
-      </header>
+        </>
+      }
+    >
       {alertsNote === null ? null : (
         <p className="ade-request-note" role="status">
           {alertsNote}
@@ -230,6 +233,6 @@ export function DecisionsPanel() {
           <DecisionCard key={item.key} item={item} onOpenBackLayer={openBackLayer} />
         ))
       )}
-    </aside>
+    </FloatingPanel>
   );
 }

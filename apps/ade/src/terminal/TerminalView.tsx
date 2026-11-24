@@ -255,9 +255,6 @@ function Shell(props: {
             Cerrar el terminal compartido con la web
           </button>
         )}
-        <button type="button" className="ade-button-quiet" onClick={props.onClose}>
-          Volver a la conversación
-        </button>
       </header>
       <div ref={mountRef} className="ade-terminal-mount" />
     </section>

@@ -115,7 +115,7 @@ const gigabytes = (bytes: number) =>
 // The server names its windows in English.
 const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as const;
 
-const VIEW_LINKS = [
+export const VIEW_LINKS = [
   { target: "resumen", label: "Resumen", Icon: SquaresFourIcon },
   { target: "proyectos", label: "Proyectos", Icon: FoldersIcon },
   { target: "tablero", label: "Tablero", Icon: KanbanIcon },

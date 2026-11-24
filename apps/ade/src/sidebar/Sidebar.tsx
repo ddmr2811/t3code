@@ -5,7 +5,6 @@ import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
-import { connectionRouteId, credentialConnectionId } from "@t3tools/client-runtime/connection";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -42,6 +41,8 @@ import {
   forkFailoverSwitchThreadCommand,
   refreshFailoverState,
 } from "../failover/failover.state.ts";
+import { toolPanelAtom } from "../panels/FloatingPanel.tsx";
+import { SearchButton } from "../search/SearchButton.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import { planStepChip } from "../timeline/timeline.logic.ts";
 import {
@@ -50,7 +51,6 @@ import {
   environmentThreadShells,
   operableEnvironmentIdsAtom,
   serverEnvironment,
-  terminalAccessAtom,
 } from "../state.ts";
 import {
   decisionsByRow,
@@ -132,6 +132,7 @@ export function useDecisionsPanel() {
     ...threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     ...cutHandoffKeys,
   ];
+  const [toolPanel, setToolPanel] = useAtom(toolPanelAtom);
   const effectiveChoice = reconcileTrayChoice(choice, keys, narrowViewport);
   useEffect(() => {
     if (effectiveChoice !== choice) {
@@ -141,8 +142,12 @@ export function useDecisionsPanel() {
   return {
     threads,
     count: keys.length,
-    open: isTrayOpenForViewport(effectiveChoice, keys, narrowViewport),
-    setOpen: (open: boolean) => setChoice({ open, seenKeys: keys }),
+    // One panel at a time: an open terminal or activity keeps decisions waiting behind it.
+    open: toolPanel === null && isTrayOpenForViewport(effectiveChoice, keys, narrowViewport),
+    setOpen: (open: boolean) => {
+      if (open) setToolPanel(null);
+      setChoice({ open, seenKeys: keys });
+    },
   };
 }
 
@@ -430,9 +435,6 @@ const NO_THREAD = Atom.make(null);
 // The diff renderer loads with the first diff opened, not with the app.
 const DiffView = lazy(() => import("../diff/DiffView.tsx"));
 
-// Ghostty's wasm loads with the first terminal opened.
-const TerminalView = lazy(() => import("../terminal/TerminalView.tsx"));
-
 const turnRange = (checkpoint: ThreadCheckpointSummary): DiffRange => ({
   fromTurnCount: checkpoint.checkpointTurnCount - 1,
   toTurnCount: checkpoint.checkpointTurnCount,
@@ -535,53 +537,6 @@ function ThreadFailoverButton(props: {
   );
 }
 
-function TerminalButton(props: { environmentId: EnvironmentId; onOpen: () => void }) {
-  const allowed = useAtomValue(terminalAccessAtom(props.environmentId));
-  return (
-    <span className="ade-why-anchor">
-      <button
-        type="button"
-        className="ade-button-quiet"
-        disabled={!allowed}
-        aria-describedby={allowed ? undefined : "ade-terminal-why"}
-        onClick={props.onOpen}
-      >
-        Terminal
-      </button>
-      {allowed ? null : (
-        <span id="ade-terminal-why" role="tooltip" className="ade-why">
-          Esta sesión no tiene permiso de terminal. Vuelve a emparejar la máquina marcando «Permitir
-          terminal».
-        </span>
-      )}
-    </span>
-  );
-}
-
-/** A shell in the thread's worktree, or in its project's folder when it has none. */
-function ThreadTerminal(props: {
-  threadRef: ScopedThreadRef;
-  thread: EnvironmentThreadShell;
-  onClose: () => void;
-}) {
-  const root = useAtomValue(
-    environmentProjects.environmentProjectIndexAtom(props.threadRef.environmentId),
-    (index) => index.get(props.thread.projectId)?.workspaceRoot ?? null,
-  );
-  const cwd = props.thread.worktreePath ?? root;
-  if (cwd === null) return <p className="ade-diff-note">Cargando el proyecto…</p>;
-  return (
-    <Suspense fallback={<p className="ade-diff-note">Cargando el terminal…</p>}>
-      <TerminalView
-        threadRef={props.threadRef}
-        cwd={cwd}
-        worktreePath={props.thread.worktreePath}
-        onClose={props.onClose}
-      />
-    </Suspense>
-  );
-}
-
 /** The project's mark, as on the rail, and its name. */
 function ProjectMark(props: { environmentId: EnvironmentId; projectId: ProjectId }) {
   const title =
@@ -656,11 +611,9 @@ export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
   const ref = key === null ? null : parseScopedThreadKey(key);
-  const [terminal, setTerminal] = useState<{ key: string; pairing: string } | null>(null);
   const [failoverError, setFailoverError] = useState<{ key: string; message: string } | null>(null);
   const openDiff = (range: DiffRange) => {
     if (key === null) return;
-    setTerminal(null);
     setDiff({ key, range });
   };
   const openRange = diff !== null && diff.key === key ? diff.range : null;
@@ -670,14 +623,7 @@ export function SelectedThread() {
   const machine = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) =>
     ref === null ? null : (catalog.entries.get(ref.environmentId)?.target.label ?? null),
   );
-  // The route's id is new each time the machine is paired. A terminal opened under another
-  // pairing, or before the machine was removed, is not opened again by itself.
-  const pairing = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) => {
-    const target = ref === null ? undefined : catalog.entries.get(ref.environmentId)?.target;
-    return target === undefined ? null : credentialConnectionId(connectionRouteId(target));
-  });
   if (ref === null) return null;
-  const terminalOpen = terminal !== null && terminal.key === key && terminal.pairing === pairing;
   const requests =
     machine === null || thread === null ? null : (
       <ThreadRequests key={`requests:${key}`} threadRef={ref} onOpenThread={setKey} />
@@ -711,15 +657,10 @@ export function SelectedThread() {
             />
           )}
           {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
-          {key === null || pairing === null || thread === null ? null : (
-            <TerminalButton
-              environmentId={ref.environmentId}
-              onOpen={() => setTerminal({ key, pairing })}
-            />
-          )}
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
             Volver
           </button>
+          <SearchButton />
           <NeedsYouButton />
         </div>
       </header>
@@ -728,14 +669,7 @@ export function SelectedThread() {
           {failoverError.message}
         </p>
       ) : null}
-      {machine === null ? null : terminalOpen && thread !== null ? (
-        <ThreadTerminal
-          key={key}
-          threadRef={ref}
-          thread={thread}
-          onClose={() => setTerminal(null)}
-        />
-      ) : openRange !== null ? (
+      {machine === null ? null : openRange !== null ? (
         <Suspense fallback={<p className="ade-diff-note">Cargando el diff…</p>}>
           <DiffView threadRef={ref} range={openRange} onClose={() => setDiff(null)} />
         </Suspense>
@@ -747,10 +681,8 @@ export function SelectedThread() {
           requests={requests}
         />
       )}
-      {/* With the diff or the terminal in its place, the timeline's last row shows here. */}
-      {terminalOpen || openRange !== null ? (
-        <div className="ade-requests-outside">{requests}</div>
-      ) : null}
+      {/* With the diff in its place, the timeline's last row shows here. */}
+      {openRange !== null ? <div className="ade-requests-outside">{requests}</div> : null}
       {machine === null || thread === null ? null : (
         <Composer key={`composer:${key}`} threadRef={ref} thread={thread} />
       )}
