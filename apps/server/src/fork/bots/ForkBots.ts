@@ -3,9 +3,16 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   CommandId,
+  FORK_BOTS_HANDOFF_HISTORY,
+  FORK_BOTS_HANDOFF_MAX_HOPS,
+  FORK_BOTS_HANDOFF_PREVIEW_LENGTH,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_MAX_FILE_BYTES,
   type ForkBot,
+  ForkBotDismissHandoffInput,
+  type ForkBotHandoff,
+  ForkBotHandoffInput,
+  type ForkBotHandoffResult,
   type ForkMemoryNote,
   ForkBotListInput,
   type ForkBotListResult,
@@ -25,6 +32,7 @@ import {
   type ThreadId,
   isProviderNativeSubagentThread,
   isRuntimeModeAbove,
+  projectKeyFromName,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -35,9 +43,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import {
+  DispatchModeLimit,
+  type DispatchModes,
+  exceededDispatchModeLimit,
+} from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -45,9 +59,15 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
-import { decodeStoredBotDirectory, EMPTY_BOT_DIRECTORY, listBots } from "./store.ts";
+import {
+  decodeStoredBotDirectory,
+  EMPTY_BOT_DIRECTORY,
+  listBots,
+  type StoredBotDirectory,
+} from "./store.ts";
 
 export class ForkBots extends Context.Service<
   ForkBots,
@@ -61,14 +81,33 @@ export class ForkBots extends Context.Service<
     readonly sendMessage: (
       input: ForkBotSendMessageInput,
     ) => Effect.Effect<ForkBotSendMessageResult, ForkBotsError>;
+    readonly handoff: (
+      input: ForkBotHandoffInput,
+      sender: HandoffSender,
+    ) => Effect.Effect<ForkBotHandoffResult, ForkBotsError>;
+    readonly dismissHandoff: (
+      input: ForkBotDismissHandoffInput,
+    ) => Effect.Effect<ForkBotHandoff, ForkBotsError>;
+    /** Whether a thread is a bot's current one; answered from memory. */
+    readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
   }
 >()("t3/fork/bots/ForkBots") {}
+
+/**
+ * Who hands the work over. The user (an @mention in the ADE) already holds the RPC scope; an
+ * agent is its bot's own thread, which may not make a bot with broader modes work.
+ */
+export type HandoffSender =
+  | { readonly kind: "user" }
+  | { readonly kind: "agent"; readonly limits: DispatchModes };
 
 const decodeListInput = Schema.decodeUnknownEffect(ForkBotListInput);
 const decodeUpsertInput = Schema.decodeUnknownEffect(ForkBotUpsertInput);
 const decodeSetArchivedInput = Schema.decodeUnknownEffect(ForkBotSetArchivedInput);
 const decodeRemoveInput = Schema.decodeUnknownEffect(ForkBotRemoveInput);
 const decodeSendMessageInput = Schema.decodeUnknownEffect(ForkBotSendMessageInput);
+const decodeHandoffInput = Schema.decodeUnknownEffect(ForkBotHandoffInput);
+const decodeDismissHandoffInput = Schema.decodeUnknownEffect(ForkBotDismissHandoffInput);
 
 const invalidInput = (message: string) => new ForkBotsError({ reason: "invalidInput", message });
 const notFound = (message: string) => new ForkBotsError({ reason: "notFound", message });
@@ -138,6 +177,14 @@ function memoryBlock(notes: ReadonlyArray<ForkMemoryNote>): string {
   ].join("\n");
 }
 
+function handoffMessage(handoff: ForkBotHandoff, from: ForkBot, text: string): string {
+  return [
+    `--- TRASPASO de @${from.handle} (${from.name}) · ${handoff.id} · salto ${handoff.hops} de ${FORK_BOTS_HANDOFF_MAX_HOPS} ---`,
+    text,
+    "--- FIN DEL TRASPASO ---",
+  ].join("\n");
+}
+
 function threadConfigChanged(
   existing: ForkBot,
   next: Pick<
@@ -185,7 +232,7 @@ function providerIsSelectable(provider: ServerProvider): boolean {
 }
 
 const make = Effect.gen(function* () {
-  const fileStore = yield* makeForkJsonFileStore({
+  const rawStore = yield* makeForkJsonFileStore({
     fileName: "bots.json",
     label: "Bot store",
     maxBytes: FORK_BOTS_MAX_FILE_BYTES,
@@ -193,6 +240,19 @@ const make = Effect.gen(function* () {
     decode: decodeStoredBotDirectory,
     makeError: (reason, message) => new ForkBotsError({ reason, message }),
   });
+  // MCP asks on every request whether the caller is a bot's thread, so the answer stays in memory.
+  const botThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  const remember = (directory: StoredBotDirectory) =>
+    Ref.set(
+      botThreads,
+      new Set(directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId]))),
+    );
+  const fileStore = {
+    read: () => rawStore.read().pipe(Effect.tap(remember)),
+    write: (directory: StoredBotDirectory) =>
+      rawStore.write(directory).pipe(Effect.andThen(remember(directory))),
+  };
+  yield* fileStore.read().pipe(Effect.ignore);
   const storeLock = yield* Semaphore.make(1);
   const botLocks = yield* KeyedLock.make<ForkBot["id"]>();
   const projects = yield* ProjectService.ProjectService;
@@ -237,6 +297,7 @@ const make = Effect.gen(function* () {
     );
   });
   const memory = yield* ForkProjectMemory.ForkProjectMemory;
+  const coordination = yield* ForkCoordination.ForkCoordination;
 
   const nowIso = Effect.map(Clock.currentTimeMillis, (now) =>
     DateTime.formatIso(DateTime.makeUnsafe(now)),
@@ -365,6 +426,7 @@ const make = Effect.gen(function* () {
             ...draft,
             threadId: kept?.threadId ?? null,
             memoryHash: kept?.memoryHash ?? null,
+            handoffHops: existing?.handoffHops ?? 0,
             archived: existing?.archived ?? false,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -433,7 +495,7 @@ const make = Effect.gen(function* () {
   /** After a message went out the bot's thread exists, so a failed write is only logged. */
   const recordDelivery = Effect.fn("ForkBots.recordDelivery")(function* (
     bot: ForkBot,
-    patch: Partial<Pick<ForkBot, "threadId" | "memoryHash">>,
+    patch: Partial<Pick<ForkBot, "threadId" | "memoryHash" | "handoffHops">>,
   ) {
     const now = yield* nowIso;
     const updated: ForkBot = { ...bot, ...patch, updatedAt: now };
@@ -461,6 +523,136 @@ const make = Effect.gen(function* () {
     return updated;
   });
 
+  const readBot = (id: ForkBot["id"]) =>
+    storeLock
+      .withPermits(1)(fileStore.read())
+      .pipe(
+        Effect.flatMap((directory) => {
+          const found = directory.bots.find((candidate) => candidate.id === id);
+          return found === undefined
+            ? Effect.fail(notFound("Bot was not found."))
+            : Effect.succeed(found);
+        }),
+      );
+
+  /**
+   * The one way a message reaches a bot's thread, from the user or from another bot. Callers hold
+   * the bot's lock, so each bot has one queue. `limits` are an agent sender's modes.
+   */
+  const deliver = Effect.fn("ForkBots.deliver")(function* (
+    bot: ForkBot,
+    text: string,
+    patch: Partial<Pick<ForkBot, "handoffHops">>,
+    limits: DispatchModes | undefined,
+  ) {
+    if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
+
+    let existingThread: ThreadId | null = null;
+    let threadModel: Pick<ModelSelection, "instanceId" | "model"> = bot.modelSelection;
+    let modes: DispatchModes = { runtimeMode: bot.runtimeMode, interactionMode: "default" };
+    if (bot.threadId !== null) {
+      const outcome = yield* threads.getThreadRecords(bot.threadId, ["runs"]).pipe(Effect.result);
+      if (outcome._tag === "Success") {
+        const thread = outcome.success.thread;
+        if (thread.projectId !== bot.projectId) {
+          return yield* dispatchFailed("Bot thread belongs to a different project.");
+        }
+        if (thread.archivedAt === null && thread.deletedAt === null) {
+          if (isProviderNativeSubagentThread(thread)) {
+            return yield* dispatchFailed("A bot cannot use a provider-native subagent thread.");
+          }
+          existingThread = bot.threadId;
+          threadModel = thread.modelSelection;
+          // The user may have raised the thread's modes above the bot's own.
+          modes = { runtimeMode: thread.runtimeMode, interactionMode: thread.interactionMode };
+        }
+      } else if (!isThreadNotFoundError(outcome.failure)) {
+        return yield* dispatchFailed("Could not load the bot thread.");
+      }
+    }
+    // Same rule as assertTargetWithinLimits: a sender never makes broader modes work for it.
+    if (limits !== undefined && exceededDispatchModeLimit(limits, modes) !== undefined) {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: `Bot @${bot.handle} runs in ${modes.runtimeMode}/${modes.interactionMode}, above this sender's ${limits.runtimeMode}/${limits.interactionMode}. Ask the user to send it the work.`,
+      });
+    }
+
+    const essentials = bot.coordinator
+      ? yield* memory
+          .essentials(bot.projectId)
+          .pipe(
+            Effect.mapError((error) =>
+              unavailable(`Could not read the memory for bot ${bot.id}: ${error.message}`),
+            ),
+          )
+      : [];
+    const hash = memoryHash(essentials, threadModel);
+    // A new thread has seen nothing yet; an existing one gets the block only when it changed.
+    const injects = existingThread === null ? hash !== null : hash !== bot.memoryHash;
+    const withMemory = (message: string) =>
+      injects ? `${memoryBlock(essentials)}\n\n${message}` : message;
+
+    if (existingThread === null) {
+      yield* validateConfiguration({
+        projectId: bot.projectId,
+        runtimeMode: bot.runtimeMode,
+        instanceId: bot.modelSelection.instanceId,
+        model: bot.modelSelection.model,
+      });
+      const commandId = CommandId.make(`fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`);
+      const launched = yield* launches
+        .launch({
+          commandId,
+          projectId: bot.projectId,
+          title: bot.name,
+          generateTitle: false,
+          modelSelection: toModelSelection(bot),
+          runtimeMode: bot.runtimeMode,
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: withMemory(initialBotMessage(bot, text)), attachments: [] },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.mapError(() => dispatchFailed("Could not create the bot thread.")));
+      // The thread already exists and holds the message; failing here would make a retry
+      // launch a duplicate, so a lost link only means the next message starts another thread.
+      const linked = yield* recordDelivery(bot, {
+        threadId: launched.threadId,
+        memoryHash: hash,
+        ...patch,
+      });
+      return { bot: linked, threadId: launched.threadId, queued: false };
+    }
+
+    const messageId = MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
+    const send = threads
+      .sendToThread({
+        projectId: bot.projectId,
+        commandId: CommandId.make(messageId),
+        threadId: existingThread,
+        messageId,
+        text: withMemory(text),
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.mapError(() => dispatchFailed("Could not send the bot message.")));
+    // The orchestrator rechecks the modes under its lock, in case they rose after the check above.
+    const sent = yield* limits === undefined
+      ? send
+      : send.pipe(Effect.provideService(DispatchModeLimit, limits));
+    const changes = {
+      ...(injects ? { memoryHash: hash } : {}),
+      ...(patch.handoffHops === undefined || patch.handoffHops === bot.handoffHops ? {} : patch),
+    };
+    // A lost hash only means the next message repeats the same block.
+    const delivered = Object.keys(changes).length > 0 ? yield* recordDelivery(bot, changes) : bot;
+    return { bot: delivered, threadId: existingThread, queued: sent.delivery === "queued" };
+  });
+
   const sendMessage = Effect.fn("ForkBots.sendMessage")(function* (input: ForkBotSendMessageInput) {
     const parsed = yield* decodeSendMessageInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid bot message.")),
@@ -468,115 +660,188 @@ const make = Effect.gen(function* () {
     return yield* botLocks.withLock(
       parsed.id,
       Effect.gen(function* () {
-        const bot = yield* storeLock
-          .withPermits(1)(fileStore.read())
-          .pipe(
-            Effect.flatMap((directory) => {
-              const found = directory.bots.find((candidate) => candidate.id === parsed.id);
-              return found === undefined
-                ? Effect.fail(notFound("Bot was not found."))
-                : Effect.succeed(found);
-            }),
-          );
-        if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
-
-        let existingThread: ThreadId | null = null;
-        let threadModel: Pick<ModelSelection, "instanceId" | "model"> = bot.modelSelection;
-        if (bot.threadId !== null) {
-          const outcome = yield* threads
-            .getThreadRecords(bot.threadId, ["runs"])
-            .pipe(Effect.result);
-          if (outcome._tag === "Success") {
-            const thread = outcome.success.thread;
-            if (thread.projectId !== bot.projectId) {
-              return yield* dispatchFailed("Bot thread belongs to a different project.");
-            }
-            if (thread.archivedAt === null && thread.deletedAt === null) {
-              if (isProviderNativeSubagentThread(thread)) {
-                return yield* dispatchFailed("A bot cannot use a provider-native subagent thread.");
-              }
-              existingThread = bot.threadId;
-              threadModel = thread.modelSelection;
-            }
-          } else if (!isThreadNotFoundError(outcome.failure)) {
-            return yield* dispatchFailed("Could not load the bot thread.");
-          }
-        }
-
-        const essentials = bot.coordinator
-          ? yield* memory
-              .essentials(bot.projectId)
-              .pipe(
-                Effect.mapError((error) =>
-                  unavailable(`Could not read the memory for bot ${bot.id}: ${error.message}`),
-                ),
-              )
-          : [];
-        const hash = memoryHash(essentials, threadModel);
-        // A new thread has seen nothing yet; an existing one gets the block only when it changed.
-        const injects = existingThread === null ? hash !== null : hash !== bot.memoryHash;
-        const withMemory = (text: string) =>
-          injects ? `${memoryBlock(essentials)}\n\n${text}` : text;
-
-        if (existingThread === null) {
-          yield* validateConfiguration({
-            projectId: bot.projectId,
-            runtimeMode: bot.runtimeMode,
-            instanceId: bot.modelSelection.instanceId,
-            model: bot.modelSelection.model,
-          });
-          const commandId = CommandId.make(
-            `fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`,
-          );
-          const launched = yield* launches
-            .launch({
-              commandId,
-              projectId: bot.projectId,
-              title: bot.name,
-              generateTitle: false,
-              modelSelection: toModelSelection(bot),
-              runtimeMode: bot.runtimeMode,
-              interactionMode: "default",
-              workspaceStrategy: { type: "root" },
-              initialMessage: {
-                text: withMemory(initialBotMessage(bot, parsed.text)),
-                attachments: [],
-              },
-              createdBy: "user",
-              creationSource: "web",
-            })
-            .pipe(Effect.mapError(() => dispatchFailed("Could not create the bot thread.")));
-          // The thread already exists and holds the message; failing here would make a retry
-          // launch a duplicate, so a lost link only means the next message starts another thread.
-          const linked = yield* recordDelivery(bot, {
-            threadId: launched.threadId,
-            memoryHash: hash,
-          });
-          return { bot: linked, threadId: launched.threadId, queued: false };
-        }
-
-        const messageId = MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
-        const sent = yield* threads
-          .sendToThread({
-            projectId: bot.projectId,
-            commandId: CommandId.make(messageId),
-            threadId: existingThread,
-            messageId,
-            text: withMemory(parsed.text),
-            attachments: [],
-            mode: "queue",
-            createdBy: "user",
-            creationSource: "web",
-          })
-          .pipe(Effect.mapError(() => dispatchFailed("Could not send the bot message.")));
-        // A lost hash only means the next message repeats the same block.
-        const delivered = injects ? yield* recordDelivery(bot, { memoryHash: hash }) : bot;
-        return { bot: delivered, threadId: existingThread, queued: sent.delivery === "queued" };
+        const bot = yield* readBot(parsed.id);
+        // The user stepping in starts any later handoff chain from zero.
+        return yield* deliver(bot, parsed.text, { handoffHops: 0 }, undefined);
       }),
     );
   });
 
-  return ForkBots.of({ list, upsert, setArchived, remove, sendMessage });
+  /** The board is a trace; the handoff itself is already on disk, so a failed write is logged. */
+  const traceHandoff = Effect.fn("ForkBots.traceHandoff")(function* (
+    handoff: ForkBotHandoff,
+    from: ForkBot,
+    to: ForkBot,
+    threadId: ThreadId | null,
+  ) {
+    yield* Effect.gen(function* () {
+      const project = yield* projects.getById(to.projectId);
+      const projectName = Option.match(project, {
+        onNone: () => to.projectId,
+        onSome: (found) => found.title,
+      });
+      const summary = `Traspaso de @${from.handle} a @${to.handle}: ${handoff.preview}`;
+      yield* coordination.upsert({
+        id: handoff.id,
+        projectKey: projectKeyFromName(projectName, to.projectId),
+        projectName: projectName.slice(0, 160),
+        ...(threadId === null ? {} : { threadId }),
+        agentName: to.name,
+        status: handoff.status === "cut" ? "blocked" : "done",
+        workingOn: "",
+        completedSummary:
+          handoff.status === "dismissed" ? `Descartado por el usuario. ${summary}` : summary,
+        waitingFor:
+          handoff.status === "cut"
+            ? `Cortado: más de ${FORK_BOTS_HANDOFF_MAX_HOPS} saltos seguidos entre bots. Decide en la bandeja.`
+            : "",
+      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("fork bots could not trace a handoff on the board", {
+          handoffId: handoff.id,
+          error,
+        }),
+      ),
+    );
+  });
+
+  /** Callers hold the store lock. */
+  const saveHandoff = Effect.fn("ForkBots.saveHandoff")(function* (handoff: ForkBotHandoff) {
+    const directory = yield* fileStore.read();
+    const now = yield* nowIso;
+    yield* fileStore.write({
+      ...directory,
+      handoffs: [
+        ...directory.handoffs.filter((candidate) => candidate.id !== handoff.id),
+        handoff,
+      ].slice(-FORK_BOTS_HANDOFF_HISTORY),
+      updatedAt: now,
+    });
+  });
+
+  const handoff = Effect.fn("ForkBots.handoff")(function* (
+    input: ForkBotHandoffInput,
+    sender: HandoffSender,
+  ) {
+    const parsed = yield* decodeHandoffInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid handoff.")),
+    );
+    const target = (yield* storeLock.withPermits(1)(fileStore.read())).bots.find(
+      (bot) => bot.handle.toLowerCase() === parsed.toHandle.toLowerCase(),
+    );
+    if (target === undefined) return yield* notFound(`No bot uses the handle @${parsed.toHandle}.`);
+
+    // The receiving bot's lock: a handoff waits in the same one queue as the user's messages.
+    return yield* botLocks.withLock(
+      target.id,
+      Effect.gen(function* () {
+        const now = yield* nowIso;
+        // Checking the id and saving the handoff in one write is what makes a repeat a no-op.
+        const reserved = yield* storeLock.withPermits(1)(
+          Effect.gen(function* () {
+            const directory = yield* fileStore.read();
+            const from = directory.bots.find((bot) => bot.id === parsed.fromId);
+            const to = directory.bots.find((bot) => bot.id === target.id);
+            if (from === undefined || to === undefined) {
+              return yield* notFound("Bot was not found.");
+            }
+            const seen = directory.handoffs.find((candidate) => candidate.id === parsed.id);
+            if (seen !== undefined && seen.status !== "failed") {
+              return { from, to, handoff: seen, duplicate: true };
+            }
+            if (from.id === to.id) {
+              return yield* invalidInput(`@${to.handle} cannot hand work to itself.`);
+            }
+            const hops = sender.kind === "user" ? 1 : from.handoffHops + 1;
+            const record: ForkBotHandoff = {
+              id: parsed.id,
+              fromBotId: from.id,
+              toBotId: to.id,
+              origin: sender.kind,
+              hops,
+              status: hops > FORK_BOTS_HANDOFF_MAX_HOPS ? "cut" : "delivered",
+              preview: parsed.text
+                .replaceAll(/\s+/g, " ")
+                .slice(0, FORK_BOTS_HANDOFF_PREVIEW_LENGTH),
+              createdAt: now,
+            };
+            yield* saveHandoff(record);
+            return { from, to, handoff: record, duplicate: false };
+          }),
+        );
+        const { from, to, handoff: record } = reserved;
+        if (reserved.duplicate) {
+          return {
+            handoff: record,
+            threadId: record.status === "delivered" ? to.threadId : null,
+            duplicate: true,
+          };
+        }
+        if (record.status === "cut") {
+          yield* traceHandoff(record, from, to, null);
+          return { handoff: record, threadId: null, duplicate: false };
+        }
+        const sent = yield* deliver(
+          to,
+          handoffMessage(record, from, parsed.text),
+          { handoffHops: record.hops },
+          sender.kind === "agent" ? sender.limits : undefined,
+        ).pipe(
+          // A failed handoff may be sent again with the same id.
+          Effect.tapError(() =>
+            storeLock
+              .withPermits(1)(saveHandoff({ ...record, status: "failed" }))
+              .pipe(Effect.ignore),
+          ),
+        );
+        yield* traceHandoff(record, from, to, sent.threadId);
+        return { handoff: record, threadId: sent.threadId, duplicate: false };
+      }),
+    );
+  });
+
+  const dismissHandoff = Effect.fn("ForkBots.dismissHandoff")(function* (
+    input: ForkBotDismissHandoffInput,
+  ) {
+    const parsed = yield* decodeDismissHandoffInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid handoff id.")),
+    );
+    const { record, from, to } = yield* storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const found = directory.handoffs.find((candidate) => candidate.id === parsed.id);
+        if (found === undefined) return yield* notFound("Handoff was not found.");
+        if (found.status === "dismissed") return { record: found, from: undefined, to: undefined };
+        if (found.status !== "cut") {
+          return yield* invalidInput("Only a cut handoff can be dismissed.");
+        }
+        const dismissed: ForkBotHandoff = { ...found, status: "dismissed" };
+        yield* saveHandoff(dismissed);
+        return {
+          record: dismissed,
+          from: directory.bots.find((bot) => bot.id === found.fromBotId),
+          to: directory.bots.find((bot) => bot.id === found.toBotId),
+        };
+      }),
+    );
+    if (from !== undefined && to !== undefined) yield* traceHandoff(record, from, to, null);
+    return record;
+  });
+
+  return ForkBots.of({
+    list,
+    upsert,
+    setArchived,
+    remove,
+    sendMessage,
+    handoff,
+    dismissHandoff,
+    // Untraced: /mcp asks on every request, inside the request's own span.
+    isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
+      return (yield* Ref.get(botThreads)).has(threadId);
+    }),
+  });
 });
 
 export const layer = Layer.effect(ForkBots, make);

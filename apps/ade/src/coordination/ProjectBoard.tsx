@@ -8,11 +8,12 @@ import { ProhibitIcon } from "@phosphor-icons/react/dist/csr/Prohibit";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type {
-  EnvironmentId,
-  ForkCoordinationStatus,
-  ProjectId,
-  ThreadId,
+import {
+  type EnvironmentId,
+  type ForkCoordinationStatus,
+  type ProjectId,
+  projectKeyFromName,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -29,7 +30,6 @@ import {
   type CoordinationStatusFilter,
   type ProjectBoardGroup,
   type ProjectBoardItem,
-  projectKeyFromName,
   threadModelLabel,
   validateCoordinationDraft,
 } from "./coordination.logic.ts";

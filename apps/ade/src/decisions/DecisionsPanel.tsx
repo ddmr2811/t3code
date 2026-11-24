@@ -16,6 +16,7 @@ import {
   togglePendingAlerts,
   usePendingTrayNotifications,
 } from "./notifications.ts";
+import { HandoffNotices } from "./HandoffNotices.tsx";
 import { RequestCards } from "./Requests.tsx";
 import {
   buildPendingTrayItems,
@@ -223,6 +224,7 @@ export function DecisionsPanel() {
           ) : null}
         </div>
       ) : null}
+      <HandoffNotices onOpenBackLayer={openBackLayer} />
       {visible.length === 0 ? (
         <p className="ade-request-note">Ningún pendiente coincide con el filtro actual.</p>
       ) : (

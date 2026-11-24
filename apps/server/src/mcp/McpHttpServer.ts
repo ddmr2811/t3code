@@ -62,6 +62,9 @@ import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { BotHandoffToolkit } from "./toolkits/botHandoff/tools.ts";
+import * as BotHandoffHandlers from "./toolkits/botHandoff/handlers.ts";
+import * as ForkBots from "../fork/bots/ForkBots.ts";
 import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
@@ -287,6 +290,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  const forkBots = yield* Effect.serviceOption(ForkBots.ForkBots);
   // Every request reads it, and a remote added mid-thread shows the tools within a minute.
   const forgeOfThread = yield* Cache.make({
     capacity: 1_000,
@@ -340,7 +344,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
+    const bot =
+      limited.thread === undefined || Option.isNone(forkBots)
+        ? false
+        : yield* forkBots.value.isBotThread(limited.thread.threadId);
+    return {
+      ...limited,
+      linkedEnvironments,
+      origin,
+      bot,
+      ...(forge === undefined ? {} : { forge }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {
@@ -1334,6 +1348,9 @@ const layerProjectMemoryToolkit = toolkitRegistration(
   ProjectMemoryHandlers.layer,
 );
 
+// Fork: a bot hands work to another through the fork's ForkBots service.
+const layerBotHandoffToolkit = toolkitRegistration(BotHandoffToolkit, BotHandoffHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1398,6 +1415,7 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerProjectMemoryToolkit,
+  layerBotHandoffToolkit,
   layerEnvironmentToolkit,
   layerThemeToolkit,
   layerPreviewControlsRegistration,

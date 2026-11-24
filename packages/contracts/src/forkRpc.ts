@@ -26,6 +26,10 @@ import {
 } from "./forkFailover.ts";
 import {
   ForkBot,
+  ForkBotDismissHandoffInput,
+  ForkBotHandoff,
+  ForkBotHandoffInput,
+  ForkBotHandoffResult,
   ForkBotListInput,
   ForkBotListResult,
   ForkBotRemoveInput,
@@ -105,6 +109,8 @@ export const FORK_WS_METHODS = {
   forkBotsSetArchived: "forkBots.setArchived",
   forkBotsRemove: "forkBots.remove",
   forkBotsSendMessage: "forkBots.sendMessage",
+  forkBotsHandoff: "forkBots.handoff",
+  forkBotsDismissHandoff: "forkBots.dismissHandoff",
   // Fork: per-project memory the coordinator reads and the user curates.
   forkMemoryList: "forkMemory.list",
   forkMemoryUpsert: "forkMemory.upsert",
@@ -319,6 +325,18 @@ const WsForkBotsSendMessageRpc = Rpc.make(FORK_WS_METHODS.forkBotsSendMessage, {
   error: ForkBotsRpcError,
 });
 
+const WsForkBotsHandoffRpc = Rpc.make(FORK_WS_METHODS.forkBotsHandoff, {
+  payload: ForkBotHandoffInput,
+  success: ForkBotHandoffResult,
+  error: ForkBotsRpcError,
+});
+
+const WsForkBotsDismissHandoffRpc = Rpc.make(FORK_WS_METHODS.forkBotsDismissHandoff, {
+  payload: ForkBotDismissHandoffInput,
+  success: ForkBotHandoff,
+  error: ForkBotsRpcError,
+});
+
 // Fork: per-project memory.
 const ForkMemoryRpcError = Schema.Union([ForkMemoryError, EnvironmentAuthorizationError]);
 
@@ -368,6 +386,8 @@ export const FORK_RPCS = [
   WsForkBotsSetArchivedRpc,
   WsForkBotsRemoveRpc,
   WsForkBotsSendMessageRpc,
+  WsForkBotsHandoffRpc,
+  WsForkBotsDismissHandoffRpc,
   WsForkMemoryListRpc,
   WsForkMemoryUpsertRpc,
   WsForkMemoryRemoveRpc,
@@ -388,6 +408,8 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkBotsSetArchived]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsRemove]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsHandoff]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsDismissHandoff]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
 } as const;

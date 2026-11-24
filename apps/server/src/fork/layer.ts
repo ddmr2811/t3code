@@ -25,13 +25,14 @@ export const ForkLayer = Layer.mergeAll(
   ForkActivity.layer,
   // Reads its manifest on each request, so it holds nothing.
   ForkGateway.layer,
-  // Shared project coordination board persisted atomically in `<stateDir>/fork/coordination.json`.
-  ForkCoordination.layer,
   // Automatic and manual quota model failover persisted in `<stateDir>/fork/failover.json`.
   ForkFailover.layer,
   // Persistent bot directory; bot chats are ordinary orchestration threads. The coordinator
-  // reads project memory, which the RPCs and the agent's MCP tools share.
-  ForkBots.layer.pipe(Layer.provideMerge(ForkProjectMemory.layer)),
+  // reads project memory, which the RPCs and the agent's MCP tools share. Handoffs between bots
+  // are traced on the shared project coordination board (`<stateDir>/fork/coordination.json`).
+  ForkBots.layer.pipe(
+    Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
+  ),
 );
 
 /** Every fork HTTP route; `server.ts` merges this beside its own routes. */

@@ -4,6 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type ForkBotUpsertInput,
   ProjectId,
+  type RuntimeMode,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -26,6 +27,7 @@ import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegist
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettingsService from "../../serverSettings.ts";
+import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkBots from "./ForkBots.ts";
 
@@ -64,6 +66,9 @@ const withBots = <A, E, R>(
     readonly texts: Array<string>;
     /** Each live thread's model, which a failover or the composer may change under the bot. */
     readonly threadModels: Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>;
+    /** Each live thread's runtime mode, which its user may raise above the bot's. */
+    readonly threadModes: Map<ThreadId, RuntimeMode>;
+    readonly board: ForkCoordination.ForkCoordination["Service"];
     readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
     /** A fresh service over the same state directory, as after a server restart. */
     readonly reopen: Effect.Effect<ForkBots.ForkBots["Service"], never, Scope.Scope>;
@@ -76,13 +81,16 @@ const withBots = <A, E, R>(
       const texts: Array<string> = [];
       const liveThreads = new Set<ThreadId>();
       const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
+      const threadModes = new Map<ThreadId, RuntimeMode>();
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
       const mocks = Layer.mergeAll(
         Layer.mock(ProjectService.ProjectService)({
           getById: (projectId) =>
             Effect.succeed(
-              projectId === projectA ? Option.some({ id: projectA } as never) : Option.none(),
+              projectId === projectA
+                ? Option.some({ id: projectA, title: "Proyecto A" } as never)
+                : Option.none(),
             ),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -93,6 +101,7 @@ const withBots = <A, E, R>(
               launched.push(threadId);
               liveThreads.add(threadId);
               threadModels.set(threadId, input.modelSelection);
+              threadModes.set(threadId, input.runtimeMode);
               return { threadId } as never;
             }),
         }),
@@ -104,6 +113,8 @@ const withBots = <A, E, R>(
                     id: threadId,
                     projectId: projectA,
                     modelSelection: threadModels.get(threadId),
+                    runtimeMode: threadModes.get(threadId),
+                    interactionMode: "default",
                     archivedAt: null,
                     deletedAt: null,
                     lineage: { parentThreadId: null, relationshipToParent: null },
@@ -141,7 +152,9 @@ const withBots = <A, E, R>(
         }),
       );
 
-      const services = ForkBots.layer.pipe(Layer.provideMerge(ForkProjectMemory.layer));
+      const services = ForkBots.layer.pipe(
+        Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
+      );
       const testLayer = services.pipe(
         Layer.provideMerge(
           ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-bots-test-" }),
@@ -165,6 +178,8 @@ const withBots = <A, E, R>(
           sentTo,
           texts,
           threadModels,
+          threadModes,
+          board: yield* ForkCoordination.ForkCoordination,
           memory: yield* ForkProjectMemory.ForkProjectMemory,
           reopen: Layer.build(
             services.pipe(
@@ -402,4 +417,124 @@ describe("ForkBots", () => {
       }),
     ),
   );
+
+  describe("handoffs", () => {
+    const fullAccess = { runtimeMode: "full-access", interactionMode: "default" } as const;
+    const asAgent = { kind: "agent", limits: fullAccess } as const;
+    const twoBots = (service: ForkBots.ForkBots["Service"]) =>
+      Effect.all([
+        service.upsert({ ...baseBot, handle: "ana", name: "Ana" }),
+        service.upsert({ ...baseBot, handle: "beto", name: "Beto" }),
+      ]);
+
+    it.effect("waits in the receiving bot's one queue with the user's messages", () =>
+      withBots(({ service, launched, sentTo, texts }) =>
+        Effect.gen(function* () {
+          const [ana, beto] = yield* twoBots(service);
+          yield* Effect.all(
+            [
+              service.handoff(
+                { id: "handoff:1", fromId: ana.id, toHandle: "beto", text: "de Ana" },
+                { kind: "user" },
+              ),
+              service.sendMessage({ id: beto.id, text: "del usuario" }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(launched).toHaveLength(1);
+          expect(sentTo).toEqual(launched);
+          expect(texts.join("\n")).toContain("TRASPASO de @ana");
+        }),
+      ),
+    );
+
+    it.effect("ignores a repeated id, also after a restart", () =>
+      withBots(({ service, texts, reopen }) =>
+        Effect.gen(function* () {
+          const [ana] = yield* twoBots(service);
+          const input = { id: "handoff:once", fromId: ana.id, toHandle: "beto", text: "hazlo" };
+          const first = yield* service.handoff(input, { kind: "user" });
+          expect(first.duplicate).toBe(false);
+          const restarted = yield* reopen;
+          const again = yield* restarted.handoff(input, { kind: "user" });
+          expect(again).toMatchObject({ duplicate: true, threadId: first.threadId });
+          expect(texts).toHaveLength(1);
+        }),
+      ),
+    );
+
+    it.effect("cuts a chain past the hop limit, across a restart, and never to the same bot", () =>
+      withBots(({ service, texts, board, reopen }) =>
+        Effect.gen(function* () {
+          const [ana, beto] = yield* twoBots(service);
+          const pass = (
+            bots: ForkBots.ForkBots["Service"],
+            hop: number,
+            from: typeof ana,
+            to: string,
+          ) =>
+            bots.handoff(
+              { id: `handoff:${hop}`, fromId: from.id, toHandle: to, text: `vuelta ${hop}` },
+              hop === 1 ? { kind: "user" } : asAgent,
+            );
+          expect((yield* pass(service, 1, ana, "beto")).handoff.hops).toBe(1);
+          expect((yield* pass(service, 2, beto, "ana")).handoff.hops).toBe(2);
+          const restarted = yield* reopen;
+          expect((yield* pass(restarted, 3, ana, "beto")).handoff.hops).toBe(3);
+          expect((yield* pass(restarted, 4, beto, "ana")).handoff.status).toBe("delivered");
+          const cut = yield* pass(restarted, 5, ana, "beto");
+          expect(cut).toMatchObject({ threadId: null, handoff: { status: "cut", hops: 5 } });
+          expect(texts.some((text) => text.includes("vuelta 5"))).toBe(false);
+          expect(
+            (yield* board.list({})).entries.find((entry) => entry.id === "handoff:5"),
+          ).toMatchObject({
+            status: "blocked",
+          });
+
+          // The user stepping in starts the chain again.
+          yield* restarted.sendMessage({ id: ana.id, text: "sigue tú" });
+          expect((yield* pass(restarted, 6, ana, "beto")).handoff).toMatchObject({
+            status: "delivered",
+            hops: 1,
+          });
+          expect(
+            yield* restarted
+              .handoff({ id: "handoff:self", fromId: ana.id, toHandle: "ana", text: "yo" }, asAgent)
+              .pipe(Effect.flip),
+          ).toMatchObject({ reason: "invalidInput" });
+        }),
+      ),
+    );
+
+    it.effect("refuses an agent whose modes are narrower than the receiving bot's thread", () =>
+      withBots(({ service, texts, threadModes }) =>
+        Effect.gen(function* () {
+          const ana = yield* service.upsert({ ...baseBot, handle: "ana", runtimeMode: "auto" });
+          const beto = yield* service.upsert({ ...baseBot, handle: "beto", runtimeMode: "auto" });
+          const auto = {
+            kind: "agent",
+            limits: { runtimeMode: "auto", interactionMode: "default" },
+          } as const;
+          const sent = yield* service.handoff(
+            { id: "handoff:ok", fromId: ana.id, toHandle: "beto", text: "uno" },
+            auto,
+          );
+          // Its user raised the receiving thread above what the sender runs with.
+          threadModes.set(sent.threadId!, "full-access");
+          const refused = yield* service
+            .handoff({ id: "handoff:raised", fromId: ana.id, toHandle: "beto", text: "dos" }, auto)
+            .pipe(Effect.flip);
+          expect(refused).toMatchObject({ reason: "permissionDenied" });
+          const planMode = yield* service
+            .handoff(
+              { id: "handoff:plan", fromId: beto.id, toHandle: "ana", text: "tres" },
+              { kind: "agent", limits: { runtimeMode: "full-access", interactionMode: "plan" } },
+            )
+            .pipe(Effect.flip);
+          expect(planMode).toMatchObject({ reason: "permissionDenied" });
+          expect(texts.filter((text) => /dos|tres/.test(text))).toEqual([]);
+        }),
+      ),
+    );
+  });
 });

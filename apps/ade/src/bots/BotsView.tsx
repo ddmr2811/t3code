@@ -1,5 +1,7 @@
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArchiveIcon } from "@phosphor-icons/react/dist/csr/Archive";
+import { ArrowBendDownRightIcon } from "@phosphor-icons/react/dist/csr/ArrowBendDownRight";
+import { ArrowBendUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowBendUpRight";
 import { PaperPlaneTiltIcon } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
 import { PencilIcon } from "@phosphor-icons/react/dist/csr/Pencil";
 import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
@@ -10,8 +12,11 @@ import {
   FORK_BOTS_MESSAGE_MAX_LENGTH,
   type EnvironmentId,
   type ForkBot,
+  type ForkBotHandoff,
+  type ForkBotHandoffStatus,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { runCommand } from "../composer/Composer.tsx";
@@ -20,12 +25,19 @@ import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { listedThreadsAtom, selectedThreadKeyAtom } from "../sidebar/Sidebar.tsx";
 import { serverEnvironment } from "../state.ts";
-import { botThreadState, type BotDraft, validateBotDraft } from "./bots.logic.ts";
+import {
+  botThreadState,
+  type BotDraft,
+  parseMention,
+  recentHandoffs,
+  validateBotDraft,
+} from "./bots.logic.ts";
 import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
 import {
   allBotsAtom,
+  forkBotsHandoffCommand,
   forkBotsRemoveCommand,
   forkBotsSendMessageCommand,
   forkBotsSetArchivedCommand,
@@ -36,9 +48,16 @@ import {
 const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "auto", "full-access"] as const;
 const MODEL_SEPARATOR = "\u0000";
 
+export const HANDOFF_STATUS_LABELS: Record<ForkBotHandoffStatus, string> = {
+  delivered: "Entregado",
+  cut: "Cortado",
+  failed: "Falló",
+  dismissed: "Descartado",
+};
+
 export function BotsView() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const { byEnv, errors } = useAtomValue(allBotsAtom);
+  const { byEnv, handoffsByEnv, errors } = useAtomValue(allBotsAtom);
   const enabledEnvs = useMemo(() => [...enabledEnvironmentIds(catalog)], [catalog]);
   const [selectedEnvState, setSelectedEnv] = useState<EnvironmentId | null>(null);
   const selectedEnv =
@@ -96,14 +115,23 @@ export function BotsView() {
           </p>
         </section>
       ) : (
-        <MachineBots key={selectedEnv} environmentId={selectedEnv} bots={bots} />
+        <MachineBots
+          key={selectedEnv}
+          environmentId={selectedEnv}
+          bots={bots}
+          handoffs={handoffsByEnv.get(selectedEnv) ?? []}
+        />
       )}
     </div>
   );
 }
 
-function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<ForkBot> }) {
-  const { environmentId, bots } = props;
+function MachineBots(props: {
+  environmentId: EnvironmentId;
+  bots: ReadonlyArray<ForkBot>;
+  handoffs: ReadonlyArray<ForkBotHandoff>;
+}) {
+  const { environmentId, bots, handoffs } = props;
   const registry = useContext(RegistryContext);
   const allThreads = useAtomValue(listedThreadsAtom);
   const setSelectedKey = useAtomSet(selectedThreadKeyAtom);
@@ -113,7 +141,14 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [messageText, setMessageText] = useState("");
+  const [messageText, setMessageTextState] = useState("");
+  const [chatNote, setChatNote] = useState<string | null>(null);
+  // Kept until the handoff goes through, so a retry after an error is recognised as the same one.
+  const [handoffId, setHandoffId] = useState<string | null>(null);
+  const setMessageText = (text: string) => {
+    setMessageTextState(text);
+    setHandoffId(null);
+  };
   const [sending, setSending] = useState(false);
   const [panel, setPanel] = useState<"chat" | "memory">("chat");
   const confirm = useConfirm();
@@ -158,6 +193,35 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
     if (selectedBot === null || text === "") return;
     setSending(true);
     setChatError(null);
+    setChatNote(null);
+    const mention = parseMention(
+      text,
+      bots.filter((bot) => bot.id !== selectedBot.id).map((bot) => bot.handle),
+    );
+    if (mention !== null) {
+      const id = handoffId ?? `handoff:${SecureRandom.uuidV4Unsafe()}`;
+      setHandoffId(id);
+      const failure = await runCommand(
+        registry,
+        forkBotsHandoffCommand,
+        {
+          environmentId,
+          input: { id, fromId: selectedBot.id, toHandle: mention.handle, text: mention.text },
+        },
+        `No se pudo pasar el trabajo a @${mention.handle}`,
+        (result) =>
+          setChatNote(
+            result.handoff.status === "cut"
+              ? `Traspaso cortado: la cadena entre bots pasó de ${result.handoff.hops - 1} saltos. Míralo en la bandeja.`
+              : `Pasado a @${mention.handle}${result.duplicate ? " (ya se había enviado)" : ""}.`,
+          ),
+      );
+      setSending(false);
+      if (failure !== null) return setChatError(failure);
+      setMessageText("");
+      refreshBots(registry, environmentId);
+      return;
+    }
     const failure = await runCommand(
       registry,
       forkBotsSendMessageCommand,
@@ -182,6 +246,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
         value={messageText}
         onChange={(event) => setMessageText(event.target.value)}
         placeholder={`Mensaje para @${selectedBot.handle}`}
+        aria-describedby="ade-bot-mention-hint"
         rows={3}
         maxLength={FORK_BOTS_MESSAGE_MAX_LENGTH}
         disabled={selectedBot.archived}
@@ -194,6 +259,17 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
       >
         <PaperPlaneTiltIcon size={16} aria-hidden /> Enviar
       </button>
+      <MentionHint
+        handles={bots
+          .filter((bot) => bot.id !== selectedBot.id && !bot.archived)
+          .map((bot) => bot.handle)}
+        onPick={(handle) => setMessageText(`@${handle} ${messageText.replace(/^@\S*\s*/, "")}`)}
+      />
+      {chatNote === null ? null : (
+        <p className="ade-bot-meta" role="status">
+          {chatNote}
+        </p>
+      )}
       {selectedBot.archived ? (
         <p className="ade-bot-meta">Restaura el bot para escribirle.</p>
       ) : null}
@@ -247,6 +323,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
                   setSelectedBotId(bot.id);
                   setMessageText("");
                   setChatError(null);
+                  setChatNote(null);
                   setPanel("chat");
                 }}
                 aria-pressed={bot.id === selectedBotId}
@@ -268,6 +345,7 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
                   {bot.archived ? "Archivado" : botThreadState(bot, allThreads)}
                 </span>
               </button>
+              <BotHandoffs entries={recentHandoffs(handoffs, bots, bot.id, 3)} />
               <div className="ade-bot-actions">
                 <button
                   type="button"
@@ -347,6 +425,55 @@ function MachineBots(props: { environmentId: EnvironmentId; bots: ReadonlyArray<
         />
       )}
     </>
+  );
+}
+
+function MentionHint(props: { handles: ReadonlyArray<string>; onPick: (handle: string) => void }) {
+  if (props.handles.length === 0) return null;
+  return (
+    <div id="ade-bot-mention-hint" className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-muted-foreground">Empieza con @ para pasárselo a:</span>
+      {props.handles.map((handle) => (
+        <button
+          key={handle}
+          type="button"
+          className="ade-filter-chip max-[720px]:min-h-11"
+          onClick={() => props.onPick(handle)}
+        >
+          @{handle}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BotHandoffs(props: { entries: ReturnType<typeof recentHandoffs> }) {
+  if (props.entries.length === 0) return null;
+  return (
+    <ul
+      className="m-0 grid min-w-0 list-none gap-1 px-2.5 pb-1 text-xs"
+      aria-label="Traspasos recientes"
+    >
+      {props.entries.map(({ handoff, direction, peer }) => (
+        <li key={handoff.id} className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          {direction === "in" ? (
+            <ArrowBendDownRightIcon size={14} aria-hidden className="shrink-0" />
+          ) : (
+            <ArrowBendUpRightIcon size={14} aria-hidden className="shrink-0" />
+          )}
+          <span className="shrink-0">{direction === "in" ? `De ${peer}` : `A ${peer}`}</span>
+          <span className="min-w-0 truncate">· {handoff.preview}</span>
+          {handoff.status === "delivered" ? null : (
+            <span
+              className="ade-chip ml-auto shrink-0"
+              data-kind={handoff.status === "cut" ? "approval" : undefined}
+            >
+              {HANDOFF_STATUS_LABELS[handoff.status]}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

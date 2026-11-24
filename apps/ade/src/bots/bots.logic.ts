@@ -4,6 +4,7 @@ import {
   FORK_BOTS_NAME_MAX_LENGTH,
   FORK_BOTS_ROLE_MAX_LENGTH,
   type ForkBot,
+  type ForkBotHandoff,
   type ProjectId,
   type ProviderInstanceId,
   type ScheduledTaskUpsertInput,
@@ -158,4 +159,43 @@ export function coordinatorRoutineInput(
     runtimeMode: bot.runtimeMode,
     interactionMode: "default",
   };
+}
+
+/** `@handle rest` hands `rest` to another bot; anything else is a message to this bot. */
+export function parseMention(
+  text: string,
+  otherHandles: ReadonlyArray<string>,
+): { readonly handle: string; readonly text: string } | null {
+  const match = /^@([a-z0-9][a-z0-9_-]{1,31})\s+([\s\S]*\S)/i.exec(text.trim());
+  if (match === null) return null;
+  const handle = otherHandles.find((other) => other.toLowerCase() === match[1]!.toLowerCase());
+  return handle === undefined ? null : { handle, text: match[2]! };
+}
+
+export interface RecentHandoff {
+  readonly handoff: ForkBotHandoff;
+  readonly direction: "in" | "out";
+  /** The other bot's handle, or its id when that bot was removed. */
+  readonly peer: string;
+}
+
+export function recentHandoffs(
+  handoffs: ReadonlyArray<ForkBotHandoff>,
+  bots: ReadonlyArray<ForkBot>,
+  botId: string,
+  limit: number,
+): ReadonlyArray<RecentHandoff> {
+  const handleOf = (id: string) => {
+    const bot = bots.find((candidate) => candidate.id === id);
+    return bot === undefined ? id : `@${bot.handle}`;
+  };
+  return handoffs
+    .filter((handoff) => handoff.fromBotId === botId || handoff.toBotId === botId)
+    .toReversed()
+    .slice(0, limit)
+    .map((handoff) =>
+      handoff.toBotId === botId
+        ? { handoff, direction: "in", peer: handleOf(handoff.fromBotId) }
+        : { handoff, direction: "out", peer: handleOf(handoff.toBotId) },
+    );
 }

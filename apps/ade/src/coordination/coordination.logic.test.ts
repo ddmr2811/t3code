@@ -3,17 +3,14 @@ import {
   EnvironmentId,
   type ForkCoordinationEntry,
   ProjectId,
+  projectKeyFromName,
   ProviderInstanceId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildProjectBoardGroups,
-  projectKeyFromName,
-  validateCoordinationDraft,
-} from "./coordination.logic.ts";
+import { buildProjectBoardGroups, validateCoordinationDraft } from "./coordination.logic.ts";
 
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");

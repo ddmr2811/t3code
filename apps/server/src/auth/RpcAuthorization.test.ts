@@ -149,6 +149,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.forkBotsSetArchived,
       WS_METHODS.forkBotsRemove,
       WS_METHODS.forkBotsSendMessage,
+      WS_METHODS.forkBotsHandoff,
+      WS_METHODS.forkBotsDismissHandoff,
       WS_METHODS.forkMemoryUpsert,
       WS_METHODS.forkMemoryRemove,
     ]) {

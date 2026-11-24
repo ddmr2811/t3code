@@ -235,6 +235,8 @@ describe("command permissions", () => {
     WS_METHODS.forkBotsSetArchived,
     WS_METHODS.forkBotsRemove,
     WS_METHODS.forkBotsSendMessage,
+    WS_METHODS.forkBotsHandoff,
+    WS_METHODS.forkBotsDismissHandoff,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.gen(function* () {
       const registry = yield* setup;

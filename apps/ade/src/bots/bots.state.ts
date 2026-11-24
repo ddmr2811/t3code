@@ -4,7 +4,12 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, type ForkBot, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ForkBot,
+  type ForkBotHandoff,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -42,6 +47,16 @@ export const forkBotsSendMessageCommand = createEnvironmentRpcCommand(connection
   tag: WS_METHODS.forkBotsSendMessage,
 });
 
+export const forkBotsHandoffCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-bots:handoff",
+  tag: WS_METHODS.forkBotsHandoff,
+});
+
+export const forkBotsDismissHandoffCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-bots:dismiss-handoff",
+  tag: WS_METHODS.forkBotsDismissHandoff,
+});
+
 export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "ade:fork-memory:list",
   tag: WS_METHODS.forkMemoryList,
@@ -66,6 +81,7 @@ export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: 
 export const allBotsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const byEnv = new Map<EnvironmentId, ReadonlyArray<ForkBot>>();
+  const handoffsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotHandoff>>();
   const errors: BotLoadError[] = [];
 
   for (const environmentId of enabledEnvironmentIds(catalog)) {
@@ -77,8 +93,11 @@ export const allBotsAtom = Atom.make((get) => {
         message: detail ?? "No se pudo leer el directorio de bots.",
       });
     }
-    if (result._tag === "Success") byEnv.set(environmentId, result.value.bots);
+    if (result._tag === "Success") {
+      byEnv.set(environmentId, result.value.bots);
+      handoffsByEnv.set(environmentId, result.value.handoffs);
+    }
   }
 
-  return { byEnv, errors };
+  return { byEnv, handoffsByEnv, errors };
 }).pipe(Atom.withLabel("ade-all-bots"));

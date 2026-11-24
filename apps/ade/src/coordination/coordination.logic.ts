@@ -14,6 +14,7 @@ import {
   type ForkCoordinationEntry,
   type ForkCoordinationStatus,
   type ForkCoordinationUpsertInput,
+  projectKeyFromName,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -89,29 +90,6 @@ export interface CoordinationDraft {
 const SINGLE_LINE_CONTROL = /[\u0000-\u001f\u007f]/;
 const MULTILINE_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const PATH_TRAVERSAL_SEGMENT = /(?:^|[\\/])\.\.(?:$|[\\/])/;
-
-/** Stable, safe project key derived from a project's title or id, matching contract constraints. */
-export function projectKeyFromName(name: string, fallbackId?: string): string {
-  const normalized = name
-    .trim()
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9._-]+/g, "-")
-    .replaceAll(/\.{2,}/g, "-")
-    .replaceAll(/-{2,}/g, "-")
-    .replaceAll(/^-+|-+$/g, "");
-  if (normalized.length > 0) {
-    return normalized.slice(0, FORK_COORDINATION_PROJECT_KEY_MAX_LENGTH);
-  }
-  const fallback = (fallbackId ?? "proyecto")
-    .trim()
-    .replaceAll(/[^A-Za-z0-9._:-]+/g, "-")
-    .replaceAll(/\.{2,}/g, "-")
-    .replaceAll(/-{2,}/g, "-");
-  return (fallback.length > 0 ? fallback : "proyecto").slice(
-    0,
-    FORK_COORDINATION_PROJECT_KEY_MAX_LENGTH,
-  );
-}
 
 export function threadModelLabel(
   thread: Pick<EnvironmentThreadShell, "modelSelection">,

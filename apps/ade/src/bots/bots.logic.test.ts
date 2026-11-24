@@ -1,8 +1,25 @@
 import { type ForkBot, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { coordinatorRoutineInput, validateBotDraft } from "./bots.logic.ts";
+import { coordinatorRoutineInput, parseMention, validateBotDraft } from "./bots.logic.ts";
 
 describe("bots.logic", () => {
+  it("hands work over only for a leading @handle of another bot with something to say", () => {
+    const others = ["revisor", "QA-bot"];
+    expect(parseMention("@revisor  mira el diff\nde hoy", others)).toEqual({
+      handle: "revisor",
+      text: "mira el diff\nde hoy",
+    });
+    expect(parseMention("@qa-bot prueba", others)).toEqual({ handle: "QA-bot", text: "prueba" });
+    for (const text of [
+      "dile a @revisor que mire",
+      "@desconocido hola",
+      "@revisor",
+      "@revisor   ",
+    ]) {
+      expect(parseMention(text, others)).toBeNull();
+    }
+  });
+
   it("rejects an invalid handle", () => {
     expect(
       validateBotDraft({
@@ -48,6 +65,7 @@ describe("bots.logic", () => {
       archived: false,
       coordinator: true,
       memoryHash: null,
+      handoffHops: 0,
       createdAt: "2026-11-24T00:00:00.000Z",
       updatedAt: "2026-11-24T00:00:00.000Z",
     };

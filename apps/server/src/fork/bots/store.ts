@@ -1,10 +1,13 @@
 import {
+  FORK_BOTS_HANDOFF_HISTORY,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_PROTOCOL_VERSION,
   ForkBot,
+  ForkBotHandoff,
   type ForkBotListResult,
   IsoDateTime,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 const uniqueBots = Schema.makeFilter(
@@ -26,6 +29,10 @@ export const StoredBotDirectory = Schema.Struct({
   version: Schema.Literal(FORK_BOTS_PROTOCOL_VERSION),
   updatedAt: Schema.NullOr(IsoDateTime),
   bots: Schema.Array(ForkBot).check(Schema.isMaxLength(FORK_BOTS_MAX_COUNT), uniqueBots),
+  /** Oldest first; the id of each one is what stops a repeated handoff. */
+  handoffs: Schema.Array(ForkBotHandoff)
+    .check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;
 
@@ -33,6 +40,7 @@ export const EMPTY_BOT_DIRECTORY: StoredBotDirectory = {
   version: FORK_BOTS_PROTOCOL_VERSION,
   updatedAt: null,
   bots: [],
+  handoffs: [],
 };
 
 export const decodeStoredBotDirectory = Schema.decodeUnknownEffect(
@@ -44,6 +52,7 @@ export function listBots(directory: StoredBotDirectory): ForkBotListResult {
     bots: directory.bots.toSorted(
       (left, right) => left.name.localeCompare(right.name, "es") || left.id.localeCompare(right.id),
     ),
+    handoffs: directory.handoffs,
     updatedAt: directory.updatedAt,
   };
 }

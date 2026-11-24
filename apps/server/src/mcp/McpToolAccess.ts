@@ -443,6 +443,7 @@ const linksUnavailable = new OrchestratorMcpFailure({
 const THREAD_ONLY = new Set<unknown>([
   McpInvocationContext.hiddenFromOutsideClients,
   McpInvocationContext.hiddenWithoutBackgroundWait,
+  McpInvocationContext.hiddenOutsideBotThreads,
 ]);
 
 /**
