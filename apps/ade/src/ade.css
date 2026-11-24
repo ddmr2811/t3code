@@ -282,6 +282,15 @@ body {
   font-size: 12px;
 }
 
+/* Tailwind's preflight makes <svg> a block, so buttons lay their icon and label out in a row. */
+.ade-button,
+.ade-button-quiet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .ade-button {
   padding: 6px 10px;
   border: 0;
