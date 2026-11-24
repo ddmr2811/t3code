@@ -216,6 +216,20 @@ Usa la skill `design-taste-frontend` (TasteSkill). Ejecuta `start.mjs` y no des 
 
 En el ADE solo se aplica la tipografía, la paleta, el espaciado, los bordes y las microinteracciones, dentro del estilo mínimo (fondo `#0A0A0A`, Geist, Phosphor, naranja de acento, `prefers-reduced-motion`), sin hero a pantalla completa, fotos ni shaders. UI SDK sigue siendo la base de componentes.
 
+## Sugerir pstack
+
+Cuando ocurra la situación, el agente le dice a Dani en una línea qué comando le serviría y por qué.
+
+- Tarea grande o ambigua: `/sharpen` y `/architect`.
+- Varias opciones de diseño o arquitectura: `/arena`.
+- Antes de proponer un merge o un push a `main`: `/interrogate` y `/blast-radius`.
+- Dani vuelve tras un rato o pregunta qué ha pasado: `/ketchup`.
+- Dani no entiende algo: `/how`, `/why` o `/bro`.
+- El mismo error o corrección por segunda vez: `/correct`.
+- No está claro cuál usar: `/poteto-help`.
+
+Los comandos baratos de solo lectura (`/how`, `/why`, `/bro`, `/ketchup`) los puede ejecutar el agente directamente si ayudan. Los caros o que lanzan varios agentes (`/arena`, `/swarm`, `/interrogate` multimodelo) solo se proponen y se espera a que Dani diga sí. Máximo una sugerencia por mensaje, y no se repite si Dani ya dijo que no.
+
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
