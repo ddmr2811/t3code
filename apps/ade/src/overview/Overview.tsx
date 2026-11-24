@@ -1,6 +1,7 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
+import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { KanbanIcon } from "@phosphor-icons/react/dist/csr/Kanban";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
@@ -15,6 +16,7 @@ import { memo } from "react";
 
 import { allCoordinationEntriesAtom } from "../coordination/coordination.state.ts";
 import { ProjectBoard } from "../coordination/ProjectBoard.tsx";
+import { BotsView } from "../bots/BotsView.tsx";
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
 import { ExtensionPanel, MachineExtensions } from "../extensions/Extensions.tsx";
 import { allFailoverStatesAtom } from "../failover/failover.state.ts";
@@ -31,13 +33,14 @@ import type { ThreadState } from "../sidebar/sidebar.logic.ts";
 import { serverEnvironment } from "../state.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
 
-export type View = "resumen" | "proyectos" | "tablero" | "respaldo";
+export type View = "resumen" | "proyectos" | "tablero" | "respaldo" | "bots";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
 const readView = (): View => {
   const value = new URLSearchParams(window.location.search).get("vista");
-  if (value === "tablero" || value === "proyectos" || value === "respaldo") return value;
+  if (value === "tablero" || value === "proyectos" || value === "respaldo" || value === "bots")
+    return value;
   return "resumen";
 };
 export const viewAtom = Atom.writable(
@@ -127,6 +130,7 @@ export function ViewNav() {
       {link("resumen", "Resumen", SquaresFourIcon)}
       {link("proyectos", "Proyectos", FoldersIcon)}
       {link("tablero", "Tablero", KanbanIcon)}
+      {link("bots", "Bots", UserCircleIcon)}
       {link("respaldo", "Respaldo", ArrowsLeftRightIcon)}
     </nav>
   );
@@ -495,6 +499,7 @@ export function Overview() {
     );
   }
   if (view === "proyectos") return <ProjectBoard />;
+  if (view === "bots") return <BotsView />;
   if (view === "respaldo") return <FailoverPanel />;
   return view === "tablero" ? <Board /> : <Summary />;
 }

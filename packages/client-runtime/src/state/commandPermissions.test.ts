@@ -231,6 +231,10 @@ describe("command permissions", () => {
     WS_METHODS.forkCoordinationUpsert,
     WS_METHODS.forkCoordinationRemove,
     WS_METHODS.forkFailoverSwitchThread,
+    WS_METHODS.forkBotsUpsert,
+    WS_METHODS.forkBotsSetArchived,
+    WS_METHODS.forkBotsRemove,
+    WS_METHODS.forkBotsSendMessage,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.gen(function* () {
       const registry = yield* setup;
