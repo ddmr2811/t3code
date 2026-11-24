@@ -25,6 +25,7 @@ import { FailoverPanel } from "../failover/FailoverPanel.tsx";
 import { Home } from "../home/Home.tsx";
 import { useMachineStatus } from "../Machines.tsx";
 import {
+  closePanelsOnPhone,
   listedThreadsAtom,
   mobileSidebarOpenAtom,
   ProjectTitle,
@@ -58,7 +59,8 @@ export const viewAtom = Atom.writable(
     get.addFinalizer(() => window.removeEventListener("popstate", onPopState));
     return readView();
   },
-  (_ctx, view: View) => {
+  (ctx, view: View) => {
+    closePanelsOnPhone(ctx);
     const url = new URL(window.location.href);
     if (view === "inicio") url.searchParams.delete("vista");
     else url.searchParams.set("vista", view);
@@ -115,7 +117,7 @@ const gigabytes = (bytes: number) =>
 // The server names its windows in English.
 const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as const;
 
-const VIEW_LINKS = [
+export const VIEW_LINKS = [
   { target: "resumen", label: "Resumen", Icon: SquaresFourIcon },
   { target: "proyectos", label: "Proyectos", Icon: FoldersIcon },
   { target: "tablero", label: "Tablero", Icon: KanbanIcon },

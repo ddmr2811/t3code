@@ -175,6 +175,7 @@ export function MachinesSidebar() {
       <div className="ade-label">
         Máquinas
         <button
+          id="ade-add-machine"
           type="button"
           className="ade-icon-button"
           aria-label="Añadir máquina"

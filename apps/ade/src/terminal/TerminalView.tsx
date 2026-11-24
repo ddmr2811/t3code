@@ -238,9 +238,8 @@ function Shell(props: {
   return (
     <section className="ade-terminal" aria-label="Terminal">
       <header className="ade-terminal-header">
-        <h2>
-          Terminal <span className="ade-terminal-cwd">{worktreePath ?? cwd}</span>
-        </h2>
+        {/* The panel around it says «Terminal»; this says where. */}
+        <p className="ade-terminal-cwd">{worktreePath ?? cwd}</p>
         <p className="ade-terminal-status" role={problem ? "alert" : "status"}>
           {connected || problem
             ? STATUS_TEXT[status]
@@ -255,9 +254,6 @@ function Shell(props: {
             Cerrar el terminal compartido con la web
           </button>
         )}
-        <button type="button" className="ade-button-quiet" onClick={props.onClose}>
-          Volver a la conversación
-        </button>
       </header>
       <div ref={mountRef} className="ade-terminal-mount" />
     </section>
