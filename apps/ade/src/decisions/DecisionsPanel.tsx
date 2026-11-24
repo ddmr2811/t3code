@@ -6,7 +6,9 @@ import { BellSlashIcon } from "@phosphor-icons/react/dist/csr/BellSlash";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useContext, useMemo, useState } from "react";
+import { useShortcut } from "@ui-sdk/react/shortcuts";
+import * as DateTime from "effect/DateTime";
+import { type ReactNode, useContext, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 import { FloatingPanel } from "../panels/FloatingPanel.tsx";
@@ -18,15 +20,20 @@ import {
   togglePendingAlerts,
   usePendingTrayNotifications,
 } from "./notifications.ts";
-import { HandoffNotices } from "./HandoffNotices.tsx";
-import { RequestCards } from "./Requests.tsx";
+import { HandoffNotices, useCutHandoffs } from "./HandoffNotices.tsx";
+import { FirstRequest, RequestCards, trayHasFocus } from "./Requests.tsx";
 import {
   buildPendingTrayItems,
   countPendingByKind,
   filterPendingItems,
+  isSnoozed,
   type PendingTrayFilterKind,
   type PendingTrayItem,
   type PendingTrayKind,
+  readSnoozed,
+  type SnoozedUntil,
+  snoozeUntilTomorrow,
+  writeSnoozed,
 } from "./tray.logic.ts";
 
 const KIND_LABELS: Record<PendingTrayKind, string> = {
@@ -52,9 +59,34 @@ const FILTER_ORDER: ReadonlyArray<PendingTrayFilterKind> = [
   "guest",
 ];
 
+type TrayMode = "una" | "todas" | "pospuestas";
+
+const MODE_LABELS: Record<TrayMode, string> = {
+  una: "Una a una",
+  todas: "Todas",
+  pospuestas: "Pospuestas",
+};
+
+/** A row of the tray: a waiting thread, or a cut bot handoff (`item` null). */
+interface TrayEntry {
+  readonly key: string;
+  readonly kind: PendingTrayKind;
+  readonly label: string;
+  readonly title: string;
+  readonly item: PendingTrayItem<EnvironmentThreadShell> | null;
+}
+
+const RETURN_TIME = new Intl.DateTimeFormat("es", {
+  weekday: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function DecisionCard(props: {
   item: PendingTrayItem<EnvironmentThreadShell>;
   onOpenBackLayer: (threadKey: string) => void;
+  /** The one-at-a-time tray: only the first request, and its «Luego». */
+  later?: ReactNode;
 }) {
   const { item } = props;
   const { thread } = item;
@@ -77,7 +109,11 @@ function DecisionCard(props: {
         </div>
       </div>
       <h3>{thread.title}</h3>
-      <RequestCards threadRef={threadRef} subscribe={hasRequest} />
+      {props.later === undefined ? (
+        <RequestCards threadRef={threadRef} subscribe={hasRequest} />
+      ) : (
+        <FirstRequest threadRef={threadRef} subscribe={hasRequest} />
+      )}
       {hasRequest ? null : (
         <p className="ade-request-note">
           {(thread.pendingGuestMessageCount ?? 0) > 0
@@ -95,8 +131,87 @@ function DecisionCard(props: {
           <span>Abrir el hilo</span>
           <span className="ade-backlayer-hint">Capa trasera</span>
         </button>
+        {props.later}
       </div>
     </section>
+  );
+}
+
+/** «Solo tú decides»: one decision at a time, answered with Y, N or S while focus is here. */
+function OneAtATime(props: {
+  waiting: ReadonlyArray<TrayEntry>;
+  onLater: (key: string) => void;
+  onOpenBackLayer: (threadKey: string) => void;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  const current = props.waiting[0];
+  const later = () => {
+    if (current === undefined) return;
+    ref.current?.focus();
+    props.onLater(current.key);
+  };
+  useShortcut("s", later, {
+    when: () => current !== undefined && trayHasFocus(),
+    description: "Luego",
+  });
+  const laterButton = (
+    <button type="button" className="ade-button-quiet" onClick={later}>
+      Luego <kbd>S</kbd>
+    </button>
+  );
+  return (
+    <section ref={ref} className="ade-tray" tabIndex={-1} aria-label="Solo tú decides">
+      <p className="ade-tray-count">
+        Solo tú decides
+        <span>{current === undefined ? "nada ahora" : `1/${props.waiting.length}`}</span>
+      </p>
+      {current === undefined ? (
+        <p className="ade-request-note">No queda nada por decidir ahora.</p>
+      ) : current.item === null ? (
+        <HandoffNotices
+          only={current.key}
+          onOpenBackLayer={props.onOpenBackLayer}
+          later={laterButton}
+        />
+      ) : (
+        <DecisionCard
+          key={current.key}
+          item={current.item}
+          onOpenBackLayer={props.onOpenBackLayer}
+          later={laterButton}
+        />
+      )}
+    </section>
+  );
+}
+
+/** What «Luego» set aside, each with its way back. */
+function SnoozedList(props: {
+  entries: ReadonlyArray<TrayEntry>;
+  snoozed: SnoozedUntil;
+  onBringBack: (key: string) => void;
+}) {
+  return (
+    <ul className="ade-snoozed-list" aria-label="Pospuestas">
+      {props.entries.map((entry) => (
+        <li key={entry.key} className="ade-snoozed">
+          <span className="ade-chip" data-kind={entry.kind}>
+            {entry.label}
+          </span>
+          <span className="ade-snoozed-title">{entry.title}</span>
+          <span className="ade-request-note">
+            Vuelve el {RETURN_TIME.format(props.snoozed[entry.key])}
+          </span>
+          <button
+            type="button"
+            className="ade-button-quiet"
+            onClick={() => props.onBringBack(entry.key)}
+          >
+            Traer ahora
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -114,6 +229,11 @@ export function DecisionsPanel() {
   const alertsNote = useAtomValue(pendingAlertsErrorAtom);
   const [kindFilter, setKindFilter] = useState<PendingTrayFilterKind>("all");
   const [machineFilter, setMachineFilter] = useState<EnvironmentId | "all">("all");
+  const [mode, setMode] = useState<TrayMode>("una");
+  const [snoozed, setSnoozed] = useState(() =>
+    readSnoozed(DateTime.toEpochMillis(DateTime.nowUnsafe())),
+  );
+  const handoffs = useCutHandoffs();
 
   const items = useMemo(
     () =>
@@ -134,6 +254,38 @@ export function DecisionsPanel() {
   usePendingTrayNotifications(items, openBackLayer);
 
   if (!open) return null;
+
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+  const queue: ReadonlyArray<TrayEntry> = [
+    ...handoffs.map((notice) => ({
+      key: notice.key,
+      kind: "approval" as const,
+      label: "Aviso",
+      title: notice.title,
+      item: null,
+    })),
+    ...items.map((item) => ({
+      key: item.key,
+      kind: item.primaryKind,
+      label: KIND_LABELS[item.primaryKind],
+      title: item.thread.title,
+      item,
+    })),
+  ];
+  const waiting = queue.filter((entry) => !isSnoozed(snoozed, entry.key, now));
+  const setAside = queue.filter((entry) => isSnoozed(snoozed, entry.key, now));
+  const effectiveMode = mode === "pospuestas" && setAside.length === 0 ? "una" : mode;
+  const modeCounts: Record<TrayMode, number> = {
+    una: waiting.length,
+    todas: queue.length,
+    pospuestas: setAside.length,
+  };
+  const snooze = (key: string, until: number | null) => {
+    const { [key]: _previous, ...rest } = snoozed;
+    const next = until === null ? rest : { ...rest, [key]: until };
+    setSnoozed(next);
+    writeSnoozed(next);
+  };
 
   const counts = countPendingByKind(items);
   const machinesInTray = [...new Map(items.map((item) => [item.environmentId, item.machineLabel]))];
@@ -190,7 +342,38 @@ export function DecisionsPanel() {
           {alertsNote}
         </p>
       )}
-      {items.length > 1 || effectiveKind !== "all" || effectiveMachine !== "all" ? (
+      <div className="ade-filter-chips" role="group" aria-label="Cómo ver los pendientes">
+        {(["una", "todas", "pospuestas"] as const)
+          .filter((option) => option !== "pospuestas" || setAside.length > 0)
+          .map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="ade-filter-chip"
+              aria-pressed={effectiveMode === option}
+              onClick={() => setMode(option)}
+            >
+              {MODE_LABELS[option]} <span>{modeCounts[option]}</span>
+            </button>
+          ))}
+      </div>
+      {effectiveMode === "una" ? (
+        <OneAtATime
+          waiting={waiting}
+          onLater={(key) => snooze(key, snoozeUntilTomorrow(DateTime.nowUnsafe()))}
+          onOpenBackLayer={openBackLayer}
+        />
+      ) : null}
+      {effectiveMode === "pospuestas" ? (
+        <SnoozedList
+          entries={setAside}
+          snoozed={snoozed}
+          onBringBack={(key) => snooze(key, null)}
+        />
+      ) : null}
+      {effectiveMode !== "todas" ? null : items.length > 1 ||
+        effectiveKind !== "all" ||
+        effectiveMachine !== "all" ? (
         <div className="ade-tray-filters" role="group" aria-label="Filtrar pendientes">
           <div className="ade-filter-chips">
             {FILTER_ORDER.filter((kind) => kind === "all" || counts[kind] > 0).map((kind) => (
@@ -225,13 +408,17 @@ export function DecisionsPanel() {
           ) : null}
         </div>
       ) : null}
-      <HandoffNotices onOpenBackLayer={openBackLayer} />
-      {visible.length === 0 ? (
-        <p className="ade-request-note">Ningún pendiente coincide con el filtro actual.</p>
-      ) : (
-        visible.map((item) => (
-          <DecisionCard key={item.key} item={item} onOpenBackLayer={openBackLayer} />
-        ))
+      {effectiveMode !== "todas" ? null : (
+        <>
+          <HandoffNotices onOpenBackLayer={openBackLayer} />
+          {visible.length === 0 ? (
+            <p className="ade-request-note">Ningún pendiente coincide con el filtro actual.</p>
+          ) : (
+            visible.map((item) => (
+              <DecisionCard key={item.key} item={item} onOpenBackLayer={openBackLayer} />
+            ))
+          )}
+        </>
       )}
     </FloatingPanel>
   );

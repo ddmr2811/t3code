@@ -1,4 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -8,8 +9,12 @@ import {
   classifyPendingKinds,
   countPendingByKind,
   filterPendingItems,
+  isSnoozed,
   isTrayOpenForViewport,
+  readSnoozed,
   reconcileTrayChoice,
+  snoozeUntilTomorrow,
+  writeSnoozed,
   type PendingSeenByEnvironment,
   type PendingThreadInput,
 } from "./tray.logic.ts";
@@ -167,5 +172,27 @@ describe("tray.logic", () => {
     // Desktop keeps auto-opening behavior unchanged.
     expect(reconcileTrayChoice(opened, [], false)).toBe(opened);
     expect(isTrayOpenForViewport(null, ["env-a:t1"], false)).toBe(true);
+  });
+
+  it("brings a «Luego» back tomorrow at 08:00, across a month end, and forgets it once due", () => {
+    const local = (month: number, day: number, hours: number, minutes: number) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month, day, hour: hours, minute: minutes },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    const until = snoozeUntilTomorrow(local(1, 31, 23, 30));
+    expect(until).toBe(DateTime.toEpochMillis(local(2, 1, 8, 0)));
+    const snoozed = { "env-a:t1": until };
+    expect(isSnoozed(snoozed, "env-a:t1", until - 60_000)).toBe(true);
+    expect(isSnoozed(snoozed, "env-a:t1", until)).toBe(false);
+
+    const saved = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => void saved.set(key, value),
+    };
+    writeSnoozed({ ...snoozed, "env-a:old": until - 86_400_000 }, storage);
+    expect(readSnoozed(until - 1, storage)).toEqual(snoozed);
+    expect(readSnoozed(until, storage)).toEqual({});
   });
 });

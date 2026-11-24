@@ -18,11 +18,13 @@ import type {
   ProviderRequestKind,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useShortcut } from "@ui-sdk/react/shortcuts";
 import * as Option from "effect/Option";
 import { Atom, type AtomRegistry } from "effect/reactivity";
-import { useContext } from "react";
+import { useContext, useState } from "react";
 
 import { draftAtom, runCommand } from "../composer/Composer.tsx";
+import { shortcutsFree } from "../panels/FloatingPanel.tsx";
 import {
   environmentThreadDetails,
   environmentThreadShells,
@@ -119,11 +121,26 @@ const requestKeyOf = (threadRef: ScopedThreadRef, requestId: string) =>
 
 const NO_REQUESTS = Atom.make<PendingThreadRequests | null>(null);
 
+/** Y, N and S act only while focus is inside the one-at-a-time tray, never in a field. */
+export const trayHasFocus = () =>
+  shortcutsFree() && document.activeElement?.closest(".ade-tray") != null;
+
+const focusTray = () => document.querySelector<HTMLElement>(".ade-tray")?.focus();
+
+// A file read changes nothing and a file edit comes back with the turn's checkpoint; a command,
+// a permission or an MCP request may not, so its «Sí» asks twice.
+const REVERSIBLE: ReadonlySet<ProviderRequestKind> = new Set(["file-read", "file-change"]);
+
 function useCanAnswer(threadRef: ScopedThreadRef) {
   return useAtomValue(operateAccessAtom(threadRef.environmentId)) === "operate";
 }
 
-function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendingApproval }) {
+function ApprovalCard(props: {
+  threadRef: ScopedThreadRef;
+  approval: ThreadPendingApproval;
+  /** The one-at-a-time tray: «Sí» and «No» with Y and N, no wider grants. */
+  tray?: boolean;
+}) {
   const { threadRef, approval } = props;
   const registry = useContext(RegistryContext);
   const canAnswer = useCanAnswer(threadRef) && approval.responseCapability === "live";
@@ -168,6 +185,21 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
     </button>
   );
   const broad = choices.filter((choice) => choice.broad);
+  const [armed, setArmed] = useState(false);
+  const canYes = choices.some((choice) => choice.decision === "accept");
+  const canNo = choices.some((choice) => choice.decision === "decline");
+  const ready = props.tray === true && canAnswer && sent === null;
+  const yes = () => {
+    if (!REVERSIBLE.has(approval.requestKind) && !armed) return setArmed(true);
+    focusTray();
+    void respond("accept");
+  };
+  const no = () => {
+    focusTray();
+    void respond("decline");
+  };
+  useShortcut("y", yes, { when: () => ready && canYes && trayHasFocus(), description: "Sí" });
+  useShortcut("n", no, { when: () => ready && canNo && trayHasFocus(), description: "No" });
   return (
     <article className="ade-request" aria-label={`Aprobación: ${KIND_TEXT[approval.requestKind]}`}>
       <p className="ade-request-tag">Aprobación · {KIND_TEXT[approval.requestKind]}</p>
@@ -207,28 +239,50 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
           {NOT_ANSWERABLE}
         </p>
       )}
-      {/* Disabled as a whole where this session cannot answer; the server refuses it anyway. */}
-      <fieldset disabled={!canAnswer}>
-        <div className="ade-request-actions">
-          {choices.filter((choice) => !choice.broad).map(button)}
-        </div>
-        {broad.length === 0 ? null : (
-          <div className="ade-request-broad">
-            <p className="ade-request-note">
-              Más que esta petición. El alcance lo fija el proveedor y puede durar más que este
-              hilo:
-            </p>
-            <div className="ade-request-actions">{broad.map(button)}</div>
-            {broad.map((choice) =>
-              choice.warning === undefined ? null : (
-                <p key={choice.decision} className="ade-request-note">
-                  {choice.label}: {choice.warning}
-                </p>
-              ),
-            )}
+      {props.tray === true ? (
+        <>
+          <div className="ade-request-actions ade-tray-answers">
+            {canYes ? (
+              <button type="button" className="ade-button" disabled={!ready} onClick={yes}>
+                {sent === "accept" ? "Enviando…" : armed ? "Confirmar sí" : "Sí"} <kbd>Y</kbd>
+              </button>
+            ) : null}
+            {canNo ? (
+              <button type="button" className="ade-button-quiet" disabled={!ready} onClick={no}>
+                {sent === "decline" ? "Enviando…" : "No"} <kbd>N</kbd>
+              </button>
+            ) : null}
           </div>
-        )}
-      </fieldset>
+          {armed && sent === null ? (
+            <p className="ade-request-note" role="status">
+              Esto no se puede deshacer desde aquí. Pulsa «Confirmar sí» (Y) para aprobarlo.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        /* Disabled as a whole where this session cannot answer; the server refuses it anyway. */
+        <fieldset disabled={!canAnswer}>
+          <div className="ade-request-actions">
+            {choices.filter((choice) => !choice.broad).map(button)}
+          </div>
+          {broad.length === 0 ? null : (
+            <div className="ade-request-broad">
+              <p className="ade-request-note">
+                Más que esta petición. El alcance lo fija el proveedor y puede durar más que este
+                hilo:
+              </p>
+              <div className="ade-request-actions">{broad.map(button)}</div>
+              {broad.map((choice) =>
+                choice.warning === undefined ? null : (
+                  <p key={choice.decision} className="ade-request-note">
+                    {choice.label}: {choice.warning}
+                  </p>
+                ),
+              )}
+            </div>
+          )}
+        </fieldset>
+      )}
       {error === null ? null : (
         <p className="ade-error" role="alert">
           {error}
@@ -458,6 +512,22 @@ export function RequestCards(props: {
       ) : null}
     </>
   );
+}
+
+/** The tray shows one request at a time: the thread's first approval, else its first question. */
+export function FirstRequest(props: { threadRef: ScopedThreadRef; subscribe: boolean }) {
+  const requests = useAtomValue(
+    props.subscribe ? environmentThreadDetails.pendingRequestsAtom(props.threadRef) : NO_REQUESTS,
+  );
+  const approval = requests?.approvals[0];
+  if (approval !== undefined) {
+    return (
+      <ApprovalCard key={approval.requestId} threadRef={props.threadRef} approval={approval} tray />
+    );
+  }
+  const prompt = requests?.userInputs[0];
+  if (prompt === undefined) return null;
+  return <QuestionCard key={prompt.requestId} threadRef={props.threadRef} prompt={prompt} />;
 }
 
 /** Above the composer: what the selected thread and its subagents wait on. */

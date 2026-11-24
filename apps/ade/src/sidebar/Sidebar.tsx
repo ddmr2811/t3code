@@ -64,7 +64,7 @@ import {
   type ThreadState,
   threadState,
 } from "./sidebar.logic.ts";
-import { allBotsAtom } from "../bots/bots.state.ts";
+import { useCutHandoffs } from "../decisions/HandoffNotices.tsx";
 
 const STATE_VIEW = {
   "needs-you": { Glyph: WarningCircleIcon, text: "Te necesita" },
@@ -128,12 +128,7 @@ export const crowdedViewportAtom = viewportAtom("(max-width: 1199px)", "ade-crow
 export function useDecisionsPanel() {
   const threads = useAtomValue(needsYouThreadsAtom);
   // A bot handoff cut for too many hops also waits for the user, so it counts and opens the panel.
-  const { handoffsByEnv } = useAtomValue(allBotsAtom);
-  const cutHandoffKeys = [...handoffsByEnv].flatMap(([environmentId, handoffs]) =>
-    handoffs
-      .filter((handoff) => handoff.status === "cut")
-      .map((handoff) => `handoff:${environmentId}:${handoff.id}`),
-  );
+  const cutHandoffKeys = useCutHandoffs().map((notice) => notice.key);
   const [choice, setChoice] = useAtom(decisionsChoiceAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
   const keys = [

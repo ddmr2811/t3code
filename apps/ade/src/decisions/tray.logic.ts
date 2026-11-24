@@ -1,6 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   type DecisionsPanelChoice,
@@ -206,4 +207,47 @@ export function buildPendingNotificationEvent(
     body,
     threadKeys,
   };
+}
+
+/** «Luego»: each decision key with the time it comes back, in ms. Nothing is dropped from the server. */
+export type SnoozedUntil = Readonly<Record<string, number>>;
+
+const SNOOZED_STORAGE_KEY = "ade.decisions.snoozed";
+
+/** Tomorrow at 08:00 local time, whatever the hour it is snoozed at. */
+export function snoozeUntilTomorrow(now: DateTime.DateTime): number {
+  const local = DateTime.makeZonedUnsafe(now, { timeZone: DateTime.zoneMakeLocal() });
+  const tomorrow = DateTime.add(local, { days: 1 });
+  return DateTime.toEpochMillis(
+    DateTime.setParts(tomorrow, { hour: 8, minute: 0, second: 0, millisecond: 0 }),
+  );
+}
+
+export function isSnoozed(snoozed: SnoozedUntil, key: string, now: number): boolean {
+  return (snoozed[key] ?? 0) > now;
+}
+
+/** What this browser has snoozed and has not come back yet; a damaged entry is ignored. */
+export function readSnoozed(now: number, storage?: Pick<Storage, "getItem">): SnoozedUntil {
+  try {
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    const parsed: unknown = JSON.parse(store?.getItem(SNOOZED_STORAGE_KEY) ?? "{}");
+    if (typeof parsed !== "object" || parsed === null) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number" && entry[1] > now,
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function writeSnoozed(snoozed: SnoozedUntil, storage?: Pick<Storage, "setItem">): void {
+  try {
+    const store = storage ?? (typeof localStorage === "undefined" ? undefined : localStorage);
+    store?.setItem(SNOOZED_STORAGE_KEY, JSON.stringify(snoozed));
+  } catch {
+    // Private browsing may refuse storage; the snooze then lasts until the page reloads.
+  }
 }

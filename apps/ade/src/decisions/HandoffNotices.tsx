@@ -2,31 +2,47 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { FORK_BOTS_HANDOFF_MAX_HOPS, type EnvironmentId } from "@t3tools/contracts";
-import { useContext, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 
 import { allBotsAtom, forkBotsDismissHandoffCommand, refreshBots } from "../bots/bots.state.ts";
 import { runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 
-/** Handoffs cut for too many hops wait here until the user opens the sender's thread or dismisses them. */
-export function HandoffNotices(props: { onOpenBackLayer: (threadKey: string) => void }) {
-  const registry = useContext(RegistryContext);
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+/** Every cut handoff on every machine, keyed like the decisions panel counts them. */
+export function useCutHandoffs() {
   const { byEnv, handoffsByEnv } = useAtomValue(allBotsAtom);
-  const [error, setError] = useState<string | null>(null);
-
-  const notices = [...handoffsByEnv].flatMap(([environmentId, handoffs]) =>
+  return [...handoffsByEnv].flatMap(([environmentId, handoffs]) =>
     handoffs
       .filter((handoff) => handoff.status === "cut")
       .map((handoff) => {
         const bots = byEnv.get(environmentId) ?? [];
+        const from = bots.find((bot) => bot.id === handoff.fromBotId);
+        const to = bots.find((bot) => bot.id === handoff.toBotId);
         return {
+          key: `handoff:${environmentId}:${handoff.id}`,
+          title: `Traspaso cortado: @${from?.handle ?? "?"} → @${to?.handle ?? "?"}`,
           environmentId,
           handoff,
-          from: bots.find((bot) => bot.id === handoff.fromBotId),
-          to: bots.find((bot) => bot.id === handoff.toBotId),
+          from,
         };
       }),
+  );
+}
+
+/**
+ * Handoffs cut for too many hops wait here until the user opens the sender's thread or dismisses
+ * them. `only` shows the one the tray is on, with its «Luego».
+ */
+export function HandoffNotices(props: {
+  onOpenBackLayer: (threadKey: string) => void;
+  only?: string;
+  later?: ReactNode;
+}) {
+  const registry = useContext(RegistryContext);
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const [error, setError] = useState<string | null>(null);
+  const notices = useCutHandoffs().filter(
+    (notice) => props.only === undefined || notice.key === props.only,
   );
   if (notices.length === 0) return null;
 
@@ -44,11 +60,12 @@ export function HandoffNotices(props: { onOpenBackLayer: (threadKey: string) => 
 
   return (
     <>
-      {notices.map(({ environmentId, handoff, from, to }) => (
+      {notices.map(({ key, title, environmentId, handoff, from }) => (
         <HandoffNotice
-          key={`${environmentId}:${handoff.id}`}
+          key={key}
           machineLabel={catalog.entries.get(environmentId)?.target.label ?? environmentId}
-          title={`Traspaso cortado: @${from?.handle ?? "?"} → @${to?.handle ?? "?"}`}
+          title={title}
+          later={props.later}
           preview={handoff.preview}
           hops={handoff.hops}
           environmentId={environmentId}
@@ -80,6 +97,7 @@ function HandoffNotice(props: {
   environmentId: EnvironmentId;
   onOpen: (() => void) | null;
   onDismiss: () => void;
+  later?: ReactNode;
 }) {
   const canDismiss = useAtomValue(
     forkBotsDismissHandoffCommand.permissionAtom(props.environmentId),
@@ -115,6 +133,7 @@ function HandoffNotice(props: {
         >
           Descartar
         </button>
+        {props.later}
       </div>
     </section>
   );
