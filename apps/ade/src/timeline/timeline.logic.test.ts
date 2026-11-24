@@ -1,7 +1,7 @@
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupTurns } from "./timeline.logic.ts";
+import { groupTurns, planStepChip } from "./timeline.logic.ts";
 
 // Only the fields grouping reads; the rest of a real item does not change the outcome.
 const row = (
@@ -30,5 +30,25 @@ describe("groupTurns", () => {
       ["n2"],
       ["u2", "cp2", "e2"],
     ]);
+  });
+});
+
+describe("planStepChip", () => {
+  const plan = (...statuses: string[]) =>
+    ({
+      type: "todo_list",
+      steps: statuses.map((status, i) => ({ id: `s${i}`, text: `Paso ${i}`, status })),
+    }) as never;
+
+  it("reads the latest plan, and the running step over an earlier one left pending", () => {
+    const chip = planStepChip([
+      plan("running", "pending"),
+      plan("completed", "pending", "running", "pending"),
+    ]);
+    expect(chip).toMatchObject({ number: 3, total: 4, text: "Paso 2" });
+  });
+
+  it("without a running step, points at the first step not done", () => {
+    expect(planStepChip([plan("completed", "pending", "pending")])?.number).toBe(2);
   });
 });

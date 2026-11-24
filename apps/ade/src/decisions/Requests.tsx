@@ -19,7 +19,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import { useContext, useState } from "react";
 
 import { draftAtom, runCommand } from "../composer/Composer.tsx";
@@ -58,8 +58,32 @@ const NOT_ANSWERABLE = "El proceso del agente ya no está: para o reinicia el hi
 // Shared by the thread and the decisions panel, and kept for the session: what is typed for a
 // question survives moving between them, and outlives the question if it is answered elsewhere.
 const answerDraftsAtom = Atom.make<AnswerDrafts>({}).pipe(Atom.keepAlive);
-// Questions this ADE is sending an answer for; their drafts are not "answered elsewhere".
-const answeringAtom = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(Atom.keepAlive);
+// What this ADE is sending for each request, read by every place the request shows (the thread,
+// the sidebar and the decisions panel): one click anywhere disables the others. Kept after the
+// server accepts, until the request leaves; and a question in here was not "answered elsewhere".
+const sendingAtom = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(Atom.keepAlive);
+
+/** Marks the request as being sent here; false when some place already sends it. */
+function claimSending(
+  registry: AtomRegistry.AtomRegistry,
+  requestKey: string,
+  what: string,
+): boolean {
+  if (registry.get(sendingAtom).has(requestKey)) return false;
+  registry.update(sendingAtom, (current) => new Map(current).set(requestKey, what));
+  return true;
+}
+
+function releaseSending(registry: AtomRegistry.AtomRegistry, requestKey: string) {
+  registry.update(sendingAtom, (current) => {
+    const next = new Map(current);
+    next.delete(requestKey);
+    return next;
+  });
+}
+
+const requestKeyOf = (threadRef: ScopedThreadRef, requestId: string) =>
+  userInputDraftKey(threadRef.environmentId, threadRef.threadId, requestId);
 
 const NO_REQUESTS = Atom.make<PendingThreadRequests | null>(null);
 
@@ -71,8 +95,9 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
   const { threadRef, approval } = props;
   const registry = useContext(RegistryContext);
   const canAnswer = useCanAnswer(threadRef) && approval.responseCapability === "live";
+  const requestKey = requestKeyOf(threadRef, approval.requestId);
   // The decision on its way, or already accepted by the server: the card leaves with the request.
-  const [sent, setSent] = useState<ProviderApprovalDecision | null>(null);
+  const sent = useAtomValue(sendingAtom, (sending) => sending.get(requestKey) ?? null);
   const [error, setError] = useState<string | null>(null);
   const choices = approvalChoices(approval.options);
   // As JSON so streaming that changes nothing here re-renders nothing.
@@ -88,7 +113,7 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
     coversTurn: boolean;
   };
   const respond = async (decision: ProviderApprovalDecision) => {
-    setSent(decision);
+    if (!claimSending(registry, requestKey, decision)) return;
     setError(null);
     const failure = await runCommand(
       registry,
@@ -100,7 +125,7 @@ function ApprovalCard(props: { threadRef: ScopedThreadRef; approval: ThreadPendi
       "No se pudo responder a la aprobación",
     );
     if (failure === null) return;
-    setSent(null);
+    releaseSending(registry, requestKey);
     setError(failure);
   };
   const button = (choice: ApprovalChoice) => (
@@ -189,40 +214,27 @@ function QuestionCard(props: { threadRef: ScopedThreadRef; prompt: ThreadPending
   const { threadRef, prompt } = props;
   const registry = useContext(RegistryContext);
   const canAnswer = useCanAnswer(threadRef) && prompt.responseCapability !== "not_resumable";
-  const requestKey = userInputDraftKey(
-    threadRef.environmentId,
-    threadRef.threadId,
-    prompt.requestId,
-  );
+  const requestKey = requestKeyOf(threadRef, prompt.requestId);
   const edits = useAtomValue(answerDraftsAtom, (drafts) => drafts[requestKey]);
   const answers = seedUserInputDraftAnswers(prompt.questions, edits ?? {});
   const resolved = buildPendingUserInputAnswers(prompt.questions, answers);
-  const [sent, setSent] = useState<"answer" | "dismiss" | null>(null);
+  const sent = useAtomValue(sendingAtom, (sending) => sending.get(requestKey) ?? null);
   const [error, setError] = useState<string | null>(null);
   const edit = (questionId: string, next: (typeof answers)[string]) =>
     registry.update(answerDraftsAtom, (drafts) => ({
       ...drafts,
       [requestKey]: { ...drafts[requestKey], [questionId]: next },
     }));
-  const setAnswering = (on: boolean) =>
-    registry.update(answeringAtom, (current) => {
-      const next = new Set(current);
-      if (on) next.add(requestKey);
-      else next.delete(requestKey);
-      return next;
-    });
   const run = async (kind: "answer" | "dismiss", send: () => Promise<string | null>) => {
-    setSent(kind);
+    if (!claimSending(registry, requestKey, kind)) return;
     setError(null);
-    setAnswering(true);
     const failure = await send();
     if (failure === null) {
       registry.update(answerDraftsAtom, ({ [requestKey]: _sent, ...rest }) => rest);
     } else {
-      setSent(null);
+      releaseSending(registry, requestKey);
       setError(failure);
     }
-    setAnswering(false);
   };
   const target = { environmentId: threadRef.environmentId };
   const request = { threadId: threadRef.threadId, requestId: prompt.requestId };
@@ -352,13 +364,13 @@ function OrphanedAnswers(props: { threadRef: ScopedThreadRef; requests: PendingT
   const { environmentId, threadId } = props.threadRef;
   const registry = useContext(RegistryContext);
   const drafts = useAtomValue(answerDraftsAtom);
-  const answering = useAtomValue(answeringAtom);
+  const sending = useAtomValue(sendingAtom);
   const orphans = orphanedAnswerTexts(
     drafts,
     environmentId,
     threadId,
     props.requests.userInputs.map((prompt) => prompt.requestId),
-    (requestKey) => answering.has(requestKey),
+    (requestKey) => sending.has(requestKey),
   );
   const forget = (requestKey: string) =>
     registry.update(answerDraftsAtom, ({ [requestKey]: _gone, ...rest }) => rest);

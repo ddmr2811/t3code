@@ -51,3 +51,29 @@ export function groupTurns(
   }
   return turns;
 }
+
+export interface PlanStepChip {
+  /** 1-based; equals `total` once every step is done. */
+  readonly number: number;
+  readonly total: number;
+  readonly text: string;
+  readonly steps: ReadonlyArray<{ readonly id: string; readonly status: string }>;
+}
+
+/** Where the agent is in its latest plan: the running step, else the first not done. */
+export function planStepChip(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): PlanStepChip | null {
+  const plan = turnItems.findLast((item) => item.type === "todo_list");
+  if (plan?.type !== "todo_list" || plan.steps.length === 0) return null;
+  const { steps } = plan;
+  const running = steps.findIndex((step) => step.status === "running");
+  const index = running !== -1 ? running : steps.findIndex((step) => step.status !== "completed");
+  const at = index === -1 ? steps.length - 1 : index;
+  return {
+    number: at + 1,
+    total: steps.length,
+    text: steps[at]!.text,
+    steps: steps.map(({ id, status }) => ({ id, status })),
+  };
+}

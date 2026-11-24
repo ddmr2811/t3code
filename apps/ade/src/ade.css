@@ -370,6 +370,11 @@ body {
   overflow-y: auto;
 }
 
+/* Long content scrolls the sidebar; nothing in it shrinks to make room. */
+.ade-sidebar > * {
+  flex-shrink: 0;
+}
+
 .ade-sr-only {
   position: absolute;
   width: 1px;
@@ -598,10 +603,10 @@ body {
 
 .ade-thread-view-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 24px 32px 16px;
+  padding: 14px 24px;
   border-bottom: 1px solid var(--ade-divider);
 }
 
@@ -1388,20 +1393,12 @@ body {
 
 .ade-requests {
   display: grid;
-  grid-template-columns: minmax(0, 696px);
-  justify-content: center;
   gap: 8px;
-  max-height: 45vh;
-  padding: 0 32px;
-  overflow-y: auto;
 }
 
-.ade-requests:empty {
+/* The thread's last row; gone, with its gap, while nothing waits. */
+.ade-turn-requests:has(> .ade-requests:empty) {
   display: none;
-}
-
-.ade-requests > :first-child {
-  margin-top: 12px;
 }
 
 .ade-request-child {
@@ -1541,6 +1538,7 @@ body {
 .ade-thread-view-actions {
   display: flex;
   flex: none;
+  align-items: center;
   gap: 8px;
 }
 
@@ -3945,7 +3943,6 @@ body {
     padding: 16px 16px 32px;
   }
 
-  .ade-requests,
   .ade-composer {
     padding-right: 16px;
     padding-left: 16px;
@@ -3961,5 +3958,151 @@ body {
 
   .ade-board {
     grid-template-columns: repeat(4, 85vw);
+  }
+}
+
+/* Thread header, v7: project mark, title, state and plan step; actions and «N te necesitan». */
+.ade-thread-view-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.ade-thread-view-title h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-thread-view-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ade-project-color) 14%, rgb(16 18 23));
+  color: var(--ade-project-color);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ade-project-color) 32%, transparent);
+  font: 600 10.5px/1 var(--ade-font-mono);
+}
+
+.ade-step-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: 999px;
+  background: var(--ade-bg);
+  color: var(--ade-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ade-step-dashes {
+  display: flex;
+  flex: none;
+  gap: 3px;
+}
+
+.ade-step-dashes > span {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.25);
+}
+
+.ade-step-dashes > [data-status="completed"] {
+  background: var(--ade-text);
+}
+
+.ade-step-dashes > [data-status="running"] {
+  background: var(--ade-accent);
+}
+
+.ade-step-text {
+  overflow: hidden;
+  color: var(--ade-text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.ade-header-needs-you {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--ade-border);
+  border-radius: 999px;
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: 600 13px var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-header-needs-you:hover,
+.ade-header-needs-you:focus-visible,
+.ade-header-needs-you[aria-expanded="true"] {
+  border-color: var(--ade-accent);
+}
+
+.ade-header-needs-you-count {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--ade-accent);
+  color: var(--ade-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The decision inside the thread: where the agent stopped, with a bar on the left as in v7. */
+.ade-turn-requests .ade-request {
+  border-color: var(--ade-border);
+  border-left: 3px solid var(--ade-accent);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  padding: 14px 16px;
+}
+
+/* A project waiting on a decision is a card, with the decision answerable in it. */
+.ade-tree-project[data-waiting] {
+  display: grid;
+  gap: 8px;
+  padding: 6px 6px 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+}
+
+.ade-tree-project .ade-request {
+  padding: 10px;
+  border-color: var(--ade-divider);
+  border-left: 3px solid var(--ade-accent);
+}
+
+.ade-tree-project .ade-request-detail {
+  max-height: 96px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  /* The bottom bar's Bandeja carries the same count and panel. */
+  .ade-header-needs-you {
+    display: none;
+  }
+
+  .ade-step-chip {
+    font-size: 12px;
   }
 }

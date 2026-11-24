@@ -17,6 +17,7 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { lazy, memo, Suspense, useContext, useEffect, useMemo, useState } from "react";
 
@@ -27,7 +28,7 @@ import {
 } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { Composer, runCommand } from "../composer/Composer.tsx";
-import { ThreadRequests } from "../decisions/Requests.tsx";
+import { RequestCards, ThreadRequests } from "../decisions/Requests.tsx";
 import { isTrayOpenForViewport, reconcileTrayChoice } from "../decisions/tray.logic.ts";
 import type { DiffRange } from "../diff/DiffView.tsx";
 import {
@@ -40,6 +41,7 @@ import {
   refreshFailoverState,
 } from "../failover/failover.state.ts";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
+import { type PlanStepChip, planStepChip } from "../timeline/timeline.logic.ts";
 import {
   environmentProjects,
   environmentThreadDetails,
@@ -360,26 +362,45 @@ export function ThreadTree() {
           <h2 className="ade-label">
             {catalog.entries.get(machine.environmentId)?.target.label ?? machine.environmentId}
           </h2>
-          {machine.projects.map((project) => (
-            <div key={project.projectId} className="ade-tree-project">
-              <h3 className="ade-tree-project-title">
-                <ProjectTitle environmentId={machine.environmentId} projectId={project.projectId} />
-              </h3>
-              <ul className="ade-tree-threads">
-                {project.threads.map((thread) => {
-                  const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-                  return (
-                    <ThreadRow
-                      key={key}
-                      thread={thread}
-                      selected={key === selected}
-                      onSelect={selectThread}
-                    />
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
+          {machine.projects.map((project) => {
+            const waiting = project.threads.filter(
+              (thread) => thread.hasPendingApprovals || thread.hasPendingUserInput,
+            );
+            return (
+              <div
+                key={project.projectId}
+                className="ade-tree-project"
+                data-waiting={waiting.length > 0 ? "" : undefined}
+              >
+                <h3 className="ade-tree-project-title">
+                  <ProjectTitle
+                    environmentId={machine.environmentId}
+                    projectId={project.projectId}
+                  />
+                </h3>
+                <ul className="ade-tree-threads">
+                  {project.threads.map((thread) => {
+                    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+                    return (
+                      <ThreadRow
+                        key={key}
+                        thread={thread}
+                        selected={key === selected}
+                        onSelect={selectThread}
+                      />
+                    );
+                  })}
+                </ul>
+                {waiting.map((thread) => (
+                  <RequestCards
+                    key={thread.id}
+                    threadRef={scopeThreadRef(thread.environmentId, thread.id)}
+                    subscribe
+                  />
+                ))}
+              </div>
+            );
+          })}
         </section>
       ))}
     </nav>
@@ -542,6 +563,75 @@ function ThreadTerminal(props: {
   );
 }
 
+/** The project's mark, as on the rail, with its name on hover. */
+function ProjectMark(props: { environmentId: EnvironmentId; projectId: ProjectId }) {
+  const title =
+    useAtomValue(
+      environmentProjects.environmentProjectIndexAtom(props.environmentId),
+      (index) => index.get(props.projectId)?.title ?? null,
+    ) ?? "Proyecto sin nombre";
+  const accent = projectAccentColor(`${props.environmentId}:${props.projectId}`);
+  return (
+    <Tooltip type="label">
+      <TooltipTrigger
+        render={<span />}
+        className="ade-thread-view-mark"
+        style={{ "--ade-project-color": accent } as Record<string, string>}
+        role="img"
+        aria-label={`Proyecto ${title}`}
+      >
+        {projectMonogram(title)}
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={8} className="ade-rail-tooltip">
+        {title}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Where the agent is in its plan: «Paso 3 de 4 · …», from the thread's latest todo list. */
+function ThreadStepChip(props: { threadRef: ScopedThreadRef }) {
+  // As JSON so streaming that leaves the plan alone re-renders nothing.
+  const chipJson = useAtomValue(environmentThreadDetails.stateAtom(props.threadRef), (state) =>
+    JSON.stringify(planStepChip(Option.getOrNull(state.data)?.turnItems ?? [])),
+  );
+  const chip = JSON.parse(chipJson) as PlanStepChip | null;
+  if (chip === null) return null;
+  return (
+    <p className="ade-step-chip">
+      {chip.total > 10 ? null : (
+        <span className="ade-step-dashes" aria-hidden>
+          {chip.steps.map((step) => (
+            <span key={step.id} data-status={step.status} />
+          ))}
+        </span>
+      )}
+      <span className="ade-step-count">
+        Paso {chip.number} de {chip.total}
+      </span>
+      <span className="ade-step-text">{chip.text}</span>
+    </p>
+  );
+}
+
+/** «N te necesitan» in the thread header: opens the same decisions panel as the rail. */
+function NeedsYouButton() {
+  const { count, open, setOpen } = useDecisionsPanel();
+  if (count === 0) return null;
+  return (
+    <button
+      type="button"
+      className="ade-header-needs-you"
+      aria-expanded={open}
+      aria-controls="ade-decisions"
+      onClick={() => setOpen(!open)}
+    >
+      <span className="ade-header-needs-you-count">{count}</span>
+      {count === 1 ? "te necesita" : "te necesitan"}
+    </button>
+  );
+}
+
 /** The selected thread: its header and its timeline; null with nothing selected. */
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
@@ -579,16 +669,11 @@ export function SelectedThread() {
               : "Cargando el hilo…"}
           </p>
         ) : (
-          <div>
-            <ThreadStateBadge state={threadState(thread)} withText />
+          <div className="ade-thread-view-title">
+            <ProjectMark environmentId={thread.environmentId} projectId={thread.projectId} />
             <h1>{thread.title}</h1>
-            <p className="ade-thread-view-meta">
-              {machine} ·{" "}
-              <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />
-              {thread.branch === null ? null : ` · ${thread.branch}`}
-              {thread.worktreePath === null ? null : " · worktree"}
-              {thread.modelSelection?.model ? ` · ${thread.modelSelection.model}` : null}
-            </p>
+            <ThreadStateBadge state={threadState(thread)} />
+            <ThreadStepChip threadRef={ref} />
           </div>
         )}
         <div className="ade-thread-view-actions">
@@ -610,6 +695,7 @@ export function SelectedThread() {
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
             Volver
           </button>
+          <NeedsYouButton />
         </div>
       </header>
       {failoverError !== null && failoverError.key === key ? (
@@ -633,13 +719,15 @@ export function SelectedThread() {
           key={key}
           threadRef={ref}
           onOpenChanges={(checkpoint) => openDiff(turnRange(checkpoint))}
+          requests={
+            thread === null ? null : (
+              <ThreadRequests key={`requests:${key}`} threadRef={ref} onOpenThread={setKey} />
+            )
+          }
         />
       )}
       {machine === null || thread === null ? null : (
-        <>
-          <ThreadRequests key={`requests:${key}`} threadRef={ref} onOpenThread={setKey} />
-          <Composer key={key} threadRef={ref} thread={thread} />
-        </>
+        <Composer key={`composer:${key}`} threadRef={ref} thread={thread} />
       )}
     </section>
   );

@@ -382,6 +382,8 @@ function TurnChanges(props: {
 export function ThreadTimeline(props: {
   threadRef: ScopedThreadRef;
   onOpenChanges: (checkpoint: ThreadCheckpointSummary) => void;
+  /** What the agent waits on, shown where it stopped: after the last turn. */
+  requests: ReactNode;
 }) {
   const { environmentId, threadId } = props.threadRef;
   const rows = useAtomValue(environmentThreadDetails.timelineVisibleTurnItemsAtom(props.threadRef));
@@ -439,6 +441,7 @@ export function ThreadTimeline(props: {
               </li>
             );
           })}
+          <li className="ade-turn-requests">{props.requests}</li>
         </ol>
       </ThreadMedia>
     </div>
