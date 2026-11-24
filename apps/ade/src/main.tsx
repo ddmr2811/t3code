@@ -11,7 +11,7 @@ import { StrictMode, useContext, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 
 import "./ade.css";
-import { AdeBackground } from "./Background.tsx";
+import { BackgroundLayer, BackgroundPicker, useBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime } from "./connection/runtime.ts";
 import { onMachinesChanged } from "./connection/tabs.ts";
@@ -125,6 +125,7 @@ function MobileBottomNav() {
 
 function Shell() {
   const registry = useContext(RegistryContext);
+  const background = useBackground();
   const [drawerOpen, setDrawerOpen] = useAtom(mobileSidebarOpenAtom);
   useEffect(
     () =>
@@ -137,7 +138,7 @@ function Shell() {
   );
   return (
     <>
-      <AdeBackground />
+      <BackgroundLayer pref={background.pref} customImage={background.customImage} />
       <div className="ade-shell" data-mobile-drawer={drawerOpen ? "open" : undefined}>
         <aside className="ade-sidebar">
           <div className="ade-brand-row">
@@ -157,6 +158,7 @@ function Shell() {
           <MachinesSidebar />
           <div className="ade-sidebar-footer">
             <ConnectionSummary />
+            <BackgroundPicker {...background} />
           </div>
         </aside>
         <main className="ade-main">
