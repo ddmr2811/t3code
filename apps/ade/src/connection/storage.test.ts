@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   putCredentialInCatalog,
+  registerOverPairing,
   removePairing,
   setRoutesOfPairing,
   storedPairing,
@@ -61,21 +62,20 @@ describe("putCredentialInCatalog", () => {
 
 describe("a tab on an older pairing", () => {
   const environmentId = EnvironmentId.make("machine");
-  const pairedAs = (connectionId: string) => {
+  const registration = (connectionId: string) => {
     const route = { connectionId, environmentId, label: "Machine" };
-    return registerConnectionInCatalog(
-      EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new BearerConnectionRegistration({
-        target: new BearerConnectionTarget(route),
-        profile: new BearerConnectionProfile({
-          ...route,
-          httpBaseUrl: "http://localhost:3773/",
-          wsBaseUrl: "ws://localhost:3773/",
-        }),
-        credential: credential(connectionId),
+    return new BearerConnectionRegistration({
+      target: new BearerConnectionTarget(route),
+      profile: new BearerConnectionProfile({
+        ...route,
+        httpBaseUrl: "http://localhost:3773/",
+        wsBaseUrl: "ws://localhost:3773/",
       }),
-    );
+      credential: credential(connectionId),
+    });
   };
+  const pairedAs = (connectionId: string) =>
+    registerConnectionInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, registration(connectionId));
   const first = pairedAs("first");
   const tabPairing = storedPairing(first, environmentId);
 
@@ -105,6 +105,13 @@ describe("a tab on an older pairing", () => {
     ["paired again", pairedAs("second")],
   ])("does not bring its routes back once the machine was %s", (_name, storedNow) => {
     expect(() => setRoutesOfPairing(storedNow, environmentId, first.targets, tabPairing)).toThrow();
+    // Nor does widening the pairing it started from store a new one over the current state.
+    expect(() => registerOverPairing(storedNow, registration("widened"), tabPairing)).toThrow();
+  });
+
+  it("widens the pairing that is still the stored one", () => {
+    const widened = registerOverPairing(first, registration("widened"), tabPairing);
+    expect(storedPairing(widened, environmentId)).toBe("widened");
   });
 
   it("removes nothing of the pairing that replaced its own", () => {

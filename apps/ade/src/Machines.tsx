@@ -100,14 +100,14 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
 /** With `widen`, pairs that machine again at its stored address: only the new code is asked. */
 export function PairingForm(props: {
   onDone: () => void;
-  widen?: PairingInput["widen"] & { readonly host: string; readonly terminal: boolean };
+  widen?: NonNullable<PairingInput["widen"]> & { readonly host: string };
 }) {
   const registry = useContext(RegistryContext);
   const { widen } = props;
   const initial = initialPairingConsumed || widen !== undefined ? null : addressBar;
   const [link, setLink] = useState(widen?.host ?? initial?.link ?? "");
   const [code, setCode] = useState("");
-  const [terminal, setTerminal] = useState(widen?.terminal ?? false);
+  const [terminal, setTerminal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initial?.error ?? null);
 
@@ -121,9 +121,7 @@ export function PairingForm(props: {
       {
         ...(code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code }),
         terminal,
-        ...(widen === undefined
-          ? {}
-          : { widen: { environmentId: widen.environmentId, required: widen.required } }),
+        ...(widen === undefined ? {} : { widen }),
       },
       // The form shows the failure; the console would only repeat it.
       { reportFailure: false },

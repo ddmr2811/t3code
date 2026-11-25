@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { connectionRouteId } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthTerminalOperateScope,
@@ -14,7 +15,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useMemo, useState } from "react";
 
-import { ADE_SCOPES } from "../connection/pairing.ts";
+import { ADE_SCOPES, NOT_IN_WEB_LINKS } from "../connection/pairing.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { PairingForm } from "../Machines.tsx";
 import { environmentSession, environmentThreadDetails, serverEnvironment } from "../state.ts";
@@ -110,7 +111,7 @@ function Ruler(props: { valueUsd: number; capUsd: number }) {
 
 /**
  * A session can't add `usage:read` to itself, so the way in is a new code from that machine,
- * paired at its stored address; the new grant must keep what this one holds.
+ * paired at its stored address for exactly what this session holds plus `usage:read`.
  */
 function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
   const [open, setOpen] = useState(false);
@@ -120,7 +121,7 @@ function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
     () => null,
   );
   const profile = entry === undefined ? undefined : Option.getOrUndefined(entry.profile);
-  if (profile?._tag !== "BearerConnectionProfile" || session === null) {
+  if (entry === undefined || profile?._tag !== "BearerConnectionProfile" || session === null) {
     return (
       <p className="ade-summary-caption">
         {props.label}: vuelve a emparejarla en Máquinas con un enlace que lleve «Ver totales de
@@ -128,9 +129,13 @@ function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
       </p>
     );
   }
-  const held = [...ADE_SCOPES, AuthTerminalOperateScope].filter((scope) =>
-    sessionGrantsScope(session, scope),
-  );
+  const scopes = [
+    ...[...ADE_SCOPES, AuthTerminalOperateScope].filter(
+      (scope) => scope !== AuthUsageReadScope && sessionGrantsScope(session, scope),
+    ),
+    AuthUsageReadScope,
+  ];
+  const cliOnly = scopes.some((scope) => NOT_IN_WEB_LINKS.includes(scope));
   return (
     <div className="ade-spend-widen">
       <p className="ade-summary-caption">
@@ -143,18 +148,27 @@ function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
       )}
       {open ? (
         <>
-          <p className="ade-summary-caption">
-            En T3 Code de {props.label}: Ajustes → Compartir y acceso → Crear enlace. En Permisos
-            deja los que vienen marcados, marca «Ver totales de uso», crea el enlace y pega aquí
-            «Copiar solo el código».
-          </p>
+          {cliOnly ? (
+            <p className="ade-summary-caption">
+              Su ajuste de Compartir y acceso no ofrece todos los permisos que ya tiene. En{" "}
+              {props.label} ejecuta{" "}
+              <code>t3 pair {scopes.map((s) => `--scope ${s}`).join(" ")}</code> y pega aquí lo que
+              imprime tras «Token:».
+            </p>
+          ) : (
+            <p className="ade-summary-caption">
+              En T3 Code de {props.label}: Ajustes → Compartir y acceso → Crear enlace. En Permisos
+              deja los que vienen marcados, marca «Ver totales de uso», crea el enlace y pega aquí
+              «Copiar solo el código».
+            </p>
+          )}
           <PairingForm
             onDone={() => setOpen(false)}
             widen={{
               environmentId: props.environmentId,
               host: profile.httpBaseUrl,
-              terminal: held.includes(AuthTerminalOperateScope),
-              required: [...new Set([...held, AuthUsageReadScope])],
+              pairing: connectionRouteId(entry.target),
+              scopes,
             }}
           />
         </>
