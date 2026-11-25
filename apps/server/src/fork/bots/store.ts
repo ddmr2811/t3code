@@ -1,7 +1,6 @@
 import {
   FORK_BOTS_HANDOFF_HISTORY,
   FORK_BOTS_MAX_COUNT,
-  FORK_BOTS_PROPOSAL_HISTORY,
   FORK_BOTS_PROTOCOL_VERSION,
   ForkBot,
   ForkBotHandoff,
@@ -35,10 +34,8 @@ export const StoredBotDirectory = Schema.Struct({
   handoffs: Schema.Array(ForkBotHandoff)
     .check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /** Oldest first. */
-  proposals: Schema.Array(ForkBotProposal)
-    .check(Schema.isMaxLength(FORK_BOTS_PROPOSAL_HISTORY))
-    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Oldest first; capped per project, so one project never pushes out another's. */
+  proposals: Schema.Array(ForkBotProposal).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;
 

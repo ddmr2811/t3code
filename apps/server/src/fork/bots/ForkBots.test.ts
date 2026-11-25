@@ -36,6 +36,7 @@ import * as ForkBots from "./ForkBots.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const projectA = ProjectId.make("proj-a");
+const projectB = ProjectId.make("proj-b");
 
 const provider: ServerProvider = {
   instanceId: codex,
@@ -71,6 +72,8 @@ const withBots = <A, E, R>(
     readonly threadModels: Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>;
     /** Each live thread's runtime mode, which its user may raise above the bot's. */
     readonly threadModes: Map<ThreadId, RuntimeMode>;
+    /** Threads the user archived; they still answer, with `archivedAt` set. */
+    readonly archivedThreads: Set<ThreadId>;
     readonly board: ForkCoordination.ForkCoordination["Service"];
     /** The next launch reaches the provider and then never returns, as when the server stops. */
     readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
@@ -87,6 +90,7 @@ const withBots = <A, E, R>(
       const liveThreads = new Set<ThreadId>();
       const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
       const threadModes = new Map<ThreadId, RuntimeMode>();
+      const archivedThreads = new Set<ThreadId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
@@ -94,8 +98,8 @@ const withBots = <A, E, R>(
         Layer.mock(ProjectService.ProjectService)({
           getById: (projectId) =>
             Effect.succeed(
-              projectId === projectA
-                ? Option.some({ id: projectA, title: "Proyecto A" } as never)
+              projectId === projectA || projectId === projectB
+                ? Option.some({ id: projectId, title: "Proyecto" } as never)
                 : Option.none(),
             ),
         }),
@@ -125,7 +129,7 @@ const withBots = <A, E, R>(
                     modelSelection: threadModels.get(threadId),
                     runtimeMode: threadModes.get(threadId),
                     interactionMode: "default",
-                    archivedAt: null,
+                    archivedAt: archivedThreads.has(threadId) ? "2026-11-24T00:00:00.000Z" : null,
                     deletedAt: null,
                     lineage: { parentThreadId: null, relationshipToParent: null },
                   },
@@ -189,6 +193,7 @@ const withBots = <A, E, R>(
           texts,
           threadModels,
           threadModes,
+          archivedThreads,
           board: yield* ForkCoordination.ForkCoordination,
           stallNextLaunch: Deferred.make<void>().pipe(
             Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
@@ -659,17 +664,19 @@ describe("ForkBots", () => {
     // A coordinator with a live thread, as the nightly pass that proposes runs in it.
     const coordinatorThread = (
       service: ForkBots.ForkBots["Service"],
-      runtimeMode: RuntimeMode = "auto-accept-edits",
+      projectId: ProjectId = projectA,
+      handle = "jefa",
     ) =>
       Effect.gen(function* () {
         const coordinator = yield* service.upsert({
           ...baseBot,
-          handle: "jefa",
+          handle,
+          projectId,
           coordinator: true,
-          runtimeMode,
+          runtimeMode: "auto-accept-edits",
         });
         const { threadId } = yield* service.sendMessage({ id: coordinator.id, text: "hola" });
-        return { coordinator, from: { threadId, projectId: projectA, limits: undefined } };
+        return { coordinator, from: { threadId, projectId, limits: undefined } };
       });
 
     it.effect("creates nothing until the user says yes, never above the coordinator", () =>
@@ -768,7 +775,7 @@ describe("ForkBots", () => {
     );
 
     it.effect("answers a proposal once, never above the coordinator's thread", () =>
-      withBots(({ service, threadModes }) =>
+      withBots(({ service, threadModes, archivedThreads }) =>
         Effect.gen(function* () {
           const { from } = yield* coordinatorThread(service);
           // Its user lowered the coordinator's thread below the bot's own mode.
@@ -782,6 +789,19 @@ describe("ForkBots", () => {
           expect(bots.find((bot) => bot.id === accepted.botId)?.runtimeMode).toBe(
             "approval-required",
           );
+
+          // An archived coordinator thread gives no mode to trust: the bot asks for everything.
+          threadModes.set(from.threadId, "auto-accept-edits");
+          yield* TestClock.adjust("7 days");
+          const third = yield* service.propose(
+            { ...draft, handle: "tercero", name: "Tercero", runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          archivedThreads.add(from.threadId);
+          const archived = yield* service.answerProposal({ id: third.id, answer: "accept" });
+          expect(
+            (yield* service.list({})).bots.find((bot) => bot.id === archived.botId)?.runtimeMode,
+          ).toBe("approval-required");
 
           yield* TestClock.adjust("7 days");
           const second = yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, from);
@@ -800,41 +820,47 @@ describe("ForkBots", () => {
       ),
     );
 
-    it.effect("drops only old accepted proposals, never pending ones or refusals", () =>
+    it.effect("keeps each project's proposals apart, and the weekly wait with them", () =>
       withBots(({ service, botsFile, fs }) =>
         Effect.gen(function* () {
-          const { coordinator, from } = yield* coordinatorThread(service);
-          const old = (index: number, status: "accepted" | "rejected") => ({
-            id: `proposal:old-${index}`,
-            projectId: projectA,
-            proposedBy: coordinator.id,
-            handle: `viejo${index}`,
-            name: `Viejo ${index}`,
+          const a = yield* coordinatorThread(service);
+          const b = yield* coordinatorThread(service, projectB, "jefeb");
+          // Another project already holds many refusals.
+          const refused = (index: number) => ({
+            id: `proposal:c-${index}`,
+            projectId: "proj-c",
+            proposedBy: a.coordinator.id,
+            handle: `vetado${index}`,
+            name: `Vetado ${index}`,
             role: "Rol",
-            instructions: "Nada.",
+            instructions: "",
             routine: "a demanda",
             reason: "Pruebas.",
             runtimeMode: "approval-required",
             modelSelection: { instanceId: codex, model: "gpt-5.4" },
-            status,
+            status: "rejected",
             botId: null,
             createdAt: "1969-01-01T00:00:00.000Z",
             decidedAt: "1969-01-01T00:00:00.000Z",
           });
-          // The oldest is a refusal, then the history is full of accepted ones.
           const stored = JSON.parse(yield* fs.readFileString(botsFile));
-          stored.proposals = [
-            old(0, "rejected"),
-            ...Array.from({ length: 99 }, (_, index) => old(index + 1, "accepted")),
-          ];
+          stored.proposals = Array.from({ length: 99 }, (_, index) => refused(index));
           yield* fs.writeFileString(botsFile, JSON.stringify(stored));
 
-          const fresh = yield* service.propose(draft, from);
+          const first = yield* service.propose(draft, a.from);
+          yield* service.answerProposal({ id: first.id, answer: "accept" });
+          yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, b.from);
+          // Project B's proposal must not push out A's, or A could propose twice in a week.
+          const again = yield* service
+            .propose({ ...draft, handle: "nuevo", name: "Nuevo" }, a.from)
+            .pipe(Effect.flip);
+          expect(again).toMatchObject({
+            reason: "limitExceeded",
+            message: expect.stringContaining("this week"),
+          });
           const proposals = (yield* service.list({})).proposals;
-          expect(proposals).toHaveLength(100);
-          expect(proposals.map((p) => p.id)).toEqual(
-            expect.arrayContaining(["proposal:old-0", fresh.id]),
-          );
+          expect(proposals.map((p) => p.id)).toContain(first.id);
+          expect(proposals.filter((p) => p.projectId === "proj-c")).toHaveLength(99);
         }),
       ),
     );

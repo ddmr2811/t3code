@@ -45,8 +45,11 @@ export function Overnight(props: { needsYouCount: number }) {
   const partial = usage.needsPairing.length > 0 || usage.failed.length > 0 ? " · parcial" : "";
   const spend = usage.pending
     ? "cargando…"
-    : usage.readable.length === 0
-      ? "sin permiso para leerlo"
+    : usage.environments.length === 0
+      ? // Only a known missing usage:read is a permission problem; anything else is no data.
+        usage.readable.length === 0 && usage.failed.length === 0 && usage.needsPairing.length > 0
+        ? "sin permiso para leerlo"
+        : "sin datos"
       : `${usd(week.realUsd)}${week.estimatedUsd > 0 ? ` · ${usd(week.estimatedUsd)} est.` : ""}${partial}`;
   const pending = props.needsYouCount;
 

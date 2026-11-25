@@ -8,7 +8,7 @@ import {
   FORK_BOTS_HANDOFF_PREVIEW_LENGTH,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_MAX_FILE_BYTES,
-  FORK_BOTS_PROPOSAL_HISTORY,
+  FORK_BOTS_PROPOSAL_HISTORY_PER_PROJECT,
   FORK_BOTS_PROPOSAL_INTERVAL_MS,
   type ForkBot,
   ForkBotAnswerProposalInput,
@@ -924,20 +924,23 @@ const make = Effect.gen(function* () {
     draft: BotProposalDraft,
     from: ProposalSender,
   ) {
-    const coordinator = (yield* storeLock.withPermits(1)(fileStore.read())).bots.find(
-      (bot) => bot.threadId === from.threadId,
-    );
-    if (
-      coordinator === undefined ||
-      !coordinator.coordinator ||
-      coordinator.archived ||
-      coordinator.projectId !== from.projectId
-    ) {
-      return yield* new ForkBotsError({
-        reason: "permissionDenied",
-        message: "Only the project's coordinator can propose a bot.",
-      });
-    }
+    // Checked again under the lock that saves it: the bot may change in between.
+    const proposerOf = Effect.fn("ForkBots.proposerOf")(function* (directory: StoredBotDirectory) {
+      const bot = directory.bots.find((candidate) => candidate.threadId === from.threadId);
+      if (
+        bot === undefined ||
+        !bot.coordinator ||
+        bot.archived ||
+        bot.projectId !== from.projectId
+      ) {
+        return yield* new ForkBotsError({
+          reason: "permissionDenied",
+          message: "Only the project's coordinator can propose a bot.",
+        });
+      }
+      return bot;
+    });
+    const coordinator = yield* proposerOf(yield* storeLock.withPermits(1)(fileStore.read()));
     const runtimeMode = draft.runtimeMode ?? "approval-required";
     if (
       isRuntimeModeAbove(runtimeMode, coordinator.runtimeMode) ||
@@ -979,6 +982,10 @@ const make = Effect.gen(function* () {
     return yield* storeLock.withPermits(1)(
       Effect.gen(function* () {
         const directory = yield* fileStore.read();
+        const current = yield* proposerOf(directory);
+        if (current.id !== coordinator.id) {
+          return yield* invalidInput("The project's coordinator changed; propose again.");
+        }
         const project = directory.proposals.filter(
           (candidate) => candidate.projectId === proposal.projectId,
         );
@@ -1011,21 +1018,16 @@ const make = Effect.gen(function* () {
             message: "Another bot already uses this handle.",
           });
         }
-        // Pending ones wait for the user and rejected ones are the vetoes, so only accepted go.
-        const all = [...directory.proposals, proposal];
-        const excess = all.length - FORK_BOTS_PROPOSAL_HISTORY;
-        const dropped = new Set(
-          all
-            .filter((candidate) => candidate.status === "accepted")
-            .slice(0, Math.max(0, excess))
+        // Only this project's oldest go. A pending one already stopped this, so the new one is the
+        // only pending, and the newest stays for the weekly wait.
+        const kept = new Set(
+          [...project, proposal]
+            .slice(-FORK_BOTS_PROPOSAL_HISTORY_PER_PROJECT)
             .map((candidate) => candidate.id),
         );
-        const proposals = all.filter((candidate) => !dropped.has(candidate.id));
-        if (proposals.length > FORK_BOTS_PROPOSAL_HISTORY) {
-          return yield* limitExceeded(
-            "The bot directory holds too many open or refused proposals.",
-          );
-        }
+        const proposals = [...directory.proposals, proposal].filter(
+          (candidate) => candidate.projectId !== proposal.projectId || kept.has(candidate.id),
+        );
         yield* fileStore.write({ ...directory, proposals, updatedAt: proposal.createdAt });
         return proposal;
       }),
@@ -1035,21 +1037,25 @@ const make = Effect.gen(function* () {
   const markDecided = (directory: StoredBotDirectory, proposal: ForkBotProposal) => ({
     ...directory,
     proposals: directory.proposals.map((candidate) =>
-      candidate.id === proposal.id ? proposal : candidate,
+      candidate.id === proposal.id ? { ...proposal, instructions: "" } : candidate,
     ),
     updatedAt: proposal.decidedAt,
   });
 
-  /** The mode the coordinator's thread runs in now; null when it has no live thread. */
-  const liveThreadMode = Effect.fn("ForkBots.liveThreadMode")(function* (bot: ForkBot | undefined) {
-    if (bot?.threadId == null) return null;
+  /**
+   * The mode the coordinator's thread runs in now. A thread that cannot be read, or is archived,
+   * deleted or in another project, gives no ceiling to trust, so the new bot asks for everything.
+   */
+  const threadCeiling = Effect.fn("ForkBots.threadCeiling")(function* (bot: ForkBot | undefined) {
+    if (bot?.threadId == null) return "approval-required" as const;
     const outcome = yield* threads.getThreadRecords(bot.threadId, ["runs"]).pipe(Effect.result);
-    if (outcome._tag === "Failure") {
-      if (isThreadNotFoundError(outcome.failure)) return null;
-      return yield* unavailable("Could not read the coordinator's thread.");
-    }
+    if (outcome._tag === "Failure") return "approval-required" as const;
     const thread = outcome.success.thread;
-    return thread.archivedAt === null && thread.deletedAt === null ? thread.runtimeMode : null;
+    return thread.archivedAt === null &&
+      thread.deletedAt === null &&
+      thread.projectId === bot.projectId
+      ? thread.runtimeMode
+      : ("approval-required" as const);
   });
 
   const answerProposal = Effect.fn("ForkBots.answerProposal")(function* (
@@ -1078,9 +1084,9 @@ const make = Effect.gen(function* () {
         let runtimeMode = proposal.runtimeMode;
         for (const ceiling of [
           coordinator?.runtimeMode ?? "approval-required",
-          yield* liveThreadMode(coordinator),
+          yield* threadCeiling(coordinator),
         ]) {
-          if (ceiling !== null && isRuntimeModeAbove(runtimeMode, ceiling)) runtimeMode = ceiling;
+          if (isRuntimeModeAbove(runtimeMode, ceiling)) runtimeMode = ceiling;
         }
         const id = `bot:${SecureRandom.uuidV4Unsafe()}`;
         const acceptedAs = (botId: ForkBot["id"]): ForkBotProposal => ({
