@@ -273,7 +273,7 @@ function SubagentCard(props: RowTarget & { item: Item<"subagent">; onOpenThread:
       </span>
       <span
         className="ade-subagent-time"
-        ref={tickElapsed((nowMs) => subagentElapsedMs(item, nowMs), live)}
+        ref={tickElapsed(props.environmentId, (nowMs) => subagentElapsedMs(item, nowMs), live)}
       />
     </>
   );

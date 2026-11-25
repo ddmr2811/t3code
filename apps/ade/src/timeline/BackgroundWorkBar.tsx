@@ -82,7 +82,11 @@ export function BackgroundWorkBar(props: {
         {startedAtMs === null ? null : (
           <span
             className="ade-background-time"
-            ref={tickElapsed((nowMs) => Math.max(1_000, nowMs - startedAtMs), true)}
+            ref={tickElapsed(
+              threadRef.environmentId,
+              (nowMs) => Math.max(1_000, nowMs - startedAtMs),
+              true,
+            )}
           />
         )}
         <button
