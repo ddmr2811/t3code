@@ -1,4 +1,10 @@
-import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  RegistryContext,
+  useAtom,
+  useAtomMount,
+  useAtomSet,
+  useAtomValue,
+} from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
@@ -12,6 +18,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
+import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import type {
   EnvironmentThreadShell,
   ThreadStructureTurnItem,
@@ -57,6 +64,7 @@ import {
   environmentThreadShells,
   operableEnvironmentIdsAtom,
   serverEnvironment,
+  threadEnvironment,
 } from "../state.ts";
 import {
   decisionsByRow,
@@ -736,6 +744,19 @@ function NeedsYouButton() {
 }
 
 /** The selected thread: its header and its timeline; null with nothing selected. */
+// The web's watermark: an open thread counts as seen, so «Hecho», «Cortado» and unseen errors settle.
+// Failures stay silent (a read-only machine refuses the visit), as in the web.
+const threadVisitTracker = createThreadVisitTracker({
+  threadShellAtom: environmentThreadShells.threadShellAtom,
+  sessionGenerationAtom: environmentCatalog.sessionGenerationAtom,
+  visit: threadEnvironment.visit,
+});
+
+function ThreadVisitWatermark(props: { threadRef: ScopedThreadRef }) {
+  useAtomMount(threadVisitTracker(props.threadRef));
+  return null;
+}
+
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
@@ -759,6 +780,7 @@ export function SelectedThread() {
     );
   return (
     <section className="ade-thread-view">
+      {machine === null ? null : <ThreadVisitWatermark key={key} threadRef={ref} />}
       <header className="ade-thread-view-header">
         {thread === null ? (
           <p className="ade-thread-view-meta">

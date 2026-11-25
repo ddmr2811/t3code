@@ -3033,7 +3033,12 @@ body {
   border-color: var(--ade-accent);
 }
 
+/* Dim only the face and the frame: the text keeps its AA tokens. */
 .ade-bot-card[data-archived] {
+  border-color: var(--ade-divider);
+}
+
+.ade-bot-card[data-archived] .ade-bot-avatar {
   opacity: 0.6;
 }
 
@@ -3118,7 +3123,9 @@ body {
 }
 
 .ade-bot-chat-header .ade-bot-status {
+  flex-shrink: 0;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .ade-bot-card-text {
