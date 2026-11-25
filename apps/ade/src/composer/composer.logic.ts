@@ -102,6 +102,32 @@ export function providerChoices(
     }));
 }
 
+const HXCKS = /hxcks/i;
+
+export type MenuProject = { readonly title: string; readonly workspaceRoot: string };
+
+/**
+ * The model menu: Claude offers only Opus and Fable, and the Hxcks account only in a project whose
+ * name or folder says hxcks (its default model is another account's). The current model stays.
+ */
+export function menuProviders(
+  providers: ReadonlyArray<ProviderChoice>,
+  project: MenuProject | null,
+  selected: ModelSelection,
+): ReadonlyArray<ProviderChoice> {
+  const inHxcks =
+    project !== null && (HXCKS.test(project.title) || HXCKS.test(project.workspaceRoot));
+  return providers.flatMap((provider) => {
+    const shown = inHxcks || !HXCKS.test(provider.instanceId);
+    const models = provider.models.filter(
+      (model) =>
+        (provider.instanceId === selected.instanceId && model.slug === selected.model) ||
+        (shown && (provider.driver !== "claudeAgent" || /opus|fable/i.test(model.slug))),
+    );
+    return models.length === 0 ? [] : [{ ...provider, models }];
+  });
+}
+
 /** The settings a send uses: the draft's choices over the thread's, within what the provider allows. */
 export function turnSettings(
   draft: TurnDraft,

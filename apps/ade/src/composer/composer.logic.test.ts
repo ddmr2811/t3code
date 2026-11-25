@@ -11,6 +11,7 @@ import {
   acceptImages,
   defaultNewThreadSettings,
   effortBars,
+  menuProviders,
   providerChoices,
   turnSettings,
 } from "./composer.logic.ts";
@@ -166,6 +167,67 @@ describe("effortBars", () => {
     expect(effortBars(select(["off", "low", "high"]), "off")).toEqual({ count: 2, filled: 0 });
     // Max is named, not a bar: it fills them all.
     expect(effortBars(select(["low", "high", "max"]), "max")).toEqual({ count: 2, filled: 2 });
+  });
+});
+
+describe("menuProviders", () => {
+  const claude = (slugs: ReadonlyArray<string>) => ({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+  });
+  const providers = providerChoices(
+    {
+      providers: [
+        provider("codex"),
+        provider(
+          "claudeAgent",
+          claude(["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"]),
+        ),
+        provider("claudeAgent_claudehxcks", claude(["claude-opus-5-5", "claude-haiku-5-5"])),
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("claudeAgent_claudehxcks")]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+          },
+        },
+      },
+    },
+    project,
+  );
+  const shown = (
+    where: { title: string; workspaceRoot: string } | null,
+    selected = { instanceId: ProviderInstanceId.make("codex"), model: "m" },
+  ) =>
+    menuProviders(providers, where, selected).map(
+      (choice) => `${choice.instanceId}: ${choice.models.map((model) => model.slug).join(" ")}`,
+    );
+
+  it("offers Claude's Opus and Fable, and the Hxcks account only in the Hxcks project", () => {
+    expect(shown({ title: "T3 Code Fork", workspaceRoot: "/p/t3code-fork" })).toEqual([
+      "codex: m",
+      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+    ]);
+    expect(shown({ title: "proyecto", workspaceRoot: "/home/dani/proyectos/hxcks" })).toEqual([
+      "codex: m",
+      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+      "claudeAgent_claudehxcks: claude-opus-5-5",
+    ]);
+  });
+
+  it("keeps the model the thread already uses", () => {
+    expect(
+      shown(null, {
+        instanceId: ProviderInstanceId.make("claudeAgent_claudehxcks"),
+        model: "claude-haiku-5-5",
+      }),
+    ).toEqual([
+      "codex: m",
+      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+      "claudeAgent_claudehxcks: claude-haiku-5-5",
+    ]);
   });
 });
 

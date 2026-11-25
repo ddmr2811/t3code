@@ -45,12 +45,22 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import {
+  Menu,
+  MenuContent,
+  MenuGroupLabel,
+  MenuItemIndicator,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "@ui-sdk/react/menu";
 import { type ReactNode, useContext, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 
 import {
   attachmentEnvironment,
+  environmentProjects,
   environmentSession,
   environmentThreadDetails,
   operateAccessAtom,
@@ -62,6 +72,8 @@ import {
   defaultNewThreadSettings,
   type DraftImage,
   effortBars,
+  type MenuProject,
+  menuProviders,
   modelEffort,
   type ProviderChoice,
   providerChoices,
@@ -237,53 +249,41 @@ function Picker<T extends string>(props: {
   selected: T;
   onSelect: (value: T) => void;
 }) {
-  const menu = useRef<HTMLDetailsElement>(null);
-  const close = () => {
-    if (menu.current !== null) menu.current.open = false;
-  };
   return (
-    <details
-      ref={menu}
-      className={props.compact ? "ade-picker ade-picker-chip" : "ade-picker"}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && menu.current?.open) {
-          // Only the menu closes, not the panel or the dialog around it.
-          event.preventDefault();
-          close();
-          menu.current.querySelector("summary")?.focus();
-        }
-      }}
-    >
-      <summary>
+    // Not modal: a press on the next picker closes this menu and opens that one in one click.
+    <Menu modal={false}>
+      <MenuTrigger
+        type="button"
+        className={props.compact ? "ade-picker ade-picker-chip" : "ade-picker"}
+      >
         <span className="ade-sr-only">{props.label}: </span>
         {props.current}
-      </summary>
-      <div className="ade-picker-menu">
+      </MenuTrigger>
+      <MenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        collisionPadding={12}
+        aria-label={props.label}
+        className="ade-picker-menu"
+      >
         {props.groups.map((group, index) => (
-          <fieldset key={group.label ?? index}>
-            <legend className={group.label === undefined ? "ade-sr-only" : undefined}>
-              {group.label ?? props.label}
-            </legend>
+          <MenuRadioGroup
+            key={group.label ?? index}
+            value={props.selected}
+            onValueChange={props.onSelect}
+          >
+            {group.label === undefined ? null : <MenuGroupLabel>{group.label}</MenuGroupLabel>}
             {group.choices.map((choice) => (
-              <label key={choice.value}>
-                <input
-                  type="radio"
-                  name={props.label}
-                  checked={choice.value === props.selected}
-                  onChange={() => {
-                    props.onSelect(choice.value);
-                    close();
-                  }}
-                  // Choosing the current value changes nothing, but still closes the menu.
-                  onClick={choice.value === props.selected ? close : undefined}
-                />
+              <MenuRadioItem key={choice.value} value={choice.value} closeOnSelect>
+                <MenuItemIndicator keepMounted />
                 {choice.label}
-              </label>
+              </MenuRadioItem>
             ))}
-          </fieldset>
+          </MenuRadioGroup>
         ))}
-      </div>
-    </details>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -318,6 +318,7 @@ function EffortGlyph(props: { count: number; filled: number }) {
 function SettingsPickers(props: {
   defaults: TurnSettings;
   providers: ReadonlyArray<ProviderChoice>;
+  project: MenuProject | null;
   draft: TurnDraft;
   setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
 }) {
@@ -342,7 +343,7 @@ function SettingsPickers(props: {
             </>
           )
         }
-        groups={providers.map((choice) => ({
+        groups={menuProviders(providers, props.project, settings.model).map((choice) => ({
           label: choice.label,
           choices: choice.models.map((model) => ({
             value: modelKey(choice.instanceId, model.slug),
@@ -550,6 +551,7 @@ interface SendPayload {
 function ComposerForm(props: {
   environmentId: EnvironmentId;
   providers: ReadonlyArray<ProviderChoice>;
+  project: MenuProject | null;
   defaults: TurnSettings | null;
   draft: TurnDraft;
   setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
@@ -723,6 +725,7 @@ function ComposerForm(props: {
             <SettingsPickers
               defaults={defaults}
               providers={providers}
+              project={props.project}
               draft={draft}
               setDraft={setDraft}
             />
@@ -827,6 +830,10 @@ export function Composer(props: {
     () => (config === null ? NO_PROVIDERS : providerChoices(config, thread.projectId)),
     [config, thread.projectId],
   );
+  const project = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(threadRef.environmentId),
+    (index) => index.get(thread.projectId) ?? null,
+  );
   const running =
     useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
   const defaults: TurnSettings = {
@@ -841,6 +848,7 @@ export function Composer(props: {
       <ComposerForm
         environmentId={threadRef.environmentId}
         providers={providers}
+        project={project}
         defaults={defaults}
         draft={draft}
         setDraft={setDraft}
@@ -983,6 +991,7 @@ export function NewThreadComposer(props: {
       <ComposerForm
         environmentId={environmentId}
         providers={providers}
+        project={project}
         defaults={defaults}
         draft={draft}
         setDraft={setDraft}
