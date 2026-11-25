@@ -5,7 +5,10 @@ import {
   RunId,
   type ScheduledTask,
   ThreadId,
+  WS_METHODS,
 } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   NIGHTLY_CONSOLIDATION_PROMPT,
@@ -13,6 +16,7 @@ import {
   coordinatorRoutineInput,
   isCustomNightly,
   isNightlyTask,
+  lacksMethod,
   nightlyPromptUpdate,
   parseMention,
   validateBotDraft,
@@ -206,5 +210,24 @@ describe("bots.logic", () => {
       schedule: { type: "fixed_time", timeOfDay: "04:15" },
       title: nightly.title,
     });
+  });
+});
+
+describe("lacksMethod", () => {
+  // How an Effect RPC server answers a method it lacks, through the defect codec of the wire.
+  const overTheWire = (exit: Exit.Exit<unknown, unknown>) => {
+    const codec = Schema.toCodecJson(Schema.Exit(Schema.Unknown, Schema.Unknown, Schema.Defect()));
+    const decoded = Schema.decodeSync(codec)(Schema.encodeSync(codec)(exit));
+    if (Exit.isSuccess(decoded)) throw new Error("expected a failure");
+    return decoded.cause;
+  };
+
+  it("tells a server without the method from one whose read failed", () => {
+    const tag = WS_METHODS.forkGapsList;
+    expect(lacksMethod(overTheWire(Exit.die(`Unknown request tag: ${tag}`)), tag)).toBe(true);
+    expect(lacksMethod(overTheWire(Exit.die(new Error("gaps.json is corrupt"))), tag)).toBe(false);
+    expect(lacksMethod(overTheWire(Exit.die(`Unknown request tag: other.method`)), tag)).toBe(
+      false,
+    );
   });
 });

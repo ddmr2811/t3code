@@ -755,6 +755,17 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
   ];
 }
 
+/** The turn item running a background task, keyed as `derivePendingBackgroundWork` keys it. */
+export function pendingBackgroundTaskItem(
+  task: Pick<OrchestrationV2PendingBackgroundTask, "taskId" | "nativeItemId">,
+  turnItems: ThreadStructure["turnItems"],
+) {
+  const itemKey = task.nativeItemId ?? task.taskId;
+  return turnItems.findLast(
+    (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
+  );
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   resolve: MFunctionType = mFallback,

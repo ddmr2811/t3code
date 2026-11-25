@@ -45,7 +45,7 @@ import {
   type DecisionsPanelChoice,
   selectNeedsYouThreads,
 } from "../../../web/src/fork/decisions/decisions.logic.ts";
-import { environmentCatalog } from "../connection/runtime.ts";
+import { environmentCatalog, environmentShell } from "../connection/runtime.ts";
 import { Composer, runCommand } from "../composer/Composer.tsx";
 import { RequestCards, ThreadRequests } from "../decisions/Requests.tsx";
 import {
@@ -66,6 +66,7 @@ import {
 } from "../failover/failover.state.ts";
 import { toolPanelAtom } from "../panels/FloatingPanel.tsx";
 import { SearchButton } from "../search/SearchButton.tsx";
+import { BackgroundWorkBar } from "../timeline/BackgroundWorkBar.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import { planStepChip } from "../timeline/timeline.logic.ts";
 import {
@@ -75,6 +76,7 @@ import {
   operableEnvironmentIdsAtom,
   serverEnvironment,
   threadEnvironment,
+  threadFamilies,
 } from "../state.ts";
 import {
   decisionsByRow,
@@ -579,6 +581,7 @@ export function ThreadTree() {
 }
 
 const NO_THREAD = Atom.make(null);
+const NO_SHELL = Atom.make(null);
 // The diff renderer loads with the first diff opened, not with the app.
 const DiffView = lazy(() => import("../diff/DiffView.tsx"));
 
@@ -782,6 +785,25 @@ function ThreadVisitWatermark(props: { threadRef: ScopedThreadRef }) {
   return null;
 }
 
+/**
+ * Keeps the family of an open thread the shell leaves out (an older settled thread, such as a
+ * finished subagent) in the shell rows until it is closed, as T3's `useOpenThreadFamily` does.
+ */
+function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean) {
+  const registry = useContext(RegistryContext);
+  const key = threadRef === null ? null : scopedThreadKey(threadRef);
+  // Sticks to the open thread, so the row the family brings in does not release it.
+  const [mountedKey, setMountedKey] = useState<string | null>(null);
+  const nextKey = missing || mountedKey === key ? key : null;
+  if (nextKey !== mountedKey) setMountedKey(nextKey);
+  // Holds the open thread's family in the thread family registry until it is closed.
+  useEffect(() => {
+    const ref = mountedKey === null ? null : parseScopedThreadKey(mountedKey);
+    if (ref === null) return;
+    return threadFamilies.mount(registry, ref.environmentId, ref.threadId);
+  }, [registry, mountedKey]);
+}
+
 export function SelectedThread() {
   const [key, setKey] = useAtom(selectedThreadKeyAtom);
   const [diff, setDiff] = useState<{ key: string; range: DiffRange } | null>(null);
@@ -798,6 +820,12 @@ export function SelectedThread() {
   const machine = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) =>
     ref === null ? null : (catalog.entries.get(ref.environmentId)?.target.label ?? null),
   );
+  // The status alone: the whole shell state changes with every streamed delta.
+  const shellStatus = useAtomValue(
+    ref === null ? NO_SHELL : environmentShell.statusAtom(ref.environmentId),
+  );
+  // Only a live shell's word is final; before it, the thread may simply not have arrived.
+  useOpenThreadFamily(ref, shellStatus === "live" && thread === null);
   if (ref === null) return null;
   const requests =
     machine === null || thread === null ? null : (
@@ -854,13 +882,16 @@ export function SelectedThread() {
           key={key}
           threadRef={ref}
           onOpenChanges={(checkpoint) => openDiff(turnRange(checkpoint))}
+          onOpenThread={setKey}
           requests={requests}
         />
       )}
       {/* With the diff in its place, the timeline's last row shows here. */}
       {openRange !== null ? <div className="ade-requests-outside">{requests}</div> : null}
       {machine === null || thread === null ? null : (
-        <Composer key={`composer:${key}`} threadRef={ref} thread={thread} />
+        <Composer key={`composer:${key}`} threadRef={ref} thread={thread}>
+          <BackgroundWorkBar threadRef={ref} onOpenThread={setKey} />
+        </Composer>
       )}
     </section>
   );

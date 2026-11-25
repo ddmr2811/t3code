@@ -966,6 +966,180 @@ body {
   content: "";
 }
 
+/* A subagent or delegated task: who runs it, how it goes, how long, and the way into it. */
+.ade-subagent {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--ade-divider);
+  border-radius: var(--ade-radius-md);
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+}
+
+button.ade-subagent {
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+button.ade-subagent:hover {
+  border-color: var(--ade-border);
+  background: var(--ade-surface);
+}
+
+button.ade-subagent:active {
+  background: var(--ade-divider);
+}
+
+.ade-subagent-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.ade-subagent-title,
+.ade-subagent-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-subagent-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ade-subagent-where,
+.ade-subagent-status {
+  color: var(--ade-text-muted);
+  font-weight: 400;
+}
+
+.ade-subagent-status {
+  font-size: 12px;
+}
+
+.ade-subagent-status[data-status="failed"] {
+  color: var(--ade-danger);
+}
+
+.ade-subagent-time,
+.ade-background-time {
+  flex: none;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-subagent-open {
+  flex: none;
+  color: var(--ade-text-tertiary);
+  transition: transform 120ms ease;
+}
+
+button.ade-subagent:hover .ade-subagent-open {
+  color: var(--ade-text);
+  transform: translateX(2px);
+}
+
+/* Work the agent left going, above the composer: one line, its list under «Detalles». */
+.ade-background {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ade-background-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.ade-background-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A still dot: no animation runs while a task works for minutes. */
+.ade-background-title::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--ade-accent);
+  vertical-align: middle;
+  content: "";
+}
+
+.ade-background-action {
+  flex: none;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text);
+  font: 500 13px var(--ade-font-sans);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.ade-background-action:hover {
+  background: var(--ade-surface);
+}
+
+.ade-background-action:disabled {
+  color: var(--ade-text-disabled);
+  cursor: default;
+}
+
+.ade-background-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 0 0 14px;
+  border-top: 1px solid var(--ade-divider);
+  list-style: none;
+  font-size: 13px;
+}
+
+.ade-background-list li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ade-background-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-background-state {
+  flex: none;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
 .ade-tool-empty,
 .ade-notice {
   margin: 4px 0 0;
@@ -4658,8 +4832,15 @@ body {
   .ade-search,
   .ade-search-backdrop,
   .ade-main > *,
-  .ade-bot-avatar circle {
+  .ade-bot-avatar circle,
+  .ade-subagent,
+  .ade-subagent-open,
+  .ade-background-action {
     transition: none;
+  }
+
+  button.ade-subagent:hover .ade-subagent-open {
+    transform: none;
   }
 }
 
