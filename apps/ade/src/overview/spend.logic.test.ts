@@ -37,9 +37,9 @@ const bucket = (
   ...extra,
 });
 
-const machine = (buckets: UsageBucket[]): EnvironmentUsage => ({
-  environmentId: "env-1" as EnvironmentId,
-  label: "dev",
+const machine = (buckets: UsageBucket[], id = "env-1"): EnvironmentUsage => ({
+  environmentId: id as EnvironmentId,
+  label: id,
   summary: {
     contractVersion: USAGE_CONTRACT_VERSION,
     readAt: "2026-11-25T10:00:00.000Z",
@@ -48,7 +48,7 @@ const machine = (buckets: UsageBucket[]): EnvironmentUsage => ({
     untilDay: "2026-11-25" as UsageDay,
     buckets,
     sources: [...new Set(buckets.map((entry) => entry.provider))].map((provider) => ({
-      fingerprint: { hostId: "dev", provider, resolvedHomePath: "/home/dev", volumeId: "1:1" },
+      fingerprint: { hostId: id, provider, resolvedHomePath: "/home/dev", volumeId: "1:1" },
       status: "ok" as const,
       scannedFiles: 1,
       skippedFiles: 0,
@@ -62,36 +62,59 @@ const machine = (buckets: UsageBucket[]): EnvironmentUsage => ({
 });
 
 describe("spendSummary", () => {
+  const reported = { costSource: "providerReported" } as const;
   const usage = [
-    machine([
-      bucket("opencode", "kimi-k2", "2026-11-25", 1.5),
-      bucket("opencode", "kimi-k2", "2026-11-23", 2),
-      bucket("claude", "claude-opus-5-5", "2026-11-25", 40),
-      bucket("pi", "local-model", "2026-11-25", 0, {
-        costSource: "unpriced",
-        unpricedRecords: 2,
-        unpricedTokens: 1000,
-      }),
-    ]),
+    machine([bucket("claude", "claude-opus-5-5", "2026-11-25", 40)], "pc-subscription"),
+    machine(
+      [
+        bucket("claude", "claude-opus-5-5", "2026-11-25", 5, reported),
+        bucket("claude", "claude-opus-5-5", "2026-11-23", 2, reported),
+        bucket("opencode", "kimi-k2", "2026-11-25", 1.5, {
+          unpricedRecords: 1,
+          unpricedTokens: 200,
+        }),
+        bucket("pi", "local-model", "2026-11-25", 0, {
+          costSource: "unpriced",
+          unpricedRecords: 2,
+          unpricedTokens: 1000,
+        }),
+      ],
+      "vps-api",
+    ),
   ];
-  const { today, week } = spendSummary(usage, new Set(["claude"]));
+  const flat = new Map([["pc-subscription" as EnvironmentId, new Set(["claude" as const])]]);
+  const { today, week } = spendSummary(usage, flat);
+  const line = (provider: string, kind: string) =>
+    today.lines.find((entry) => entry.provider === provider && entry.kind === kind);
 
-  it("adds only pay-per-use money: a flat subscription and an unpriced model never count", () => {
-    expect(today.realUsd).toBe(1.5);
-    expect(today.lines.map((line) => [line.model, line.kind, line.costUsd, line.tokens])).toEqual([
-      ["kimi-k2", "real", 1.5, 1000],
-      ["claude-opus-5-5", "flat", 0, 1000],
-      ["local-model", "unpriced", 0, 1000],
-    ]);
+  it("a subscription on one machine leaves another machine's API spend counted", () => {
+    expect(line("claude", "flat")?.costUsd).toBe(0);
+    expect(line("claude", "real")?.costUsd).toBe(5);
+  });
+
+  it("only reported money is real; tokens at list price are an estimate apart from it", () => {
+    expect(today.realUsd).toBe(5);
+    expect(today.estimatedUsd).toBe(1.5);
+    expect(line("opencode", "estimated")?.costUsd).toBe(1.5);
+  });
+
+  it("keeps a line's tokens without a rate beside its amount, never as free", () => {
+    expect(line("opencode", "estimated")?.unpricedTokens).toBe(200);
+    expect(line("pi", "unpriced")?.unpricedTokens).toBe(1000);
   });
 
   it("counts today from the last day only, and the week from every day", () => {
-    expect(week.realUsd).toBe(3.5);
+    expect(week.realUsd).toBe(7);
   });
 });
 
 describe("botEstimate", () => {
-  const rates = ratesByModel([machine([bucket("claude", "claude-opus-5-5", "2026-11-25", 2)])]);
+  const rates = ratesByModel([
+    machine([
+      bucket("claude", "claude-opus-5-5", "2026-11-25", 2),
+      bucket("opencode", "claude-opus-5-5", "2026-11-25", 20),
+    ]),
+  ]);
   const usage = (models: string[]) =>
     ({
       usageScope: "main_agent",
@@ -112,11 +135,25 @@ describe("botEstimate", () => {
           { endedAtMs: Date.parse("2026-11-25T09:00:00Z"), turnTokenUsage: usage([]) },
         ],
         fallbackModel: "claude-opus-5-5",
+        provider: "claude",
         day: "2026-11-25",
         timeZone: "Europe/Madrid",
         rates,
       }),
     ).toEqual({ usd: 1, unpricedTokens: 500 });
+  });
+
+  it("prices a model at its own provider's rate when two providers share its name", () => {
+    const estimate = (provider: "claude" | "opencode") =>
+      botEstimate({
+        turns: [{ endedAtMs: Date.parse("2026-11-25T09:00:00Z"), turnTokenUsage: usage([]) }],
+        fallbackModel: "claude-opus-5-5",
+        provider,
+        day: "2026-11-25",
+        timeZone: "Europe/Madrid",
+        rates,
+      })?.usd;
+    expect([estimate("claude"), estimate("opencode")]).toEqual([1, 10]);
   });
 });
 

@@ -1,11 +1,11 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, UsageProviderKind } from "@t3tools/contracts";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
-import { useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 
-import { environmentThreadDetails } from "../state.ts";
+import { environmentThreadDetails, serverEnvironment } from "../state.ts";
 import {
   botEstimate,
   ratesByModel,
@@ -18,6 +18,7 @@ import { flatProvidersAtom, spendUsageAtom } from "./spend.state.ts";
 
 const CAP_KEY = "ade.spend.weeklyCapUsd";
 const SHOWN_LINES = 6;
+const REFRESH_MS = 60_000;
 
 const usd = (value: number) => formatUsd(value, "es-ES");
 const percent = (share: number) => `${Math.round(share * 100)} %`;
@@ -47,15 +48,26 @@ function useWeekUsage() {
 
 function LineAmount(props: { line: SpendLine; limitShare: number | undefined }) {
   const { line } = props;
-  if (line.kind === "real") return <span>{usd(line.costUsd)}</span>;
-  if (line.kind === "unpriced") return <span>sin precio · {formatTokens(line.tokens)} tok</span>;
+  const unpriced = `${formatTokens(line.unpricedTokens)} tok sin precio`;
+  if (line.kind === "unpriced") return <span>{unpriced}</span>;
+  if (line.kind === "flat") {
+    return (
+      <span>
+        {formatTokens(line.tokens)} tok
+        {props.limitShare === undefined ? null : ` · ${percent(props.limitShare)} del límite`}
+      </span>
+    );
+  }
   return (
     <span>
-      {formatTokens(line.tokens)} tok
-      {props.limitShare === undefined ? null : ` · ${percent(props.limitShare)} del límite`}
+      {usd(line.costUsd)}
+      {line.kind === "estimated" ? <span className="ade-spend-est"> est.</span> : null}
+      {line.unpricedTokens > 0 ? ` + ${unpriced}` : null}
     </span>
   );
 }
+
+const LINE_LABEL = { real: "reportado", estimated: "a tarifa", flat: "suscripción" } as const;
 
 function Ruler(props: { valueUsd: number; capUsd: number }) {
   return (
@@ -79,12 +91,33 @@ function Ruler(props: { valueUsd: number; capUsd: number }) {
 }
 
 export function SpendCard() {
-  const { usage } = useWeekUsage();
+  const { window, usage } = useWeekUsage();
   const flat = useAtomValue(flatProvidersAtom);
   const spend = useMemo(
-    () => spendSummary(usage.environments, new Set(flat.keys())),
+    () => spendSummary(usage.environments, flat.byEnvironment),
     [usage.environments, flat],
   );
+  const registry = useContext(RegistryContext);
+  const [, setTick] = useState(0);
+  const readable = usage.readable.join(",");
+  // Reads usage again each minute while the page is visible; a new day moves the window.
+  useEffect(() => {
+    // @effect-diagnostics-next-line globalTimers:off
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      for (const environmentId of readable === "" ? [] : readable.split(",")) {
+        registry.refresh(
+          serverEnvironment.usageSummary({
+            environmentId: environmentId as EnvironmentId,
+            input: window,
+          }),
+        );
+      }
+      setTick((tick) => tick + 1);
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [registry, readable, window]);
+  const missing = [...usage.needsPairing, ...usage.failed];
   const [capText, setCapText] = useState(readCap);
   const cap = Number(capText);
   const hasCap = capText !== "" && Number.isFinite(cap) && cap > 0;
@@ -96,11 +129,13 @@ export function SpendCard() {
         <h2 className="ade-label">Gasto</h2>
         <p className="ade-summary-figure">Sin datos</p>
         <p className="ade-summary-caption">
-          {usage.needsPairing.length > 0
-            ? "Vuelve a emparejar la máquina para ver el gasto."
-            : usage.pending
-              ? "Leyendo el uso de las máquinas…"
-              : "Las máquinas aún no han informado del uso."}
+          {usage.failed.length > 0
+            ? `No se pudo leer el uso de ${usage.failed.join(", ")}.`
+            : usage.needsPairing.length > 0
+              ? "Vuelve a emparejar la máquina para ver el gasto."
+              : usage.pending
+                ? "Leyendo el uso de las máquinas…"
+                : "Las máquinas aún no han informado del uso."}
         </p>
       </section>
     );
@@ -113,28 +148,37 @@ export function SpendCard() {
         {usd(week)}
         {hasCap ? <span className="ade-spend-of"> de {usd(cap)}</span> : null}
       </p>
-      <p className="ade-summary-caption">
-        pago por uso esta semana · hoy {usd(spend.today.realUsd)}
-      </p>
+      <p className="ade-summary-caption">reportado esta semana · hoy {usd(spend.today.realUsd)}</p>
+      {spend.week.estimatedUsd > 0 ? (
+        <p className="ade-summary-caption">
+          + {usd(spend.week.estimatedUsd)} <span className="ade-spend-est">est.</span> a tarifa, sin
+          factura · fuera del tope
+        </p>
+      ) : null}
       {hasCap ? <Ruler valueUsd={week} capUsd={cap} /> : null}
       <ul className="ade-summary-rows">
         {spend.week.lines.slice(0, SHOWN_LINES).map((line) => (
-          <li key={`${line.provider}:${line.model}`}>
+          <li key={`${line.provider}:${line.model}:${line.kind}`}>
             <span className="ade-summary-name">{line.model}</span>
             <span className="ade-summary-aside" data-kind={line.kind}>
-              {line.kind === "flat" ? "suscripción" : line.provider}
-              <LineAmount line={line} limitShare={flat.get(line.provider)} />
+              {line.kind === "unpriced" ? line.provider : LINE_LABEL[line.kind]}
+              <LineAmount line={line} limitShare={flat.peaks.get(line.provider)} />
             </span>
           </li>
         ))}
       </ul>
+      {missing.length > 0 ? (
+        <p className="ade-summary-caption" data-level="high">
+          Total parcial: falta {missing.join(", ")}.
+        </p>
+      ) : null}
+      {usage.failed.length > 0 ? (
+        <p className="ade-summary-caption">No se pudo leer el uso de {usage.failed.join(", ")}.</p>
+      ) : null}
       {usage.needsPairing.length > 0 ? (
         <p className="ade-summary-caption">
           {usage.needsPairing.join(", ")}: vuelve a emparejar la máquina para ver el gasto.
         </p>
-      ) : null}
-      {usage.failed.length > 0 ? (
-        <p className="ade-summary-caption">{usage.failed.join(", ")}: no se pudo leer el uso.</p>
       ) : null}
       <label className="ade-spend-cap">
         Tope semanal
@@ -157,20 +201,37 @@ export function SpendCard() {
 }
 
 /**
- * A bot's estimate for today: its turns' tokens times the week's list price per model. Read
- * only from a thread the ADE already follows, so it adds nothing to the WebSocket.
+ * A bot's estimate for today: its turns' tokens times the week's list price of its provider's
+ * model. Mount it only where the thread is already followed: it never opens one for the spend.
  */
 export function BotSpend(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   model: string;
+  provider: UsageProviderKind | null;
 }) {
   const { window, usage } = useWeekUsage();
   const rates = useMemo(() => ratesByModel(usage.environments), [usage.environments]);
+  // Without usage (no permission, nothing read) the thread is not even looked at.
+  if (usage.environments.length === 0) return null;
+  return (
+    <BotSpendFigure {...props} day={window.untilDay} timeZone={window.timeZone} rates={rates} />
+  );
+}
+
+function BotSpendFigure(props: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  model: string;
+  provider: UsageProviderKind | null;
+  day: string;
+  timeZone: string;
+  rates: ReadonlyMap<string, number>;
+}) {
   const thread = useAtomValue(
     environmentThreadDetails.quietThreadAtom(scopeThreadRef(props.environmentId, props.threadId)),
   );
-  if (thread === null || usage.environments.length === 0) return null;
+  if (thread === null) return null;
   const estimate = botEstimate({
     turns: thread.projection.providerTurns.map((turn) => ({
       model: turn.model,
@@ -178,9 +239,10 @@ export function BotSpend(props: {
       turnTokenUsage: turn.turnTokenUsage,
     })),
     fallbackModel: props.model,
-    day: window.untilDay,
-    timeZone: window.timeZone,
-    rates,
+    provider: props.provider,
+    day: props.day,
+    timeZone: props.timeZone,
+    rates: props.rates,
   });
   if (estimate === null) return null;
   const unpriced =
@@ -190,7 +252,7 @@ export function BotSpend(props: {
       {estimate.usd > 0 || unpriced === null ? (
         <>
           ~{usd(estimate.usd)} <span className="ade-spend-est">est.</span> hoy
-          {unpriced === null ? null : ` · ${unpriced}`}
+          {unpriced === null ? null : ` + ${unpriced}`}
         </>
       ) : (
         `${unpriced} hoy`

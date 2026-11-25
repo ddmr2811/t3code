@@ -108,8 +108,8 @@ export const filesAccessAtom = Atom.family((environmentId: EnvironmentId) =>
 export const diagnosticsAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
     const result = get(environmentSession.sessionStateAtom(environmentId));
-    // A failed revalidation proves neither way; it must not ask to pair again.
-    if (result._tag === "Failure") return null;
+    // A failed revalidation proves neither way: the card says it could not read, not to re-pair.
+    if (result._tag === "Failure") return "unknown";
     const session = AsyncResult.getOrElse(result, () => null);
     return session === null ? null : sessionGrantsScope(session, AuthDiagnosticsReadScope);
   }).pipe(Atom.withLabel(`ade-diagnostics-access:${environmentId}`)),

@@ -1,6 +1,8 @@
 import {
+  type EnvironmentId,
   USAGE_CONTRACT_VERSION,
   type TurnTokenUsage,
+  type UsageBucket,
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -17,10 +19,11 @@ export function weekWindow(now?: Date): UsageSummaryInput {
 }
 
 /**
- * `real`: pay-per-use money. `flat`: a subscription with a limit, so its list price is not paid.
+ * `real`: money the provider reported. `estimated`: tokens at list price, nothing billed.
+ * `flat`: a subscription with a limit on that machine, so its list price is not paid.
  * `unpriced`: no rate is known, which is not the same as free.
  */
-export type SpendKind = "real" | "flat" | "unpriced";
+export type SpendKind = "real" | "estimated" | "flat" | "unpriced";
 
 export interface SpendLine {
   readonly provider: UsageProviderKind;
@@ -28,47 +31,79 @@ export interface SpendLine {
   readonly kind: SpendKind;
   readonly costUsd: number;
   readonly tokens: number;
+  /** Tokens of this line no rate covers; shown beside its amount, never priced at 0. */
+  readonly unpricedTokens: number;
 }
 
 export interface SpendPeriod {
-  /** Only `real` lines add up here; flat and unpriced lines never do. */
+  /** Only reported money; the cap counts this alone. */
   readonly realUsd: number;
+  /** List price of tokens nobody billed; shown apart and labelled «est.». */
+  readonly estimatedUsd: number;
   readonly lines: ReadonlyArray<SpendLine>;
 }
 
-const KIND_ORDER: Record<SpendKind, number> = { real: 0, flat: 1, unpriced: 2 };
+/** Providers each machine pays as a flat subscription. A machine missing here pays per use. */
+export type FlatByEnvironment = ReadonlyMap<EnvironmentId, ReadonlySet<UsageProviderKind>>;
+
+const KIND_ORDER: Record<SpendKind, number> = { real: 0, estimated: 1, flat: 2, unpriced: 3 };
+
+// mergeUsage keys models by provider and name. Tagging the name with its kind keeps the kinds
+// apart through the merge (shared transcript folders still count once); the tag is cut after.
+const KIND_TAG = "\u0000";
+
+function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
+  if (flat) return "flat";
+  if (bucket.costSource === "providerReported") return "real";
+  return bucket.costSource === "modelPriced" ? "estimated" : "unpriced";
+}
 
 function period(
   environments: ReadonlyArray<EnvironmentUsage>,
-  flat: ReadonlySet<UsageProviderKind>,
+  flatByEnvironment: FlatByEnvironment,
 ): SpendPeriod {
-  const lines = mergeUsage(environments, USAGE_CONTRACT_VERSION)
+  const tagged = environments.map((environment) => {
+    const flat = flatByEnvironment.get(environment.environmentId);
+    return {
+      ...environment,
+      summary: {
+        ...environment.summary,
+        buckets: environment.summary.buckets.map((bucket) => ({
+          ...bucket,
+          model: `${bucket.model}${KIND_TAG}${bucketKind(bucket, flat?.has(bucket.provider) === true)}`,
+        })),
+      },
+    };
+  });
+  const lines = mergeUsage(tagged, USAGE_CONTRACT_VERSION)
     .models.filter((model) => model.totalTokens > 0)
     .map((model): SpendLine => {
-      const kind = flat.has(model.provider)
-        ? "flat"
-        : isModelCostUnknown(model)
-          ? "unpriced"
-          : "real";
+      const [name = model.model, kind = "unpriced"] = model.model.split(KIND_TAG) as [
+        string,
+        SpendKind,
+      ];
       return {
         provider: model.provider,
-        model: model.model,
+        model: name,
         kind,
-        costUsd: kind === "real" ? model.costUsd : 0,
+        costUsd: kind === "real" || kind === "estimated" ? model.costUsd : 0,
         tokens: model.totalTokens,
+        unpricedTokens: kind === "unpriced" ? model.totalTokens : model.unpricedTokens,
       };
     })
     .toSorted(
       (a, b) =>
         KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.costUsd - a.costUsd || b.tokens - a.tokens,
     );
-  return { realUsd: lines.reduce((sum, line) => sum + line.costUsd, 0), lines };
+  const total = (kind: SpendKind) =>
+    lines.reduce((sum, line) => sum + (line.kind === kind ? line.costUsd : 0), 0);
+  return { realUsd: total("real"), estimatedUsd: total("estimated"), lines };
 }
 
 /** Today's and this week's spend across machines; shared transcript folders count once. */
 export function spendSummary(
   environments: ReadonlyArray<EnvironmentUsage>,
-  flat: ReadonlySet<UsageProviderKind>,
+  flatByEnvironment: FlatByEnvironment,
 ): { readonly today: SpendPeriod; readonly week: SpendPeriod } {
   const todayOnly = environments.map((environment) => ({
     ...environment,
@@ -79,12 +114,17 @@ export function spendSummary(
       ),
     },
   }));
-  return { today: period(todayOnly, flat), week: period(environments, flat) };
+  return {
+    today: period(todayOnly, flatByEnvironment),
+    week: period(environments, flatByEnvironment),
+  };
 }
 
+export const rateKey = (provider: UsageProviderKind, model: string) => `${provider} ${model}`;
+
 /**
- * The list price per token of each model, from this week's priced records. A bot's turn tokens
- * times this rate is its estimate, so it follows the server's `usagePricing` without asking for it.
+ * The list price per token of each provider's model, from this week's priced records. A bot's
+ * turn tokens times this rate is its estimate, so it follows the server's `usagePricing`.
  */
 export function ratesByModel(
   environments: ReadonlyArray<EnvironmentUsage>,
@@ -93,7 +133,7 @@ export function ratesByModel(
   for (const model of mergeUsage(environments, USAGE_CONTRACT_VERSION).models) {
     const pricedTokens = model.totalTokens - model.unpricedTokens;
     if (isModelCostUnknown(model) || pricedTokens <= 0) continue;
-    rates.set(model.model, model.costUsd / pricedTokens);
+    rates.set(rateKey(model.provider, model.model), model.costUsd / pricedTokens);
   }
   return rates;
 }
@@ -108,6 +148,8 @@ export interface EstimateTurn {
 export function botEstimate(input: {
   readonly turns: ReadonlyArray<EstimateTurn>;
   readonly fallbackModel: string;
+  /** The bot's provider; null when its instance is unknown, so nothing gets a rate. */
+  readonly provider: UsageProviderKind | null;
   readonly day: string;
   readonly timeZone: string;
   readonly rates: ReadonlyMap<string, number>;
@@ -127,7 +169,9 @@ export function botEstimate(input: {
       (usage.otherUsage?.outputTokens ?? 0);
     if (tokens === 0) continue;
     counted = true;
-    const rate = input.rates.get(usage.models?.[0] ?? turn.model ?? input.fallbackModel);
+    const model = usage.models?.[0] ?? turn.model ?? input.fallbackModel;
+    const rate =
+      input.provider === null ? undefined : input.rates.get(rateKey(input.provider, model));
     if (rate === undefined) unpricedTokens += tokens;
     else usd += tokens * rate;
   }

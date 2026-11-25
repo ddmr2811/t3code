@@ -1,5 +1,5 @@
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
-import type { UsageProviderKind, UsageSummaryInput } from "@t3tools/contracts";
+import type { EnvironmentId, UsageProviderKind, UsageSummaryInput } from "@t3tools/contracts";
 import type { EnvironmentUsage } from "@t3tools/shared/usageMerge";
 import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -20,7 +20,7 @@ export const limitAccountsAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("ade-limit-accounts"));
 
 // Usage names Claude after the provider; its driver is `claudeAgent`. The rest share the name.
-const USAGE_PROVIDER_OF_DRIVER: Record<string, UsageProviderKind> = {
+export const USAGE_PROVIDER_OF_DRIVER: Record<string, UsageProviderKind> = {
   claudeAgent: "claude",
   codex: "codex",
   grok: "grok",
@@ -31,23 +31,34 @@ const USAGE_PROVIDER_OF_DRIVER: Record<string, UsageProviderKind> = {
   muse: "muse",
 };
 
-/** Providers paid as a flat subscription, with the fullest window of their accounts (0–1). */
+/**
+ * Per machine, the providers it pays as a flat subscription (from the accounts whose limits it
+ * reads), and per provider the fullest window of those accounts (0–1) for the breakdown.
+ */
 export const flatProvidersAtom = Atom.make((get) => {
+  const byEnvironment = new Map<EnvironmentId, Set<UsageProviderKind>>();
   const peaks = new Map<UsageProviderKind, number>();
   for (const account of get(limitAccountsAtom)) {
     const provider = USAGE_PROVIDER_OF_DRIVER[String(account.driver)];
     if (provider === undefined) continue;
+    for (const { environmentId } of account.environments) {
+      const providers = byEnvironment.get(environmentId) ?? new Set();
+      byEnvironment.set(environmentId, providers.add(provider));
+    }
     const used = Math.max(0, ...account.limits.windows.map((window) => window.usedPercent)) / 100;
     peaks.set(provider, Math.max(peaks.get(provider) ?? 0, used));
   }
-  return peaks;
+  return { byEnvironment, peaks };
 }).pipe(Atom.withLabel("ade-flat-providers"));
 
 export interface SpendUsage {
   readonly environments: ReadonlyArray<EnvironmentUsage>;
   /** Machines paired before F7, without `diagnostics:read`: pairing again is the way out. */
   readonly needsPairing: ReadonlyArray<string>;
+  /** Machines whose session check or usage read failed; their spend is missing from the total. */
   readonly failed: ReadonlyArray<string>;
+  /** Machines whose usage this ADE may read, to refresh them. */
+  readonly readable: ReadonlyArray<EnvironmentId>;
   readonly pending: boolean;
 }
 
@@ -59,21 +70,24 @@ export const spendUsageAtom = Atom.family((windowKey: string) =>
     const environments: EnvironmentUsage[] = [];
     const needsPairing: string[] = [];
     const failed: string[] = [];
+    const readable: EnvironmentId[] = [];
     let pending = false;
     for (const environmentId of enabledEnvironmentIds(catalog)) {
       const label = catalog.entries.get(environmentId)?.target.label ?? environmentId;
       const access = get(diagnosticsAccessAtom(environmentId));
       if (access === false) needsPairing.push(label);
+      if (access === "unknown") failed.push(label);
       if (access !== true) {
         pending ||= access === null;
         continue;
       }
+      readable.push(environmentId);
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
       pending ||= result.waiting;
       if (result._tag === "Failure") failed.push(label);
       const summary = AsyncResult.getOrElse(result, () => null);
       if (summary !== null) environments.push({ environmentId, label, summary });
     }
-    return { environments, needsPairing, failed, pending };
+    return { environments, needsPairing, failed, readable, pending };
   }).pipe(Atom.withLabel(`ade-spend-usage:${windowKey}`)),
 );
