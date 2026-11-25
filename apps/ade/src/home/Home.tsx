@@ -76,87 +76,89 @@ export function Home() {
   return (
     <section className="ade-home" aria-label="Inicio">
       <span className="ade-home-art" style={ART_STYLE} aria-hidden />
-      <header className="ade-home-greeting">
-        <h1>¿En qué trabajamos?</h1>
-        <p className="ade-home-stats">
-          <span>{workingCount === 1 ? "1 en marcha" : `${workingCount} en marcha`}</span>
-          <span className="ade-home-stat-sep" aria-hidden />
-          {needsYouCount > 0 ? (
-            <button
-              type="button"
-              className="ade-home-needs-you"
-              aria-expanded={decisionsOpen}
-              aria-controls="ade-decisions"
-              onClick={() => setDecisionsOpen(!decisionsOpen)}
-            >
-              {needsYouText}
-            </button>
-          ) : (
-            <span>{needsYouText}</span>
-          )}
-        </p>
-      </header>
-      <div className="ade-home-inner">
-        <Overnight needsYouCount={needsYouCount} />
-        {selected === null ? (
-          <p className="ade-home-empty" role="status">
-            {loading
-              ? "Cargando proyectos…"
-              : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
+      <div className="ade-home-scroll">
+        <header className="ade-home-greeting">
+          <h1>¿En qué trabajamos?</h1>
+          <p className="ade-home-stats">
+            <span>{workingCount === 1 ? "1 en marcha" : `${workingCount} en marcha`}</span>
+            <span className="ade-home-stat-sep" aria-hidden />
+            {needsYouCount > 0 ? (
+              <button
+                type="button"
+                className="ade-home-needs-you"
+                aria-expanded={decisionsOpen}
+                aria-controls="ade-decisions"
+                onClick={() => setDecisionsOpen(!decisionsOpen)}
+              >
+                {needsYouText}
+              </button>
+            ) : (
+              <span>{needsYouText}</span>
+            )}
           </p>
-        ) : (
-          <>
-            <ToggleGroup
-              value={[selected.key]}
-              deselectable={false}
-              onValueChange={(values) => {
-                const next = values[0];
-                if (next !== undefined) setSelectedKey(next);
-              }}
-              aria-label="Proyecto donde empezar el hilo"
-              className="ade-home-projects"
-            >
-              {projects.map((target) => (
-                <Toggle
-                  key={target.key}
-                  value={target.key}
-                  className="ade-home-project-chip"
-                  aria-label={
-                    multipleMachines
-                      ? `${target.project.title} · ${target.machineLabel}`
-                      : target.project.title
-                  }
-                >
-                  <span
-                    className="ade-home-project-mark"
-                    style={
-                      { "--ade-project-color": projectAccentColor(target.key) } as Record<
-                        string,
-                        string
-                      >
+        </header>
+        <div className="ade-home-inner">
+          <Overnight needsYouCount={needsYouCount} />
+          {selected === null ? (
+            <p className="ade-home-empty" role="status">
+              {loading
+                ? "Cargando proyectos…"
+                : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
+            </p>
+          ) : (
+            <>
+              <ToggleGroup
+                value={[selected.key]}
+                deselectable={false}
+                onValueChange={(values) => {
+                  const next = values[0];
+                  if (next !== undefined) setSelectedKey(next);
+                }}
+                aria-label="Proyecto donde empezar el hilo"
+                className="ade-home-projects"
+              >
+                {projects.map((target) => (
+                  <Toggle
+                    key={target.key}
+                    value={target.key}
+                    className="ade-home-project-chip"
+                    aria-label={
+                      multipleMachines
+                        ? `${target.project.title} · ${target.machineLabel}`
+                        : target.project.title
                     }
-                    aria-hidden
                   >
-                    {projectMonogram(target.project.title)}
-                  </span>
-                  <span className="ade-home-project-name">{target.project.title}</span>
-                  {multipleMachines ? (
-                    <span className="ade-home-project-machine">{target.machineLabel}</span>
-                  ) : null}
-                </Toggle>
-              ))}
-            </ToggleGroup>
-            <NewThreadComposer
-              environmentId={selected.environmentId}
-              machineLabel={selected.machineLabel}
-              project={selected.project}
-              onEngage={() => {
-                if (selectedKey === null) setSelectedKey(selected.key);
-              }}
-              onThreadCreated={openThread}
-            />
-          </>
-        )}
+                    <span
+                      className="ade-home-project-mark"
+                      style={
+                        { "--ade-project-color": projectAccentColor(target.key) } as Record<
+                          string,
+                          string
+                        >
+                      }
+                      aria-hidden
+                    >
+                      {projectMonogram(target.project.title)}
+                    </span>
+                    <span className="ade-home-project-name">{target.project.title}</span>
+                    {multipleMachines ? (
+                      <span className="ade-home-project-machine">{target.machineLabel}</span>
+                    ) : null}
+                  </Toggle>
+                ))}
+              </ToggleGroup>
+              <NewThreadComposer
+                environmentId={selected.environmentId}
+                machineLabel={selected.machineLabel}
+                project={selected.project}
+                onEngage={() => {
+                  if (selectedKey === null) setSelectedKey(selected.key);
+                }}
+                onThreadCreated={openThread}
+              />
+            </>
+          )}
+        </div>
       </div>
     </section>
   );

@@ -54,11 +54,10 @@ const bucket = (
 const machine = (
   buckets: UsageBucket[],
   id = "env-1",
-  { hostId = id, status = "ok", readAt = "2026-11-25T10:00:00.000Z", home = "/home/dev" } = {} as {
+  { hostId = id, status = "ok", readAt = "2026-11-25T10:00:00.000Z" } = {} as {
     hostId?: string;
     status?: "ok" | "partial" | "failed";
     readAt?: string;
-    home?: string;
   },
 ): EnvironmentUsage => ({
   environmentId: id as EnvironmentId,
@@ -71,7 +70,7 @@ const machine = (
     untilDay: "2026-11-25" as UsageDay,
     buckets,
     sources: [...new Set(buckets.map((entry) => entry.provider))].map((provider) => ({
-      fingerprint: { hostId, provider, resolvedHomePath: home, volumeId: "1:1" },
+      fingerprint: { hostId, provider, resolvedHomePath: "/home/dev", volumeId: "1:1" },
       status,
       scannedFiles: 1,
       skippedFiles: 0,
@@ -298,31 +297,25 @@ describe("gasto", () => {
         bucket("claude", "claude-opus-5-5", "2026-11-25", 4),
         // The day before the 7 days up to 25 November: the previous period.
         bucket("claude", "claude-opus-5-5", "2026-11-18", 2),
+        // Read for a longer range, but before the previous week: neither period counts it.
+        bucket("claude", "claude-opus-5-5", "2026-11-11", 50),
       ],
       "pc",
     ),
-    machine(
-      [
-        bucket("codex", "gpt-6", "2026-11-20", 3, {
-          ...reported,
-          sourcePath: "/home/dev/.codex-work/sessions",
-        }),
-      ],
-      "vps",
-      { home: "/home/dev/.codex-work/sessions" },
-    ),
+    machine([bucket("codex", "gpt-6", "2026-11-20", 3, reported)], "vps"),
   ];
 
-  it("splits the range from the period before it, by model and account", () => {
+  it("takes the range and the period before it from a longer window, by model and account", () => {
     const week = gasto(usage, new Map(), "7d", "2026-11-25");
     expect(week.rows.map((row) => [row.model, row.account, row.kind, row.costUsd])).toEqual([
-      ["claude-opus-5-5", "pc", "estimated", 4],
-      ["gpt-6", "vps · .codex-work", "real", 3],
+      ["claude-opus-5-5", "pc · Claude", "estimated", 4],
+      ["gpt-6", "vps · Codex", "real", 3],
     ]);
     expect(week.current).toEqual({
       tokens: 2000,
       costUsd: 7,
       estimatedUsd: 4,
+      mixedUsd: 0,
       priced: true,
       requests: 4,
     });
@@ -347,9 +340,9 @@ describe("gasto", () => {
   it("has no previous period for «Todo» and charts from the first day with usage", () => {
     const all = gasto(usage, new Map(), "all", "2026-11-25");
     expect(all.previous).toBeNull();
-    expect(all.current.tokens).toBe(3000);
-    expect(all.bins[0]?.key).toBe("2026-11-18");
-    expect(all.bins).toHaveLength(8);
+    expect(all.current.tokens).toBe(4000);
+    expect(all.firstDay).toBe("2026-11-11");
+    expect(all.bins).toHaveLength(15);
   });
 
   it.each([
@@ -366,6 +359,8 @@ describe("gasto", () => {
     [1, 2, -0.5],
     [5, 0, null],
     [5, null, null],
+    // A figure the current period does not have is compared with nothing.
+    [null, 2, null],
   ] as const)("trend of %s against %s is %s", (current, previous, expected) => {
     expect(trend(current, previous)).toBe(expected);
   });

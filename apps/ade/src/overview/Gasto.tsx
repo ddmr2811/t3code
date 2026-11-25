@@ -4,17 +4,29 @@ import { ArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
-  ProviderDriverKind,
   type UsageProviderKind,
 } from "@t3tools/contracts";
-import { formatCount, formatDayShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import {
+  formatCount,
+  formatDayShort,
+  formatTokens,
+  formatUsd,
+  makeWindow,
+} from "@t3tools/shared/usageFormat";
 import { Toggle, ToggleGroup } from "@ui-sdk/react/toggle";
 import { useMemo, useState } from "react";
 
 import { ProviderIcon } from "../composer/ProviderIcon.tsx";
-import { type GastoRow, type SpendRange, gasto, rangeWindow, trend } from "./gasto.logic.ts";
+import {
+  type GastoRow,
+  type SpendRange,
+  gasto,
+  trend,
+  usageDriver,
+  windowDays,
+} from "./gasto.logic.ts";
 import { WidenUsage } from "./Spend.tsx";
-import { flatProvidersAtom, spendUsageAtom, USAGE_PROVIDER_OF_DRIVER } from "./spend.state.ts";
+import { flatProvidersAtom, spendUsageAtom } from "./spend.state.ts";
 
 const RANGES: ReadonlyArray<{ value: SpendRange; label: string }> = [
   { value: "7d", label: "7 días" },
@@ -28,6 +40,7 @@ const UNIT_LABEL = { day: "día", week: "semana", month: "mes" } as const;
 
 const usd = (value: number) => formatUsd(value, "es-ES");
 const count = (value: number) => formatCount(value, "es-ES");
+const day = (value: string) => formatDayShort(value, "es-ES");
 const monthFormat = new Intl.DateTimeFormat("es-ES", {
   month: "short",
   year: "2-digit",
@@ -35,16 +48,12 @@ const monthFormat = new Intl.DateTimeFormat("es-ES", {
 });
 
 const binLabel = (key: string, unit: keyof typeof UNIT_LABEL) =>
-  unit === "month"
-    ? monthFormat.format(Date.parse(`${key}-01T00:00:00Z`))
-    : formatDayShort(key, "es-ES");
+  unit === "month" ? monthFormat.format(Date.parse(`${key}-01T00:00:00Z`)) : day(key);
 
-const DRIVER_OF_USAGE = Object.fromEntries(
-  Object.entries(USAGE_PROVIDER_OF_DRIVER).map(([driver, provider]) => [provider, driver]),
-) as Record<UsageProviderKind, string>;
+const usageKey = (days: number) => JSON.stringify(makeWindow(days));
 
 function ProviderMark(props: { provider: UsageProviderKind }) {
-  const driver = ProviderDriverKind.make(DRIVER_OF_USAGE[props.provider] ?? props.provider);
+  const driver = usageDriver(props.provider);
   return (
     <ProviderIcon
       provider={{
@@ -57,8 +66,7 @@ function ProviderMark(props: { provider: UsageProviderKind }) {
   );
 }
 
-function Trend(props: { current: number; previous: number | null; all: boolean }) {
-  if (props.all) return <span className="ade-gasto-trend">todo el historial</span>;
+function Trend(props: { current: number; previous: number | null }) {
   const change = trend(props.current, props.previous);
   if (change === null) return <span className="ade-gasto-trend">sin datos previos</span>;
   if (Math.round(change * 100) === 0) {
@@ -74,20 +82,32 @@ function Trend(props: { current: number; previous: number | null; all: boolean }
   );
 }
 
+/** A figure, `null` when unknown, against the same figure of the period before. */
 function Stat(props: {
   label: string;
-  value: string;
-  current: number;
+  current: number | null;
   previous: number | null;
-  all: boolean;
-  note?: string | undefined;
+  format: (value: number) => string;
+  /** «Todo»: no period before, only where the usage read starts. */
+  since: string | null;
+  notes?: ReadonlyArray<string>;
 }) {
   return (
     <section className="ade-gasto-stat">
       <h2 className="ade-label">{props.label}</h2>
-      <p className="ade-gasto-figure">{props.value}</p>
-      <Trend current={props.current} previous={props.previous} all={props.all} />
-      {props.note === undefined ? null : <p className="ade-gasto-note">{props.note}</p>}
+      <p className="ade-gasto-figure">
+        {props.current === null ? "Sin datos" : props.format(props.current)}
+      </p>
+      {props.current === null ? null : props.since !== null ? (
+        <span className="ade-gasto-trend">desde {day(props.since)}</span>
+      ) : (
+        <Trend current={props.current} previous={props.previous} />
+      )}
+      {props.notes?.map((note) => (
+        <p key={note} className="ade-gasto-note">
+          {note}
+        </p>
+      ))}
     </section>
   );
 }
@@ -107,22 +127,36 @@ function CostCell(props: { row: GastoRow; perRequest?: boolean }) {
   );
 }
 
+const orNull = (value: number) => (value > 0 ? value : null);
+
 export function GastoView() {
   const [range, setRange] = useState<SpendRange>("7d");
-  const window = rangeWindow(range);
-  const usage = useAtomValue(spendUsageAtom(JSON.stringify(window)));
+  // The window only grows: a shorter range reuses what was read, a longer one reads once more.
+  const [wantDays, setWantDays] = useState(windowDays("7d"));
+  // What the screen shows: kept while a longer window is read, so nothing empties meanwhile.
+  const [shown, setShown] = useState({ range, days: wantDays });
+  const wanted = useAtomValue(spendUsageAtom(usageKey(wantDays)));
+  if (shown.range !== range && windowDays(range) <= shown.days) {
+    setShown({ range, days: shown.days });
+  } else if (shown.days < wantDays && !wanted.pending) {
+    setShown({ range, days: wantDays });
+  }
+  const shownWindow = makeWindow(shown.days);
+  const usage = useAtomValue(spendUsageAtom(usageKey(shown.days)));
   const flat = useAtomValue(flatProvidersAtom);
   const data = useMemo(
-    () => gasto(usage.environments, flat.byEnvironment, range, window.untilDay),
-    [usage.environments, flat, range, window.untilDay],
+    () => gasto(usage.environments, flat.byEnvironment, shown.range, shownWindow.untilDay),
+    [usage.environments, flat, shown.range, shownWindow.untilDay],
   );
-  const all = range === "all";
   const { current, previous } = data;
+  const since = shown.range === "all" ? data.firstDay : null;
   const perRequest = (totals: typeof current) =>
-    totals.requests === 0 ? 0 : totals.tokens / totals.requests;
+    totals.requests === 0 ? null : totals.tokens / totals.requests;
   const maxTokens = Math.max(0, ...data.bins.map((bin) => bin.tokens));
   const missing = [...usage.needsPairing.map((machine) => machine.label), ...usage.failed];
+  const readingMore = shown.days < wantDays;
   const empty = data.rows.length === 0;
+  const lastBin = data.bins.at(-1);
 
   return (
     <section className="ade-gasto" aria-label="Gasto">
@@ -133,7 +167,9 @@ export function GastoView() {
           deselectable={false}
           onValueChange={(values) => {
             const next = RANGES.find((option) => option.value === values[0]);
-            if (next !== undefined) setRange(next.value);
+            if (next === undefined) return;
+            setRange(next.value);
+            setWantDays((days) => Math.max(days, windowDays(next.value)));
           }}
           aria-label="Periodo"
           className="ade-gasto-ranges"
@@ -146,9 +182,18 @@ export function GastoView() {
         </ToggleGroup>
       </header>
 
+      {readingMore ? (
+        <p className="ade-gasto-note" role="status">
+          Leyendo {RANGES.find((option) => option.value === range)?.label.toLowerCase()}…
+        </p>
+      ) : null}
       {missing.length > 0 ? (
         <p className="ade-gasto-note" data-level="high">
           Total parcial: no está todo el uso de {missing.join(", ")}.
+        </p>
+      ) : usage.pending && !empty ? (
+        <p className="ade-gasto-note" data-level="high">
+          Total parcial: aún se lee el uso de alguna máquina.
         </p>
       ) : null}
       {usage.needsPairing.map((machine) => (
@@ -164,38 +209,39 @@ export function GastoView() {
           <div className="ade-gasto-stats">
             <Stat
               label="Tokens"
-              value={current.tokens === 0 ? "Sin datos" : formatTokens(current.tokens)}
-              current={current.tokens}
+              current={orNull(current.tokens)}
               previous={previous?.tokens ?? null}
-              all={all}
+              format={formatTokens}
+              since={since}
             />
             <Stat
               label="Coste"
-              value={current.priced ? usd(current.costUsd) : "Sin datos"}
-              current={current.costUsd}
+              current={current.priced ? current.costUsd : null}
               previous={previous?.priced ? previous.costUsd : null}
-              all={all}
-              note={
-                current.estimatedUsd > 0
-                  ? `incluye ${usd(current.estimatedUsd)} est. a tarifa`
-                  : undefined
-              }
+              format={usd}
+              since={since}
+              notes={[
+                ...(current.estimatedUsd > 0
+                  ? [`incluye ${usd(current.estimatedUsd)} est. a tarifa`]
+                  : []),
+                ...(current.mixedUsd > 0
+                  ? [`${usd(current.mixedUsd)} de esa cifra incluye est. a tarifa`]
+                  : []),
+              ]}
             />
             <Stat
               label="Peticiones"
-              value={current.requests === 0 ? "Sin datos" : count(current.requests)}
-              current={current.requests}
+              current={orNull(current.requests)}
               previous={previous?.requests ?? null}
-              all={all}
+              format={count}
+              since={since}
             />
             <Stat
               label="Media por petición"
-              value={
-                current.requests === 0 ? "Sin datos" : `${formatTokens(perRequest(current))} tok`
-              }
               current={perRequest(current)}
               previous={previous === null ? null : perRequest(previous)}
-              all={all}
+              format={(value) => `${formatTokens(value)} tok`}
+              since={since}
             />
           </div>
 
@@ -205,26 +251,35 @@ export function GastoView() {
               <span className="ade-gasto-chart-max">máx. {formatTokens(maxTokens)}</span>
             </figcaption>
             <ol className="ade-gasto-bars">
-              {data.bins.map((bin) => (
-                <li key={bin.key}>
-                  <span
-                    className="ade-gasto-bar"
-                    style={{ height: maxTokens === 0 ? 0 : `${(bin.tokens / maxTokens) * 100}%` }}
-                  />
-                  <span className="ade-sr-only">
-                    {binLabel(bin.key, data.unit)}: {formatTokens(bin.tokens)} tokens
-                  </span>
-                </li>
-              ))}
+              {data.bins.map((bin, index) => {
+                // A week's key is its Monday; the first one may start later, on the range's first day.
+                const label =
+                  index === 0 && data.unit !== "month"
+                    ? day(data.firstDay)
+                    : binLabel(bin.key, data.unit);
+                const text = `${label}: ${formatTokens(bin.tokens)} tok · ${usd(bin.costUsd)}`;
+                return (
+                  <li key={bin.key} data-label={text}>
+                    <span
+                      className="ade-gasto-bar"
+                      style={{ height: maxTokens === 0 ? 0 : `${(bin.tokens / maxTokens) * 100}%` }}
+                    />
+                    <span className="ade-sr-only">{text}</span>
+                  </li>
+                );
+              })}
             </ol>
-            {data.bins.length > 0 ? (
+            {lastBin === undefined ? null : (
               <div className="ade-gasto-axis" aria-hidden>
-                <span>{binLabel(data.bins[0]!.key, data.unit)}</span>
-                <span>{binLabel(data.bins.at(-1)!.key, data.unit)}</span>
+                <span>
+                  {data.unit === "month"
+                    ? binLabel(data.bins[0]!.key, "month")
+                    : day(data.firstDay)}
+                </span>
+                {data.bins.length > 1 ? <span>{binLabel(lastBin.key, data.unit)}</span> : null}
               </div>
-            ) : null}
+            )}
           </figure>
-
           <div className="ade-gasto-table-wrap">
             <table className="ade-gasto-table">
               <thead>
