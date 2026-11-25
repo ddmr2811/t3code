@@ -342,6 +342,12 @@ export function DecisionsPanel() {
     environmentId: effectiveMachine,
   });
 
+  const later = (key: string, ids: ReadonlyArray<string>) => {
+    // Snoozing the last one must not close the panel under the user's hands.
+    if (waitingKeys.length === 1) setOpen(true);
+    snoozeDecision(registry, key, ids, [...waitingKeys, ...snoozedKeys]);
+  };
+
   const handleToggleAlerts = async () => {
     await togglePendingAlerts(registry);
   };
@@ -406,9 +412,7 @@ export function DecisionsPanel() {
           waiting={waiting}
           onLater={(key, ids) => {
             setMode("una");
-            // Snoozing the last one must not close the panel under the user's hands.
-            if (waitingKeys.length === 1) setOpen(true);
-            snoozeDecision(registry, key, ids, [...waitingKeys, ...snoozedKeys]);
+            later(key, ids);
           }}
           onOpenBackLayer={openBackLayer}
         />
@@ -462,6 +466,8 @@ export function DecisionsPanel() {
           <BotNotices
             include={(key) => !snoozedKeys.includes(key)}
             onOpenBackLayer={openBackLayer}
+            // A bot notice sets aside just itself, as in the one-at-a-time tray.
+            onLater={(key) => later(key, [key])}
           />
           {visible.length === 0 &&
           handoffs.every((handoff) => snoozedKeys.includes(handoff.key)) ? (

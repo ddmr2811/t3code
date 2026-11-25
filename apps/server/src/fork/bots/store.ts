@@ -29,6 +29,8 @@ const uniqueBots = Schema.makeFilter(
 
 /** Refusals kept per project; an older one then rests on the memory note alone. */
 export const FORK_BOTS_VETOES_PER_PROJECT = 20;
+/** Proposals and vetoes stop here, in UTF-8 bytes as saved, so bots added by hand keep room. */
+export const FORK_BOTS_PROPOSALS_MAX_BYTES = 512 * 1024;
 
 /** A «No» to a proposed bot. Never sent to clients. */
 const StoredVeto = Schema.Struct({

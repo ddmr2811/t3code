@@ -19,7 +19,7 @@ import {
 import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
-import { serverEnvironment } from "../state.ts";
+import { environmentProjects, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
 
 type BotNotice = {
@@ -83,7 +83,9 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
 export function BotNotices(props: {
   onOpenBackLayer: (threadKey: string) => void;
   include: (key: string) => boolean;
+  /** The one-at-a-time tray's «Luego»; the list passes `onLater` and each notice gets its own. */
   later?: ReactNode;
+  onLater?: (key: string) => void;
 }) {
   const registry = useContext(RegistryContext);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -116,11 +118,25 @@ export function BotNotices(props: {
         const common = {
           machineLabel: catalog.entries.get(environmentId)?.target.label ?? environmentId,
           title: notice.title,
-          later: props.later,
+          later:
+            props.onLater === undefined ? (
+              props.later
+            ) : (
+              <button
+                type="button"
+                className="ade-button-quiet"
+                onClick={() => props.onLater?.(key)}
+              >
+                Luego
+              </button>
+            ),
           environmentId,
           sending: sending.has(key),
+          // A coordinator moved to another project no longer speaks for this proposal.
           onOpen:
-            from?.threadId == null
+            from?.threadId == null ||
+            (notice.type === "proposal" &&
+              (!from.coordinator || from.projectId !== notice.proposal.projectId))
               ? null
               : () =>
                   props.onOpenBackLayer(
@@ -187,6 +203,7 @@ interface NoticeProps {
 function NoticeFrame(
   props: NoticeProps & {
     label: string;
+    context: ReactNode;
     openLabel: string;
     heading?: ReactNode;
     children: ReactNode;
@@ -196,7 +213,9 @@ function NoticeFrame(
   return (
     <section className="ade-decision" aria-label={props.title}>
       <div className="ade-decision-top">
-        <p className="ade-thread-view-meta">{props.machineLabel} · Bots</p>
+        <p className="ade-thread-view-meta">
+          {props.machineLabel} · {props.context}
+        </p>
         <div className="ade-decision-kinds">
           <span className="ade-chip" data-kind="approval">
             {props.label}
@@ -230,6 +249,10 @@ function ProposalNotice(
   const canAnswer = useAtomValue(forkBotsAnswerProposalCommand.permissionAtom(props.environmentId));
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const { proposal } = props;
+  const projectTitle = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(props.environmentId),
+    (index) => index.get(proposal.projectId)?.title ?? null,
+  );
   const model = availableMachineModelOptions(config).find(
     (option) =>
       option.instanceId === proposal.modelSelection.instanceId &&
@@ -245,6 +268,7 @@ function ProposalNotice(
         </>
       }
       label="Bot nuevo"
+      context={projectTitle ?? "Proyecto sin nombre"}
       openLabel="Abrir el hilo del coordinador"
       actions={
         <>
@@ -318,6 +342,7 @@ function HandoffNotice(
     <NoticeFrame
       {...props}
       label="Aviso"
+      context="Bots"
       openLabel="Abrir el hilo de origen"
       actions={
         <button

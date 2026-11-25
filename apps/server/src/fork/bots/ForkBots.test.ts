@@ -884,34 +884,55 @@ describe("ForkBots", () => {
       ),
     );
 
-    it.effect("keeps a project's proposals and refusals small enough for 50 projects", () =>
+    it.effect("keeps a few refusals per project, and proposals within their byte budget", () =>
       withBots(({ service, botsFile, fs }) =>
         Effect.gen(function* () {
-          const { from } = yield* coordinatorThread(service);
+          const { coordinator, from } = yield* coordinatorThread(service);
+          // Three bytes per character in UTF-8, as CJK text is.
+          const wide = (length: number) => "漢".repeat(length);
           const longest = (index: number) => ({
             handle: `${index}`.padEnd(32, "x"),
-            name: `${index}`.padEnd(80, "n"),
-            role: "r".repeat(120),
-            instructions: "i".repeat(4000),
-            routine: "y".repeat(500),
-            reason: "z".repeat(500),
+            name: `${wide(77)}${String(index).padStart(3, "0")}`,
+            role: wide(120),
+            instructions: wide(4000),
+            routine: wide(500),
+            reason: wide(500),
           });
-          // More refusals than are kept, then one answered and one pending, all at full length.
           for (let index = 0; index <= FORK_BOTS_VETOES_PER_PROJECT + 5; index += 1) {
             const proposal = yield* service.propose(longest(index), from);
             yield* service.answerProposal({ id: proposal.id, answer: "reject" });
             yield* TestClock.adjust("7 days");
           }
-          yield* service.propose(longest(99), from);
           const stored = JSON.parse(yield* fs.readFileString(botsFile));
           expect(stored.vetoes).toHaveLength(FORK_BOTS_VETOES_PER_PROJECT);
-          expect(stored.proposals).toHaveLength(2);
-          const perProject = JSON.stringify({
-            proposals: stored.proposals,
-            vetoes: stored.vetoes,
-          }).length;
-          // 50 projects at worst stay well under the 1 MiB bot file, beside the bots themselves.
-          expect(perProject * 50).toBeLessThan(600_000);
+          expect(stored.proposals).toHaveLength(1);
+
+          // Other projects' pending proposals fill the budget, with the bot file still far from full.
+          stored.proposals = Array.from({ length: 40 }, (_, index) => ({
+            ...longest(100 + index),
+            id: `proposal:other-${index}`,
+            projectId: `proj-other-${index}`,
+            proposedBy: coordinator.id,
+            runtimeMode: "approval-required",
+            modelSelection: { instanceId: codex, model: "gpt-5.4" },
+            status: "pending",
+            botId: null,
+            createdAt: "1969-01-01T00:00:00.000Z",
+            decidedAt: null,
+          }));
+          yield* fs.writeFileString(botsFile, JSON.stringify(stored, null, 2));
+          const full = yield* service.propose(longest(99), from).pipe(Effect.flip);
+          expect(full).toMatchObject({
+            reason: "limitExceeded",
+            message: expect.stringContaining("no room"),
+          });
+          // A bot added by hand still has its room.
+          const manual = yield* service.upsert({
+            ...baseBot,
+            handle: "manual",
+            instructions: wide(8000),
+          });
+          expect(manual.handle).toBe("manual");
         }),
       ),
     );

@@ -156,11 +156,31 @@ export const NIGHTLY_CONSOLIDATION_PROMPT = [
   "5. Repasa las peticiones del usuario de los últimos 30 días en este hilo y en la memoria. Si pidió al menos 3 veces algo parecido que ningún bot cubre, propón un bot con bot_propose (nombre, rol, instrucciones, rutina y el porqué con fechas). Antes, busca «dijo que no» con project_memory_search y no propongas nada parecido a lo rechazado. Si no hay un caso claro, no propongas nada.",
 ].join("\n");
 
-const NIGHTLY_TITLE = "Consolidación nocturna";
+/** The nightly prompt before F8, still saved in coordinators' tasks until they are updated. */
+const NIGHTLY_PROMPT_BEFORE_F8 = NIGHTLY_CONSOLIDATION_PROMPT.split("\n").slice(0, 5).join("\n");
 
-/** The coordinator's nightly task, also one saved with an older prompt so it can be updated. */
-export function isNightlyTask(task: Pick<ScheduledTask, "title">): boolean {
-  return task.title.startsWith(`${NIGHTLY_TITLE} · `);
+/** Recognised by its exact prompt, so another task with a similar title is never touched. */
+export function isNightlyTask(task: Pick<ScheduledTask, "prompt">): boolean {
+  return task.prompt === NIGHTLY_CONSOLIDATION_PROMPT || task.prompt === NIGHTLY_PROMPT_BEFORE_F8;
+}
+
+/** Brings an older nightly task to the current prompt; schedule, pause and the rest stay. */
+export function nightlyPromptUpdate(task: ScheduledTask): ScheduledTaskUpsertInput {
+  return {
+    id: task.id,
+    requireExisting: true,
+    title: task.title,
+    prompt: NIGHTLY_CONSOLIDATION_PROMPT,
+    enabled: task.enabled,
+    schedule: task.schedule,
+    projectId: task.projectId,
+    threadId: task.threadId,
+    ...(task.threadMode === undefined ? {} : { threadMode: task.threadMode }),
+    workspaceStrategy: task.workspaceStrategy,
+    modelSelection: task.modelSelection,
+    runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
+  };
 }
 
 export type CoordinatorRoutine =
@@ -171,7 +191,7 @@ export type CoordinatorRoutine =
       readonly timeOfDay: string;
     }
   | { readonly kind: "webhook"; readonly title: string; readonly prompt: string }
-  | { readonly kind: "nightly"; readonly id?: ScheduledTask["id"] | undefined };
+  | { readonly kind: "nightly" };
 
 /** Routines continue the coordinator's own thread, so they run as it, with its memory tools. */
 export function coordinatorRoutineInput(
@@ -182,8 +202,7 @@ export function coordinatorRoutineInput(
   const content =
     routine.kind === "nightly"
       ? {
-          ...(routine.id === undefined ? {} : { id: routine.id }),
-          title: `${NIGHTLY_TITLE} · ${bot.name}`,
+          title: `Consolidación nocturna · ${bot.name}`,
           prompt: NIGHTLY_CONSOLIDATION_PROMPT,
           schedule: { type: "fixed_time", timeOfDay: "03:00" } as const,
         }

@@ -25,6 +25,7 @@ import {
   type CoordinatorRoutine,
   NIGHTLY_CONSOLIDATION_PROMPT,
   isNightlyTask,
+  nightlyPromptUpdate,
   coordinatorRoutineInput,
 } from "./bots.logic.ts";
 import {
@@ -337,7 +338,13 @@ function CoordinatorRoutines(props: {
     const failure = await runCommand(
       registry,
       serverEnvironment.upsertScheduledTask,
-      { environmentId, input: coordinatorRoutineInput(bot, threadId, routine) },
+      {
+        environmentId,
+        input:
+          routine.kind === "nightly" && nightly !== undefined
+            ? nightlyPromptUpdate(nightly)
+            : coordinatorRoutineInput(bot, threadId, routine),
+      },
       "No se pudo programar la rutina",
     );
     setBusy(false);
@@ -418,7 +425,7 @@ function CoordinatorRoutines(props: {
           <button
             type="button"
             className="ade-button-quiet m-0!"
-            onClick={() => void create({ kind: "nightly", id: nightly?.id })}
+            onClick={() => void create({ kind: "nightly" })}
             disabled={disabled || (nightly !== undefined && !nightlyOutdated)}
           >
             {nightly === undefined
