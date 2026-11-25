@@ -1,4 +1,5 @@
 import type {
+  EnvironmentThreadShell,
   ThreadStructure,
   ThreadStructureTurnItem,
 } from "@t3tools/client-runtime/state/models";
@@ -18,6 +19,8 @@ import {
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
+
+import { threadState } from "../sidebar/sidebar.logic.ts";
 
 /** Line and file counts the Spanish way, whatever the browser's language. */
 export const formatCount = new Intl.NumberFormat("es").format;
@@ -123,6 +126,23 @@ export interface BackgroundWork {
     readonly asksYou: boolean;
     readonly childThreadId: ThreadId | undefined;
   }>;
+}
+
+/**
+ * This machine's threads that ask the user now, newline-joined so readers re-render only when
+ * the list changes. A child whose own subagent asks counts too: the question reaches the user
+ * through it.
+ */
+export function askingThreadIds(
+  shells: ReadonlyArray<
+    Parameters<typeof threadState>[0] & Pick<EnvironmentThreadShell, "environmentId" | "id">
+  >,
+  environmentId: string,
+): string {
+  return shells
+    .filter((shell) => shell.environmentId === environmentId && threadState(shell) === "needs-you")
+    .map((shell) => shell.id)
+    .join("\n");
 }
 
 /**

@@ -9,7 +9,6 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useContext, useState } from "react";
 
-import { threadNeedsYou } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { runCommand } from "../composer/Composer.tsx";
 import {
   environmentThreadDetails,
@@ -18,7 +17,7 @@ import {
   threadEnvironment,
 } from "../state.ts";
 import { tickElapsed } from "./elapsed.ts";
-import { backgroundWork } from "./timeline.logic.ts";
+import { askingThreadIds, backgroundWork } from "./timeline.logic.ts";
 
 /** Work the agent left going, such as a delegated task, above the composer as T3 shows it. */
 export function BackgroundWorkBar(props: {
@@ -38,13 +37,8 @@ export function BackgroundWorkBar(props: {
   const [stop, setStop] = useState<BackgroundWorkStopRequest | null>(null);
   // Tied to the work it was about, so a late failure never lands on newer work.
   const [error, setError] = useState<{ tasksKey: string | null; message: string } | null>(null);
-  // This machine's threads that ask the user now, by id: the same rule as «te necesitan». A
-  // string, so other shell updates re-render nothing here.
   const askingIds = useAtomValue(environmentThreadShells.quietThreadShellsAtom, (shells) =>
-    shells
-      .filter((shell) => shell.environmentId === threadRef.environmentId && threadNeedsYou(shell))
-      .map((shell) => shell.id)
-      .join("\n"),
+    askingThreadIds(shells, threadRef.environmentId),
   );
   const work =
     thread === null ? null : backgroundWork(thread.projection, new Set(askingIds.split("\n")));

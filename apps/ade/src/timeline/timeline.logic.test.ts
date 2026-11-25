@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  askingThreadIds,
   backgroundWork,
   formatElapsed,
   groupTurns,
@@ -171,6 +172,38 @@ describe("liveActivity", () => {
       }),
     );
     expect(work).toMatchObject({ title: "En marcha · 2 tareas", startedAtMs: null });
+  });
+});
+
+describe("askingThreadIds", () => {
+  const shell = (id: string, overrides: Record<string, unknown> = {}) =>
+    ({
+      environmentId: "machine-a",
+      id,
+      archivedAt: null,
+      deletedAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default",
+      hasActionableProposedPlan: false,
+      latestRun: null,
+      runtime: null,
+      pendingSubagentRequest: null,
+      ...overrides,
+    }) as never;
+
+  it("counts a child whose own subagent asks for approval, on this machine only", () => {
+    expect(
+      askingThreadIds(
+        [
+          shell("child", { pendingSubagentRequest: "approval" }),
+          shell("quiet"),
+          shell("asks", { hasPendingUserInput: true }),
+          shell("elsewhere", { environmentId: "machine-b", hasPendingApprovals: true }),
+        ],
+        "machine-a",
+      ).split("\n"),
+    ).toEqual(["child", "asks"]);
   });
 });
 
