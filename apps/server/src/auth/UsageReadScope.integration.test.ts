@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off processEnvInEffect:off - spawns the real server and pairs over its real HTTP routes.
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off globalFetch:off processEnvInEffect:off - spawns the real server and pairs over its real HTTP routes.
 // Fork: `usage:read` opens the usage summary and nothing else. A real server, a real pairing link
 // and a real token exchange; only the scope in the link is chosen by the test.
 import * as NodeChildProcess from "node:child_process";
