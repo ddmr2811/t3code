@@ -11,9 +11,11 @@ import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
+  AuthGrantScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   allowsPreviewTunnel,
+  canDelegateScope,
   isManagedSettingPath,
   type AuthClientSession,
   type AuthPairingLink,
@@ -1465,7 +1467,9 @@ function ConnectionsSettingsContent({
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
                     environmentId={accessEnvironmentId}
-                    delegatableScopes={currentSessionScopes ?? []}
+                    delegatableScopes={AuthGrantScope.literals.filter((scope) =>
+                      canDelegateScope(currentSessionScopes ?? [], scope),
+                    )}
                     onPairingLinkCreated={handlePairingLinkCreated}
                     clientSessions={
                       canReadAccess &&

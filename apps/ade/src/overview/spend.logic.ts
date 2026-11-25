@@ -62,11 +62,20 @@ const KIND_ORDER: Record<SpendKind, number> = {
 const isListPriceOnly = (bucket: UsageBucket) =>
   bucket.costSource === "modelPriced" && bucket.providerReportedRecords === 0;
 
+const hasReportedCost = (bucket: UsageBucket) =>
+  bucket.costUsd > 0 &&
+  (bucket.costSource === "providerReported" || (bucket.providerReportedRecords ?? 0) > 0);
+
 function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
-  if (flat) return "flat";
+  // A reported charge is paid even on a machine with a flat plan for that provider.
+  if (flat && !hasReportedCost(bucket)) return "flat";
   if (bucket.costSource === "providerReported") return "real";
   if (bucket.costSource === "unpriced") return "unpriced";
-  return isListPriceOnly(bucket) ? "estimated" : "mixed";
+  if (isListPriceOnly(bucket)) return "estimated";
+  if (bucket.providerReportedRecords === undefined) return "mixed";
+  // Reported and unpriced records only: nothing in it is a list-price estimate.
+  const estimatedRecords = bucket.records - bucket.providerReportedRecords - bucket.unpricedRecords;
+  return estimatedRecords > 0 ? "mixed" : "real";
 }
 
 const bucketTokens = (bucket: UsageBucket) =>
@@ -105,7 +114,7 @@ function period(
     });
   }
   const lines = [...byLine.values()]
-    .filter((line) => line.tokens > 0)
+    .filter((line) => line.tokens > 0 || line.costUsd > 0)
     .toSorted(
       (a, b) =>
         KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.costUsd - a.costUsd || b.tokens - a.tokens,

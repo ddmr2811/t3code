@@ -135,6 +135,38 @@ describe("spendSummary with what the server cannot split", () => {
     expect(today.estimatedUsd).toBe(0);
   });
 
+  it("a reported charge stays real on a machine with a flat plan for that provider", () => {
+    const usage = machine([
+      bucket("opencode", "kimi-k2", "2026-11-25", 3, { costSource: "providerReported" }),
+    ]);
+    const flat = new Map([["env-1" as EnvironmentId, new Set(["opencode" as const])]]);
+    expect(spendSummary([usage], flat).today.realUsd).toBe(3);
+  });
+
+  it("keeps a reported charge that came with no tokens", () => {
+    const usage = machine([
+      bucket("cursor", "auto", "2026-11-25", 2, {
+        costSource: "providerReported",
+        totals: {
+          uncachedInputTokens: 0,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+      }),
+    ]);
+    expect(spendSummary([usage], new Map()).today.realUsd).toBe(2);
+  });
+
+  it("a group of reported and unpriced records only is not labelled as including estimates", () => {
+    const usage = machine([
+      bucket("codex", "gpt-5", "2026-11-25", 5, { providerReportedRecords: 1, unpricedRecords: 1 }),
+    ]);
+    const { today } = spendSummary([usage], new Map());
+    expect([today.realUsd, today.mixedUsd]).toEqual([5, 0]);
+  });
+
   it("a newer partial rescan of the same folder on another machine is not counted twice", () => {
     const cell = () => bucket("claude", "claude-opus-5-5", "2026-11-25", 4);
     const owner = machine([cell()], "pc", { hostId: "shared" });

@@ -1,4 +1,5 @@
 import {
+  canDelegateScope,
   authScopeRequiredResponse,
   AuthAccessTokenType,
   AuthAccessWriteScope,
@@ -511,7 +512,7 @@ export const layer = HttpApiBuilder.group(
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
             for (const delegatedScope of delegatedScopes) {
-              if (!session.scopes.has(delegatedScope)) {
+              if (!canDelegateScope(session.scopes, delegatedScope)) {
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }

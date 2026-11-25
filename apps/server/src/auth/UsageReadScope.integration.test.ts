@@ -11,7 +11,9 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessTokenType,
+  AuthAccessWriteScope,
   AuthEnvironmentBootstrapTokenType,
+  AuthOrchestrationReadScope,
   AuthTokenExchangeGrantType,
   AuthUsageReadScope,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
@@ -68,36 +70,65 @@ const runningServer = Effect.acquireRelease(
     }),
 );
 
-it.live("a client paired with only usage:read reads usage and no other diagnostics", () =>
+const pairCli = (
+  server: { readonly home: string; readonly env: NodeJS.ProcessEnv },
+  scopes: string[],
+) => {
+  const output = NodeChildProcess.execFileSync(
+    process.execPath,
+    [BIN, "pair", "--base-dir", server.home, ...scopes.flatMap((scope) => ["--scope", scope])],
+    { env: server.env, encoding: "utf8" },
+  );
+  const credential = /^Token: (\S+)$/m.exec(output)?.[1];
+  if (credential === undefined) throw new Error(`no token in:\n${output}`);
+  return credential;
+};
+
+/** The real token exchange; without `scope` the session gets the link's whole grant. */
+const exchange = (origin: string, credential: string, scope?: string) =>
+  fetch(`${origin}/oauth/token`, {
+    method: "POST",
+    body: new URLSearchParams({
+      grant_type: AuthTokenExchangeGrantType,
+      subject_token: credential,
+      subject_token_type: AuthEnvironmentBootstrapTokenType,
+      requested_token_type: AuthAccessTokenType,
+      ...(scope === undefined ? {} : { scope }),
+    }),
+  }).then((response) => response.json() as Promise<{ access_token: string; scope: string }>);
+
+const createLink = (origin: string, accessToken: string, scopes: string[]) =>
+  fetch(`${origin}/api/auth/pairing-token`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ scopes }),
+  });
+
+it.live("a standard session hands on usage:read, which reads usage and nothing else", () =>
   Effect.gen(function* () {
     const server = yield* runningServer;
     const origin = `http://127.0.0.1:${server.port}`;
-    const pairing = NodeChildProcess.execFileSync(
-      process.execPath,
-      [BIN, "pair", "--base-dir", server.home, "--scope", AuthUsageReadScope],
-      { env: server.env, encoding: "utf8" },
-    );
-    const credential = /^Token: (\S+)$/m.exec(pairing)?.[1];
-    assert.isDefined(credential);
 
-    const { ticket, scope } = yield* Effect.promise(async () => {
-      const exchanged = await fetch(`${origin}/oauth/token`, {
-        method: "POST",
-        body: new URLSearchParams({
-          grant_type: AuthTokenExchangeGrantType,
-          subject_token: credential!,
-          subject_token_type: AuthEnvironmentBootstrapTokenType,
-          requested_token_type: AuthAccessTokenType,
-          scope: AuthUsageReadScope,
-        }),
-      }).then((response) => response.json() as Promise<{ access_token: string; scope: string }>);
+    const { ticket, scope, withoutDiagnostics } = yield* Effect.promise(async () => {
+      // A standard session holds diagnostics:read but not usage:read, and may still delegate it.
+      const standard = await exchange(origin, pairCli(server, []));
+      const link = await createLink(origin, standard.access_token, [AuthUsageReadScope]);
+      const { credential } = (await link.json()) as { credential: string };
+      const exchanged = await exchange(origin, credential, AuthUsageReadScope);
       const issued = await fetch(`${origin}/api/auth/websocket-ticket`, {
         method: "POST",
         headers: { authorization: `Bearer ${exchanged.access_token}` },
       }).then((response) => response.json() as Promise<{ ticket: string }>);
-      return { ticket: issued.ticket, scope: exchanged.scope };
+      // Without diagnostics:read there is nothing to hand on.
+      const manager = await exchange(
+        origin,
+        pairCli(server, [AuthOrchestrationReadScope, AuthAccessWriteScope]),
+      );
+      const refused = await createLink(origin, manager.access_token, [AuthUsageReadScope]);
+      return { ticket: issued.ticket, scope: exchanged.scope, withoutDiagnostics: refused.status };
     });
     assert.equal(scope, AuthUsageReadScope);
+    assert.equal(withoutDiagnostics, 403);
 
     const socketUrl = new URL(`ws://127.0.0.1:${server.port}/ws`);
     socketUrl.searchParams.set("wsTicket", ticket);

@@ -153,6 +153,21 @@ export function sessionGrantsScope(
   return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
+/**
+ * Whether a session may put `scope` in a pairing link it creates: one it holds, or `usage:read`
+ * from `diagnostics:read`, which already reads the usage summary. Holding is not widened.
+ */
+export function canDelegateScope(
+  held: ReadonlyArray<AuthEnvironmentScope> | ReadonlySet<AuthEnvironmentScope>,
+  scope: AuthEnvironmentScope,
+): boolean {
+  const has = (candidate: AuthEnvironmentScope) =>
+    Array.isArray(held)
+      ? held.includes(candidate)
+      : (held as ReadonlySet<AuthEnvironmentScope>).has(candidate);
+  return has(scope) || (scope === AuthUsageReadScope && has(AuthDiagnosticsReadScope));
+}
+
 export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {
   const permissions = session.permissions;
   return (

@@ -154,7 +154,7 @@ export function SpendCard() {
         {usd(week)}
         {hasCap ? <span className="ade-spend-of"> de {usd(cap)}</span> : null}
       </p>
-      <p className="ade-summary-caption">reportado esta semana · hoy {usd(spend.today.realUsd)}</p>
+      <p className="ade-summary-caption">esta semana · hoy {usd(spend.today.realUsd)}</p>
       {spend.week.mixedUsd > 0 ? (
         <p className="ade-summary-caption">
           {usd(spend.week.mixedUsd)} de esa cifra{" "}
