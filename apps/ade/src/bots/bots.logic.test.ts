@@ -21,6 +21,7 @@ import {
   nightlyPromptUpdate,
   parseMention,
   pickBotProject,
+  SENTENCE_RUNTIME_MODES,
   validateBotDraft,
 } from "./bots.logic.ts";
 
@@ -237,6 +238,7 @@ describe("lacksMethod", () => {
 describe("pickBotProject", () => {
   const pc = EnvironmentId.make("pc");
   const nexo = EnvironmentId.make("nexo");
+  const cx53 = EnvironmentId.make("cx53");
   const project = (environmentId: EnvironmentId, id: string, title: string) => ({
     environmentId,
     projectId: ProjectId.make(id),
@@ -257,10 +259,41 @@ describe("pickBotProject", () => {
     // «Hub» is a word of the sentence only when it stands alone.
     ["un bot para hubris", "web"],
   ])("«%s» goes to %s", (sentence, expected) => {
-    expect(pickBotProject(sentence, projects, open)?.projectId).toBe(expected);
+    expect(pickBotProject(sentence, projects, open).map((choice) => choice.projectId)).toEqual([
+      expected,
+    ]);
   });
 
   it("takes the named project's machine, not the open one's", () => {
-    expect(pickBotProject("PR de Hubra", projects, open)?.environmentId).toBe(nexo);
+    expect(pickBotProject("PR de Hubra", projects, open)[0]?.environmentId).toBe(nexo);
+  });
+
+  it("settles a name on several machines on the open one, and asks when that does not", () => {
+    const twice = [...projects, project(cx53, "hubra-53", "Hubra")];
+    const openOnNexo = { environmentId: nexo, projectId: ProjectId.make("hubra-web") };
+    expect(pickBotProject("PR de Hubra", twice, openOnNexo)).toEqual([
+      { environmentId: nexo, projectId: "hubra" },
+    ]);
+    expect(
+      pickBotProject("PR de Hubra", twice, open).map((choice) => choice.environmentId),
+    ).toEqual([nexo, cx53]);
+  });
+});
+
+describe("validateBotDraft from a sentence", () => {
+  it.each(["auto", "full-access"] as const)("refuses %s", (runtimeMode) => {
+    const draft = {
+      handle: "revisor",
+      name: "Revisor",
+      role: "Revisa",
+      instructions: "Revisa los PR.",
+      projectId: "p",
+      runtimeMode,
+      instanceId: "codex",
+      model: "gpt-5.4",
+      coordinator: false,
+    };
+    expect(validateBotDraft(draft).ok).toBe(true);
+    expect(validateBotDraft(draft, SENTENCE_RUNTIME_MODES).ok).toBe(false);
   });
 });

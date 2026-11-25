@@ -39,8 +39,18 @@ export interface ValidatedBotDraft {
   readonly coordinator: boolean;
 }
 
+export const RUNTIME_MODES = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+] as const;
+/** A bot proposed from a sentence goes at most this far, even when adjusted. */
+export const SENTENCE_RUNTIME_MODES = ["approval-required", "auto-accept-edits"] as const;
+
 export function validateBotDraft(
   draft: BotDraft,
+  allowedModes: ReadonlyArray<BotDraft["runtimeMode"]> = RUNTIME_MODES,
 ):
   | { readonly ok: true; readonly value: ValidatedBotDraft }
   | { readonly ok: false; readonly error: string } {
@@ -70,6 +80,12 @@ export function validateBotDraft(
   }
   if (draft.instanceId === "" || draft.model === "") {
     return { ok: false, error: "Selecciona un modelo." };
+  }
+  if (!allowedModes.includes(draft.runtimeMode)) {
+    return {
+      ok: false,
+      error: "Desde una frase, los permisos llegan como mucho a «Aceptar ediciones».",
+    };
   }
   return {
     ok: true,
@@ -299,20 +315,24 @@ const words = (text: string) =>
     .trim()} `;
 
 /**
- * The project a sentence names, as whole words and on any paired machine, the longest name
- * winning («hubra web» over «hubra»); otherwise `open`, the project the user has open.
+ * Where a sentence's bot goes: the project it names, as whole words and on any paired machine,
+ * the longest name winning («hubra web» over «hubra»); otherwise `open`, the project the user has
+ * open. A name on several machines prefers the open one's; more than one result means ask.
  */
 export function pickBotProject(
   text: string,
   projects: ReadonlyArray<BotProjectChoice & { readonly title: string }>,
   open: BotProjectChoice | null,
-): BotProjectChoice | null {
+): ReadonlyArray<BotProjectChoice> {
   const sentence = words(text);
-  const named = projects
-    .filter((project) => words(project.title).trim() !== "")
-    .filter((project) => sentence.includes(words(project.title)))
-    .toSorted((left, right) => words(right.title).length - words(left.title).length)[0];
-  return named === undefined
-    ? open
-    : { environmentId: named.environmentId, projectId: named.projectId };
+  const named = projects.filter(
+    (project) => words(project.title).trim() !== "" && sentence.includes(words(project.title)),
+  );
+  const longest = Math.max(0, ...named.map((project) => words(project.title).length));
+  const best = named
+    .filter((project) => words(project.title).length === longest)
+    .map(({ environmentId, projectId }) => ({ environmentId, projectId }));
+  if (best.length === 0) return open === null ? [] : [open];
+  const onOpenMachine = best.filter((choice) => choice.environmentId === open?.environmentId);
+  return onOpenMachine.length > 0 ? onOpenMachine : best;
 }

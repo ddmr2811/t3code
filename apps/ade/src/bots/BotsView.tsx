@@ -33,8 +33,11 @@ import {
   botState,
   type BotDraft,
   parseMention,
+  type BotProjectChoice,
   pickBotProject,
   recentHandoffs,
+  RUNTIME_MODES,
+  SENTENCE_RUNTIME_MODES,
   routineThreadIds,
   validateBotDraft,
 } from "./bots.logic.ts";
@@ -55,7 +58,6 @@ import {
   refreshBots,
 } from "./bots.state.ts";
 
-const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "auto", "full-access"] as const;
 const MODEL_SEPARATOR = "\u0000";
 
 export const HANDOFF_STATUS_LABELS: Record<ForkBotHandoffStatus, string> = {
@@ -601,10 +603,13 @@ function BotEditor(props: {
         : `${firstModel.instanceId}${MODEL_SEPARATOR}${firstModel.model}`
       : `${draft.instanceId}${MODEL_SEPARATOR}${draft.model}`;
   const set = (patch: Partial<BotDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  // From a sentence the mode stays low; an existing bot's editor keeps every mode, as before.
+  const modes =
+    bot === null && props.initial !== undefined ? SENTENCE_RUNTIME_MODES : RUNTIME_MODES;
 
   const save = async () => {
     const [instanceId = "", model = ""] = modelKey.split(MODEL_SEPARATOR);
-    const validated = validateBotDraft({ ...draft, projectId, instanceId, model });
+    const validated = validateBotDraft({ ...draft, projectId, instanceId, model }, modes);
     if (!validated.ok) return setError(validated.error);
     setBusy(true);
     setError(null);
@@ -720,7 +725,7 @@ function BotEditor(props: {
                 set({ runtimeMode: event.target.value as BotDraft["runtimeMode"] })
               }
             >
-              {RUNTIME_MODES.map((mode) => (
+              {modes.map((mode) => (
                 <option key={mode} value={mode}>
                   {mode}
                 </option>
@@ -774,6 +779,8 @@ function BotEditor(props: {
 const FALLBACK_TEXT: Record<NonNullable<ForkBotDraft["fallbackReason"]>, string> = {
   noModel:
     "Propuesta sin IA: el modelo que redacta no está disponible en esta máquina. Se elige en Ajustes → General de T3.",
+  modelNotAllowed:
+    "Propuesta sin IA: el modelo elegido para redactar no está en la lista permitida (Gemini Flash o Kimi). Cámbialo en Ajustes → General de T3.",
   modelFailed: "Propuesta sin IA: el modelo que redacta no respondió.",
   invalidReply: "Propuesta sin IA: el modelo devolvió un borrador que no sirve.",
 };
@@ -807,7 +814,7 @@ function QuickCreate(props: {
     (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === selectedKey,
   );
   const firstProject = [...(allProjects.get(props.fallbackEnv)?.values() ?? [])][0];
-  const choice = pickBotProject(
+  const choices = pickBotProject(
     text,
     [...allProjects].flatMap(([environmentId, projects]) =>
       [...projects.values()].map((project) => ({
@@ -824,15 +831,22 @@ function QuickCreate(props: {
   );
 
   const reset = () => {
+    setAsking(false);
     setProposal(null);
     setText("");
     setError(null);
   };
 
-  const propose = async () => {
+  const [asking, setAsking] = useState(false);
+  const choice = choices.length === 1 ? choices[0]! : null;
+
+  const propose = async (picked: BotProjectChoice | null = choice) => {
     const sentence = text.trim();
     if (sentence === "" || busy) return;
-    if (choice === null) return setError("Primero añade un proyecto en alguna máquina.");
+    if (choices.length === 0) return setError("Primero añade un proyecto en alguna máquina.");
+    // The sentence leaves this device only once its machine is settled.
+    if (picked === null) return setAsking(true);
+    setAsking(false);
     setBusy(true);
     setError(null);
     setProposal(null);
@@ -840,11 +854,11 @@ function QuickCreate(props: {
       registry,
       forkBotsDraftCommand,
       {
-        environmentId: choice.environmentId,
-        input: { text: sentence, projectId: choice.projectId },
+        environmentId: picked.environmentId,
+        input: { text: sentence, projectId: picked.projectId },
       },
       "No se pudo proponer el bot",
-      (draft) => setProposal({ environmentId: choice.environmentId, draft }),
+      (draft) => setProposal({ environmentId: picked.environmentId, draft }),
     );
     setBusy(false);
     if (failure !== null) setError(failure);
@@ -921,7 +935,10 @@ function QuickCreate(props: {
         <textarea
           id="ade-bot-quick-text"
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value);
+            setAsking(false);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
@@ -937,6 +954,23 @@ function QuickCreate(props: {
           {busy && proposal === null ? "Pensando…" : "Proponer"}
         </button>
       </form>
+
+      {asking ? (
+        <div className="ade-bot-quick-error" role="group" aria-label="¿En qué máquina?">
+          <p className="ade-bot-meta">¿En qué máquina?</p>
+          {choices.map((option) => (
+            <button
+              key={`${option.environmentId}:${option.projectId}`}
+              type="button"
+              className="ade-button-quiet"
+              onClick={() => void propose(option)}
+            >
+              {props.machineLabel?.(option.environmentId) ?? option.environmentId} ·{" "}
+              {allProjects.get(option.environmentId)?.get(option.projectId)?.title}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {error === null ? null : (
         <div className="ade-bot-quick-error" role="alert">

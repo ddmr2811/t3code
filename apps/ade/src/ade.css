@@ -3426,6 +3426,11 @@ button.ade-subagent:hover .ade-subagent-open {
   border-color: var(--ade-accent);
 }
 
+/* The quiet buttons sit level with «Crear». */
+.ade-bot-quick .ade-button-quiet {
+  margin-top: 0;
+}
+
 .ade-bot-proposal-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
