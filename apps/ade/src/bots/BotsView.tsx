@@ -660,6 +660,7 @@ function BotEditor(props: {
             <input
               value={draft.handle}
               onChange={(event) => set({ handle: event.target.value })}
+              placeholder="ej. general-manager"
               autoCapitalize="none"
               spellCheck={false}
             />

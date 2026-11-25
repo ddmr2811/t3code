@@ -32,7 +32,7 @@ import {
 } from "../state.ts";
 import { AgentMarkdown } from "./AgentMarkdown.tsx";
 import { MediaStrip, ThreadMedia } from "./Media.tsx";
-import { formatCount, groupTurns, rowKind } from "./timeline.logic.ts";
+import { formatCount, groupTurns, liveActivity, rowKind } from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
   OrchestrationV2TurnItem,
@@ -378,6 +378,21 @@ function TurnChanges(props: {
   );
 }
 
+/** What the agent is doing now, where the conversation ends; gone once nothing is. */
+function LiveActivityRow(props: { threadRef: ScopedThreadRef }) {
+  // The quiet thread keeps its value while replies stream, so tokens re-render nothing here.
+  const thread = useAtomValue(environmentThreadDetails.quietThreadAtom(props.threadRef));
+  const { now, background } = thread === null ? NO_ACTIVITY : liveActivity(thread.projection);
+  return (
+    <li className="ade-live" role="status">
+      {now === null ? null : <p className="ade-live-line">{now}</p>}
+      {background === null ? null : <p className="ade-live-line">{background}</p>}
+    </li>
+  );
+}
+
+const NO_ACTIVITY = { now: null, background: null };
+
 /** The thread's turns, read only. Streamed text renders inside its own row. */
 export function ThreadTimeline(props: {
   threadRef: ScopedThreadRef;
@@ -444,6 +459,7 @@ export function ThreadTimeline(props: {
               </li>
             );
           })}
+          <LiveActivityRow threadRef={props.threadRef} />
           <li className="ade-turn-requests">{props.requests}</li>
         </ol>
       </ThreadMedia>
