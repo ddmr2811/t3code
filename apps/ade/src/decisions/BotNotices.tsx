@@ -7,6 +7,8 @@ import {
   type ForkBot,
   type ForkBotHandoff,
   type ForkBotProposal,
+  type ForkGap,
+  type ForkGapInstall,
 } from "@t3tools/contracts";
 import { type ReactNode, useContext, useState } from "react";
 
@@ -14,12 +16,13 @@ import {
   allBotsAtom,
   forkBotsAnswerProposalCommand,
   forkBotsDismissHandoffCommand,
+  forkGapsAnswerInstallCommand,
   refreshBots,
 } from "../bots/bots.state.ts";
 import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
-import { environmentProjects, serverEnvironment } from "../state.ts";
+import { environmentProjects, environmentThreadShells, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
 
 type BotNotice = {
@@ -30,14 +33,22 @@ type BotNotice = {
 } & (
   | { readonly type: "handoff"; readonly handoff: ForkBotHandoff; readonly from?: ForkBot }
   | { readonly type: "proposal"; readonly proposal: ForkBotProposal; readonly from?: ForkBot }
+  | {
+      readonly type: "install";
+      readonly gap: ForkGap;
+      readonly install: ForkGapInstall;
+      readonly from?: ForkBot;
+    }
+  // An install nobody can see is one nobody can refuse, so a failed read waits here too.
+  | { readonly type: "unreadable"; readonly from?: ForkBot }
 );
 
 /**
  * What the bots wait on the user for, on every machine, keyed like the decisions panel counts
- * them: handoffs cut for too many hops and bots a coordinator proposes.
+ * them: installs a bot asks for, bots a coordinator proposes and handoffs cut for too many hops.
  */
 export function useBotNotices(): ReadonlyArray<BotNotice> {
-  const { byEnv, handoffsByEnv, proposalsByEnv } = useAtomValue(allBotsAtom);
+  const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, gapErrors } = useAtomValue(allBotsAtom);
   const botOf = (environmentId: EnvironmentId, id: string) =>
     (byEnv.get(environmentId) ?? []).find((bot) => bot.id === id);
   const handoffs = [...handoffsByEnv].flatMap(([environmentId, list]) =>
@@ -73,7 +84,34 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
         };
       }),
   );
-  return [...proposals, ...handoffs];
+  const installs = [...gapsByEnv].flatMap(([environmentId, list]) =>
+    list.flatMap((gap) =>
+      gap.steps.flatMap((step): BotNotice[] => {
+        if (step.install?.answer !== "pending") return [];
+        const from = botOf(environmentId, gap.botId);
+        return [
+          {
+            key: `install:${environmentId}:${step.install.id}`,
+            type: "install",
+            label: "Instalar",
+            title: `¿Dejo que @${from?.handle ?? "?"} instale esto?`,
+            environmentId,
+            gap,
+            install: step.install,
+            ...(from === undefined ? {} : { from }),
+          },
+        ];
+      }),
+    ),
+  );
+  const unreadable = gapErrors.map((environmentId): BotNotice => ({
+    key: `gaps-unreadable:${environmentId}`,
+    type: "unreadable",
+    label: "Aviso",
+    title: "No se pudieron leer las instalaciones que piden los bots",
+    environmentId,
+  }));
+  return [...unreadable, ...installs, ...proposals, ...handoffs];
 }
 
 /**
@@ -104,6 +142,7 @@ export function BotNotices(props: {
     setSending((current) => new Set(current).add(key));
     setError(null);
     const failure = await run();
+    // A failed answer keeps its card, so the reason stays beside what it was about.
     if (failure !== null) {
       setSending((current) => new Set([...current].filter((sent) => sent !== key)));
       return setError(failure);
@@ -143,6 +182,51 @@ export function BotNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   ),
         };
+        if (notice.type === "unreadable") {
+          return (
+            <NoticeFrame
+              key={key}
+              {...common}
+              label="Aviso"
+              context="Bots"
+              openLabel=""
+              actions={
+                <button
+                  type="button"
+                  className="ade-button-quiet"
+                  onClick={() => refreshBots(registry, environmentId)}
+                >
+                  Reintentar
+                </button>
+              }
+            >
+              <p className="ade-request-note">
+                Puede haber alguna esperando tu respuesta en esta máquina. Si sigue fallando, el
+                archivo de huecos del servidor está dañado o el servidor es anterior a esta función.
+              </p>
+            </NoticeFrame>
+          );
+        }
+        if (notice.type === "install") {
+          const answer = (value: "approve" | "reject") =>
+            void send(key, environmentId, () =>
+              runCommand(
+                registry,
+                forkGapsAnswerInstallCommand,
+                { environmentId, input: { id: notice.install.id, answer: value } },
+                "No se pudo guardar tu respuesta",
+              ),
+            );
+          return (
+            <InstallNotice
+              key={key}
+              {...common}
+              gap={notice.gap}
+              install={notice.install}
+              onAnswer={answer}
+            />
+          );
+        }
         if (notice.type === "proposal") {
           const answer = (value: "accept" | "reject") =>
             void send(key, environmentId, () =>
@@ -327,6 +411,93 @@ function ProposalNotice(
       <p className="ade-request-note">
         Nada se crea sin tu «sí». Un «No» queda en la memoria del proyecto para no repetirlo; la
         rutina la añades tú desde Bots cuando exista.
+      </p>
+    </NoticeFrame>
+  );
+}
+
+function InstallNotice(
+  props: NoticeProps & {
+    gap: ForkGap;
+    install: ForkGapInstall;
+    onAnswer: (answer: "approve" | "reject") => void;
+  },
+) {
+  const canAnswer = useAtomValue(forkGapsAnswerInstallCommand.permissionAtom(props.environmentId));
+  const { gap, install } = props;
+  const projectTitle = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(props.environmentId),
+    (index) => index.get(gap.projectId)?.title ?? null,
+  );
+  // The server refuses a yes while the bot works: it would wait in a queue, and the thread's
+  // permissions could change before it starts.
+  const busy = useAtomValue(
+    environmentThreadShells.quietThreadShellAtom(scopeThreadRef(props.environmentId, gap.threadId)),
+    (thread) => thread?.runtime?.activeRunId != null,
+  );
+  const disabled = canAnswer !== true || props.sending;
+  return (
+    <NoticeFrame
+      {...props}
+      label="Instalar"
+      context={projectTitle ?? "Proyecto sin nombre"}
+      openLabel="Abrir el hilo del bot"
+      actions={
+        <>
+          <button
+            type="button"
+            className="ade-button"
+            data-agent-confirm
+            onClick={(event) => {
+              focusTrayFrom(event.currentTarget);
+              props.onAnswer("approve");
+            }}
+            disabled={disabled || busy}
+          >
+            {props.sending
+              ? "Enviando…"
+              : busy
+                ? "Espera a que el bot termine"
+                : "Sí, solo esta vez"}
+          </button>
+          <button
+            type="button"
+            className="ade-button-quiet"
+            onClick={(event) => {
+              focusTrayFrom(event.currentTarget);
+              props.onAnswer("reject");
+            }}
+            disabled={disabled}
+          >
+            No
+          </button>
+        </>
+      }
+    >
+      <dl className="ade-proposal-facts">
+        <dt>Le falta</dt>
+        <dd>{gap.name}</dd>
+        <dt>Qué toca</dt>
+        <dd>
+          {install.scope === "system"
+            ? "El sistema de esta máquina, fuera del proyecto"
+            : "Solo el proyecto"}
+        </dd>
+        <dt>Comando</dt>
+        <dd>
+          <code className="ade-install-command">{install.command}</code>
+        </dd>
+        <dt>Vuelta atrás</dt>
+        <dd>
+          <code className="ade-install-command">{install.rollback}</code>
+        </dd>
+      </dl>
+      <p className="ade-request-note">
+        Tu «sí» vale una vez, para este comando, en esta máquina y en el hilo que lo pidió.{" "}
+        {install.runtimeMode === "approval-required"
+          ? "El bot te pedirá permiso otra vez al ejecutarlo."
+          : `El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[install.runtimeMode]}».`}{" "}
+        No subas el modo del hilo hasta que el bot termine.
       </p>
     </NoticeFrame>
   );

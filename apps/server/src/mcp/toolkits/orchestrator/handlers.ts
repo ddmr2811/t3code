@@ -7,6 +7,7 @@ import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import { readCaller } from "../../threadAccess.ts";
+import { delegateWithinGap } from "../botHandoff/gapRules.ts";
 import { refuseBotToBot } from "../botHandoff/refuseBotToBot.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -25,7 +26,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.delegateTask(scope, input);
+      return yield* service.delegateTask(scope, yield* delegateWithinGap(input));
     }),
   ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>

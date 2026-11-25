@@ -5,8 +5,10 @@ import { type ForkBotsError, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as ForkBots from "../../../fork/bots/ForkBots.ts";
+import * as ForkGaps from "../../../fork/gaps/ForkGaps.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
+import { refuseProposalOutsideLadder } from "./gapRules.ts";
 import { BotHandoffToolkit } from "./tools.ts";
 
 const toFailure = (error: ForkBotsError) =>
@@ -65,10 +67,33 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
           message: "Only the project's coordinator can propose a bot.",
         });
       }
+      yield* refuseProposalOutsideLadder();
       const proposal = yield* forkBots
         .propose(draft, { threadId: caller.id, projectId: caller.projectId, limits })
         .pipe(Effect.mapError(toFailure));
       return { id: proposal.id };
+    }),
+  ),
+  bot_gap_step: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const forkGaps = yield* ForkGaps.ForkGaps;
+      const { caller } = yield* loadCaller();
+      if (caller === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only a bot's own thread can record a gap or ask for an install.",
+        });
+      }
+      const { gap, next } = yield* forkGaps
+        .step(input, {
+          threadId: caller.id,
+          projectId: caller.projectId,
+          runtimeMode: caller.runtimeMode,
+          modelSelection: caller.modelSelection,
+        })
+        .pipe(Effect.mapError(toFailure));
+      const installId = gap.steps.at(-1)?.install?.id;
+      return { gapId: gap.id, ...(installId === undefined ? {} : { installId }), next };
     }),
   ),
 });

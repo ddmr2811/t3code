@@ -8,6 +8,13 @@ import {
   ForkBotProposalId,
   ForkBotProposalNote,
   ForkBotRole,
+  ForkGapId,
+  ForkGapInstallDraft,
+  ForkGapInstallId,
+  ForkGapName,
+  ForkGapNote,
+  ForkGapResult,
+  ForkGapRung,
   OrchestratorMcpFailure,
   RuntimeMode,
 } from "@t3tools/contracts";
@@ -15,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ForkBots from "../../../fork/bots/ForkBots.ts";
+import * as ForkGaps from "../../../fork/gaps/ForkGaps.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -74,4 +82,35 @@ const BotProposeTool = Tool.make("bot_propose", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenOutsideBotThreads);
 
-export const BotHandoffToolkit = Toolkit.make(BotHandoffTool, BotProposeTool);
+const BotGapStepTool = Tool.make("bot_gap_step", {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ForkGaps.ForkGaps,
+  ],
+  description:
+    "When you lack a tool or capability, climb this ladder and call this for every step, so it is written on the project board: reuse (a bot, MCP tool or skill that exists), install, build (a child thread in a new worktree), hire (propose a bot, only after build failed). Follow the returned `next`. An install is never run on your own: send `install` with the exact command and how to undo it, end your turn, and run it yourself only after the user's yes arrives in this thread, once, unchanged. Command and undo are one command each, with no ; & | or redirection; one install per gap; a system install only from approval-required. No clear way to undo it means do not ask. Each gap has a limit of steps and tokens; when it closes, stop and tell the user.",
+  parameters: Schema.Struct({
+    gap: ForkGapName.annotate({ description: "What is missing; the same text on every step." }),
+    rung: ForkGapRung,
+    result: ForkGapResult.annotate({
+      description: "trying before you act, then worked or failed.",
+    }),
+    note: ForkGapNote.annotate({ description: "One line: what you tried or found." }),
+    install: Schema.optionalKey(ForkGapInstallDraft).annotate({
+      description:
+        "Only with rung install and result trying. scope system is anything outside the project (global packages, binaries, sudo).",
+    }),
+  }),
+  success: Schema.Struct({
+    gapId: ForkGapId,
+    installId: Schema.optionalKey(ForkGapInstallId),
+    next: Schema.String,
+  }),
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenOutsideBotThreads);
+
+export const BotHandoffToolkit = Toolkit.make(BotHandoffTool, BotProposeTool, BotGapStepTool);

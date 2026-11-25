@@ -749,6 +749,38 @@ describe("ForkBots", () => {
       ),
     );
 
+    it.effect("never gives a proposed bot full access, also for one saved before the rule", () =>
+      withBots(({ service, botsFile, fs, threadModes }) =>
+        Effect.gen(function* () {
+          const coordinator = yield* service.upsert({
+            ...baseBot,
+            handle: "jefa",
+            coordinator: true,
+            runtimeMode: "full-access",
+          });
+          const { threadId } = yield* service.sendMessage({ id: coordinator.id, text: "hola" });
+          threadModes.set(threadId, "full-access");
+          const from = { threadId, projectId: projectA, limits: undefined };
+          const asked = yield* service
+            .propose({ ...draft, runtimeMode: "full-access" }, from)
+            .pipe(Effect.flip);
+          expect(asked).toMatchObject({ reason: "permissionDenied" });
+
+          const proposal = yield* service.propose({ ...draft, runtimeMode: "auto" }, from);
+          const directory = JSON.parse(yield* fs.readFileString(botsFile));
+          directory.proposals[0].runtimeMode = "full-access";
+          yield* fs.writeFileString(botsFile, JSON.stringify(directory, null, 2));
+          // A coordinator lowered since then does not turn it into an acceptable one.
+          threadModes.set(threadId, "approval-required");
+          const accepted = yield* service
+            .answerProposal({ id: proposal.id, answer: "accept" })
+            .pipe(Effect.flip);
+          expect(accepted).toMatchObject({ reason: "permissionDenied" });
+          expect((yield* service.list({})).bots.map((bot) => bot.handle)).toEqual(["jefa"]);
+        }),
+      ),
+    );
+
     it.effect("allows one proposal per project and week, and remembers a no", () =>
       withBots(({ service, memory }) =>
         Effect.gen(function* () {

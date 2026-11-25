@@ -949,6 +949,12 @@ const make = Effect.gen(function* () {
     });
     const coordinator = yield* proposerOf(yield* storeLock.withPermits(1)(fileStore.read()));
     const runtimeMode = draft.runtimeMode ?? "approval-required";
+    if (runtimeMode === "full-access") {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: "A proposed bot never runs in full-access.",
+      });
+    }
     if (
       isRuntimeModeAbove(runtimeMode, coordinator.runtimeMode) ||
       (from.limits !== undefined && isRuntimeModeAbove(runtimeMode, from.limits.runtimeMode))
@@ -1120,6 +1126,15 @@ const make = Effect.gen(function* () {
           yield* fileStore.write(yield* markDecided(directory, rejected));
           return rejected;
         }
+        // What was proposed counts, not what a lowered coordinator would leave of it: a proposal
+        // saved before this rule is refused, since only the user gives a bot full access.
+        if (proposal.runtimeMode === "full-access") {
+          return yield* new ForkBotsError({
+            reason: "permissionDenied",
+            message:
+              "A proposed bot never runs in full-access. Say no to it; you can create the bot yourself.",
+          });
+        }
         // The coordinator may have lost permissions since it proposed; the bot never gets more.
         // Only the active coordinator of the proposal's project lends its ceiling.
         const coordinator = directory.bots.find(
@@ -1129,7 +1144,7 @@ const make = Effect.gen(function* () {
             !bot.archived &&
             bot.projectId === proposal.projectId,
         );
-        let runtimeMode = proposal.runtimeMode;
+        let runtimeMode: RuntimeMode = proposal.runtimeMode;
         for (const ceiling of [
           coordinator?.runtimeMode ?? "approval-required",
           yield* threadCeiling(coordinator),
