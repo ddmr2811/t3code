@@ -38,7 +38,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { originAllowed } from "./csp.ts";
 import { connectionAtomRuntime } from "./runtime.ts";
 import { failureText } from "./status.ts";
-import { storedRegistration } from "./storage.ts";
+import { replacePairing, storedRegistration } from "./storage.ts";
 import { machinesChanged } from "./tabs.ts";
 
 // Read threads and operate them (approvals, questions, turns); extension sidecars
@@ -52,12 +52,25 @@ export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthUsageReadScope,
 ];
 
+/** Scopes the web's pairing link dialog can't mark: only `t3 pair --scope` puts them in a code. */
+export const NOT_IN_WEB_LINKS: ReadonlyArray<AuthEnvironmentScope> = [AuthForkGatewayScope];
+
 export interface PairingInput {
   /** Also ask for a shell on the machine. Off by default: it is more than driving its agents. */
   readonly terminal?: boolean;
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  /**
+   * Pairing an already paired machine again to add `usage:read`: the session can't widen itself
+   * (renewal refuses `scope`), so only a new link works. It asks for `scopes`, exactly what was
+   * held plus `usage:read`, and is stored only over the `pairing` it started from.
+   */
+  readonly widen?: {
+    readonly environmentId: EnvironmentId;
+    readonly pairing: string;
+    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  };
 }
 
 /** Why pairing failed, in Spanish and safe to show: it never carries the link or a token. */
@@ -112,6 +125,9 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));
+  if (input.widen !== undefined && descriptor.environmentId !== input.widen.environmentId) {
+    return yield* failed(`Esa dirección ya no es la de esta máquina: es ${descriptor.label}.`);
+  }
   const incompatible = orchestrationProtocolCompatibilityError(descriptor);
   if (incompatible !== null) return yield* incompatible;
   if (descriptor.capabilities.accessTokenRenewal !== true) {
@@ -153,23 +169,48 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
     // The server grants only what the link carries, so asking never widens a narrower link.
-    scopes: input.terminal === true ? [...ADE_SCOPES, AuthTerminalOperateScope] : ADE_SCOPES,
+    scopes:
+      input.widen?.scopes ??
+      (input.terminal === true ? [...ADE_SCOPES, AuthTerminalOperateScope] : ADE_SCOPES),
     clientMetadata: presentation.metadata,
     dpopProof,
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));
   if (access.token_type !== "DPoP") {
     return yield* failed(`${descriptor.label} no devolvió una sesión DPoP.`);
   }
+  const granted = access.scope.split(" ");
+  if (input.widen?.scopes.some((scope) => !granted.includes(scope))) {
+    return yield* failed(
+      "El enlace no trae «Ver totales de uso» o le falta algún permiso que la máquina ya tenía. No se ha cambiado nada: crea otro enlace con los permisos de antes y esa casilla marcada.",
+    );
+  }
+  if (input.widen !== undefined && granted.length !== input.widen.scopes.length) {
+    return yield* failed(
+      `${descriptor.label} concedió más permisos de los pedidos. No se ha cambiado nada.`,
+    );
+  }
 
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   // One stored write swaps the address and the credential, and only then is the old socket
   // closed: if the write fails, the machine stays as it was.
-  const registered = yield* registry.register(
-    new BearerConnectionRegistration({
-      ...route,
-      credential: new DpopConnectionCredential({
-        accessToken: access.access_token,
-        expiresAtEpochMs: (yield* Clock.currentTimeMillis) + access.expires_in * 1_000,
+  const registration = new BearerConnectionRegistration({
+    ...route,
+    credential: new DpopConnectionCredential({
+      accessToken: access.access_token,
+      expiresAtEpochMs: (yield* Clock.currentTimeMillis) + access.expires_in * 1_000,
+    }),
+  });
+  const { widen } = input;
+  if (widen !== undefined) replacePairing(registration, widen.pairing);
+  const registered = yield* registry.register(registration).pipe(
+    Effect.catchTags({
+      ConnectionPersistenceError: Effect.fn("ade.pairing.widenNotStored")(function* (error) {
+        if (widen === undefined) return yield* error;
+        const stored = yield* storedRegistration(widen.environmentId);
+        if (Option.isSome(stored) && connectionRouteId(stored.value.target) === widen.pairing) {
+          return yield* error;
+        }
+        return yield* failed("La máquina cambió mientras ampliabas; vuelve a intentarlo.");
       }),
     }),
   );

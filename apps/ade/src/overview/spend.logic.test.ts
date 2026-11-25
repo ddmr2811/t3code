@@ -1,5 +1,8 @@
 import {
   type EnvironmentId,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthUsageReadScope,
   USAGE_CONTRACT_VERSION,
   type UsageBucket,
   type UsageDay,
@@ -7,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentUsage } from "@t3tools/shared/usageMerge";
 import * as DateTime from "effect/DateTime";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -16,6 +20,7 @@ import {
   spendSummary,
   summaryIncomplete,
   weekWindow,
+  widenScopes,
 } from "./spend.logic.ts";
 
 const bucket = (
@@ -256,4 +261,29 @@ it("rulerTicks fills the marks up to the value, inclusive, and none when nothing
   expect(filled(32)).toBe(17);
   expect(filled(0)).toBe(0);
   expect(filled(80)).toBe(26);
+});
+
+describe("widenScopes", () => {
+  const readOnly = { authenticated: true, permissions: [AuthOrchestrationReadScope] };
+  const candidates = [
+    AuthOrchestrationReadScope,
+    AuthOrchestrationOperateScope,
+    AuthUsageReadScope,
+  ];
+
+  it.each([
+    [
+      "asks for what the session holds plus usage:read, never more",
+      AsyncResult.success(readOnly),
+      [AuthOrchestrationReadScope, AuthUsageReadScope],
+    ],
+    // After another tab paired the machine again, the old session shows until it is read anew.
+    [
+      "asks for nothing while the session is read again",
+      AsyncResult.success(readOnly, { waiting: true }),
+      null,
+    ],
+  ])("%s", (_name, result, expected) => {
+    expect(widenScopes(result, candidates)).toEqual(expected);
+  });
 });

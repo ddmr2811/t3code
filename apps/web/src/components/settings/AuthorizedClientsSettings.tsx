@@ -638,8 +638,8 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   const handleCreatePairingLink = async () => {
     if (
       selectedScopes.length === 0 ||
-      !readEnvironmentScope(environmentId, AuthAccessWriteScope) ||
-      !selectedScopes.every((scope) => readEnvironmentScope(environmentId, scope))
+      // The scopes on offer already follow the server's delegation rule (`canDelegateScope`).
+      !readEnvironmentScope(environmentId, AuthAccessWriteScope)
     )
       return;
     const dialogSession = pairingDialogSessionRef.current;

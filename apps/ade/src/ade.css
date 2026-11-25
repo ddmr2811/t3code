@@ -2319,6 +2319,17 @@ button.ade-subagent:hover .ade-subagent-open {
   font-size: 13px;
 }
 
+.ade-spend-widen {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.ade-spend-widen .ade-pairing {
+  justify-self: stretch;
+  margin: 4px 0 0;
+}
+
 .ade-summary-rows {
   display: grid;
   gap: 6px;

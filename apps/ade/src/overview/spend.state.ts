@@ -55,7 +55,10 @@ export const flatProvidersAtom = Atom.make((get) => {
 export interface SpendUsage {
   readonly environments: ReadonlyArray<EnvironmentUsage>;
   /** Machines paired before F7, without `usage:read`: pairing again is the way out. */
-  readonly needsPairing: ReadonlyArray<string>;
+  readonly needsPairing: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
   /** Machines whose session check, usage read or transcripts failed; the total misses some. */
   readonly failed: ReadonlyArray<string>;
   /** Machines whose usage this ADE may read, to refresh them. */
@@ -69,14 +72,14 @@ export const spendUsageAtom = Atom.family((windowKey: string) =>
     const input = JSON.parse(windowKey) as UsageSummaryInput;
     const catalog = get(environmentCatalog.catalogValueAtom);
     const environments: EnvironmentUsage[] = [];
-    const needsPairing: string[] = [];
+    const needsPairing: Array<SpendUsage["needsPairing"][number]> = [];
     const failed: string[] = [];
     const readable: EnvironmentId[] = [];
     let pending = false;
     for (const environmentId of enabledEnvironmentIds(catalog)) {
       const label = catalog.entries.get(environmentId)?.target.label ?? environmentId;
       const access = get(usageAccessAtom(environmentId));
-      if (access === false) needsPairing.push(label);
+      if (access === false) needsPairing.push({ environmentId, label });
       if (access === "unknown") failed.push(label);
       if (access !== true) {
         pending ||= access === null;

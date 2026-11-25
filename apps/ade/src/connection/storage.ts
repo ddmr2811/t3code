@@ -175,6 +175,29 @@ export const removePairing = (
 // Registrations read back from the catalog: taking one in must not write it again.
 const adopted = new WeakSet<object>();
 
+// Registrations that widen a pairing, with the pairing they replace.
+const replacing = new WeakMap<object, string>();
+
+/** Marks `registration` as replacing `pairing`: it is stored only over that very pairing. */
+export const replacePairing = (registration: object, pairing: string) => {
+  replacing.set(registration, pairing);
+};
+
+/** A pairing that `replaces` one is refused once another tab paired the machine again or removed it. */
+export function registerOverPairing(
+  document: Catalog,
+  registration: Parameters<typeof registerConnectionInCatalog>[1],
+  replaces: string | undefined,
+): Catalog {
+  if (
+    replaces !== undefined &&
+    storedPairing(document, registration.target.environmentId) !== replaces
+  ) {
+    throw stalePairing();
+  }
+  return registerConnectionInCatalog(document, registration);
+}
+
 /** What is stored for a machine, for a tab to take in after another tab paired it. */
 export const storedRegistration = (environmentId: EnvironmentId) =>
   catalog.read.pipe(
@@ -263,7 +286,7 @@ const layerCatalogStores = Layer.succeedContext(
           return catalog
             .update((document) => {
               if (!adopted.has(registration)) {
-                return registerConnectionInCatalog(document, registration);
+                return registerOverPairing(document, registration, replacing.get(registration));
               }
               if (storedPairing(document, environmentId) !== pairing) throw stalePairing();
               return document;
