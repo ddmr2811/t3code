@@ -13,8 +13,10 @@ import * as DateTime from "effect/DateTime";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
+import { binKey, gasto, trend } from "./gasto.logic.ts";
 import {
   botEstimate,
+  modelLimitShare,
   ratesByModel,
   rulerTicks,
   spendSummary,
@@ -285,5 +287,114 @@ describe("widenScopes", () => {
     ],
   ])("%s", (_name, result, expected) => {
     expect(widenScopes(result, candidates)).toEqual(expected);
+  });
+});
+
+describe("gasto", () => {
+  const reported = { costSource: "providerReported" } as const;
+  const usage = [
+    machine(
+      [
+        bucket("claude", "claude-opus-5-5", "2026-11-25", 4),
+        // The day before the 7 days up to 25 November: the previous period.
+        bucket("claude", "claude-opus-5-5", "2026-11-18", 2),
+        // Read for a longer range, but before the previous week: neither period counts it.
+        bucket("claude", "claude-opus-5-5", "2026-11-11", 50),
+      ],
+      "pc",
+    ),
+    machine([bucket("codex", "gpt-6", "2026-11-20", 3, reported)], "vps"),
+  ];
+
+  it("takes the range and the period before it from a longer window, by model and account", () => {
+    const week = gasto(usage, new Map(), "7d", "2026-11-25");
+    expect(week.rows.map((row) => [row.model, row.account, row.kind, row.costUsd])).toEqual([
+      ["claude-opus-5-5", "pc · Claude", "estimated", 4],
+      ["gpt-6", "vps · Codex", "real", 3],
+    ]);
+    expect(week.current).toEqual({
+      tokens: 2000,
+      costUsd: 3,
+      mixedUsd: 0,
+      estimatedUsd: 4,
+      paid: true,
+      flat: false,
+      requests: 4,
+    });
+    expect(week.previous).toMatchObject({
+      tokens: 1000,
+      estimatedUsd: 2,
+      paid: false,
+      requests: 2,
+    });
+    expect(week.bins.map((bin) => [bin.key, bin.tokens])).toEqual([
+      ["2026-11-19", 0],
+      ["2026-11-20", 1000],
+      ["2026-11-21", 0],
+      ["2026-11-22", 0],
+      ["2026-11-23", 0],
+      ["2026-11-24", 0],
+      ["2026-11-25", 1000],
+    ]);
+  });
+
+  it("counts a subscription's tokens but not its list price", () => {
+    const flat = new Map([["pc" as EnvironmentId, new Set(["claude" as const])]]);
+    const week = gasto(usage, flat, "7d", "2026-11-25");
+    expect(week.current).toMatchObject({ tokens: 2000, costUsd: 3, estimatedUsd: 0, flat: true });
+  });
+
+  it("has no previous period for «Todo» and charts from the first day with usage", () => {
+    const all = gasto(usage, new Map(), "all", "2026-11-25");
+    expect(all.previous).toBeNull();
+    expect(all.current.tokens).toBe(4000);
+    expect(all.firstDay).toBe("2026-11-11");
+    expect(all.bins).toHaveLength(15);
+  });
+
+  it.each([
+    ["2026-11-25", "week", "2026-11-23"],
+    ["2026-11-29", "week", "2026-11-23"],
+    ["2026-11-23", "week", "2026-11-23"],
+    ["2026-11-25", "month", "2026-11"],
+  ] as const)("puts %s in the %s of %s", (day, unit, expected) => {
+    expect(binKey(day, unit)).toBe(expected);
+  });
+
+  it.each([
+    [7, 2, 2.5],
+    [1, 2, -0.5],
+    [5, 0, null],
+    [5, null, null],
+    // A figure the current period does not have is compared with nothing.
+    [null, 2, null],
+  ] as const)("trend of %s against %s is %s", (current, previous, expected) => {
+    expect(trend(current, previous)).toBe(expected);
+  });
+});
+
+describe("modelLimitShare", () => {
+  // As dev-cx53 reads them: OpenCode Go's windows name no model, they are the whole account's.
+  const limits = [
+    {
+      provider: "opencode" as const,
+      windows: [
+        { usedPercent: 4 },
+        { usedPercent: 42 },
+        { usedPercent: 10, modelIds: ["opencode/gemini-4-neon"] },
+      ],
+    },
+    { provider: "codex" as const, windows: [{ usedPercent: 71 }] },
+  ];
+
+  it.each([
+    // Kimi, Gemini and Grok all went through OpenCode: none inherits the account's 42 %.
+    ["opencode", "kimi-k3", undefined],
+    ["opencode", "grok-5", undefined],
+    ["opencode", "gemini-4-neon", 0.1],
+    ["codex", "gpt-6", undefined],
+    ["claude", "claude-opus-5-5", undefined],
+  ] as const)("%s %s uses %s of a limit", (provider, model, expected) => {
+    expect(modelLimitShare(limits, provider, model)).toBe(expected);
   });
 });

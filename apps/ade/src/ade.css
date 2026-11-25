@@ -2237,7 +2237,7 @@ button.ade-subagent:hover .ade-subagent-open {
 }
 
 /* Inicio, Resumen, Proyectos and Tablero: hairlines and tonal steps, colour only for what needs you or is full. */
-.ade-main:has(.ade-home, .ade-summary, .ade-board, .ade-projects) {
+.ade-main:has(.ade-home, .ade-summary, .ade-gasto, .ade-board, .ade-projects) {
   place-items: stretch;
 }
 
@@ -2362,6 +2362,24 @@ button.ade-subagent:hover .ade-subagent-open {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Gasto: the model's name is never cut; the amount moves to its own line when both do not fit. */
+.ade-spend-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.ade-spend-rows .ade-summary-name {
+  flex: 0 1 auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ade-spend-rows .ade-summary-aside {
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .ade-summary-aside {
@@ -2498,6 +2516,296 @@ button.ade-subagent:hover .ade-subagent-open {
   color: var(--ade-text-muted);
   font: 12px var(--ade-font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Gasto: cuatro cifras con su tendencia, una gráfica de barras y la tabla por modelo y cuenta. */
+.ade-gasto {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: start;
+  /* A scrolling table's row would otherwise shrink to nothing when the view is shorter than it. */
+  grid-auto-rows: max-content;
+  gap: 16px;
+  min-height: 0;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+.ade-gasto-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ade-gasto-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ade-gasto-ranges {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ade-border);
+  border-radius: 10px;
+  background: var(--ade-surface);
+}
+
+.ade-gasto-range {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--ade-text-muted);
+  font: 500 13px/1.4 var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-gasto-range:hover {
+  color: var(--ade-text);
+}
+
+.ade-gasto-range:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 1px;
+}
+
+.ade-gasto-range[data-pressed] {
+  background: rgb(255 255 255 / 0.12);
+  color: var(--ade-text);
+}
+
+.ade-gasto-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.ade-gasto-stat,
+.ade-gasto-chart,
+.ade-gasto-table-wrap {
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+}
+
+.ade-gasto-stat {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 18px 16px;
+}
+
+.ade-gasto-stat h2,
+.ade-gasto-stat p {
+  margin: 0;
+}
+
+.ade-gasto-stat .ade-label {
+  padding: 0;
+}
+
+.ade-gasto-figure {
+  font: 500 26px/1.15 var(--ade-font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.ade-gasto-trend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--ade-text-muted);
+  font: 12px/1.4 var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-note {
+  margin: 0;
+}
+
+.ade-gasto-note:not([data-level]) {
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-gasto-empty {
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  color: var(--ade-text-muted);
+}
+
+.ade-gasto-chart {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 18px 12px;
+}
+
+.ade-gasto-chart figcaption,
+.ade-gasto-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-gasto-chart figcaption > :first-child {
+  color: var(--ade-text);
+  font-weight: 500;
+}
+
+.ade-gasto-chart-max,
+.ade-gasto-axis {
+  font: 12px var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 160px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--ade-divider);
+  list-style: none;
+}
+
+.ade-gasto-bars li {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.ade-gasto-bars li:hover::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-canvas);
+  color: var(--ade-text);
+  font: 12px var(--ade-font-mono);
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.ade-gasto-bars li:first-child:hover::after {
+  left: 0;
+  transform: translateY(-100%);
+}
+
+.ade-gasto-bars li:last-child:hover::after {
+  right: 0;
+  left: auto;
+  transform: translateY(-100%);
+}
+
+.ade-gasto-bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--ade-accent);
+}
+
+.ade-gasto-bars li:hover .ade-gasto-bar {
+  background: #ff8f57;
+}
+
+.ade-gasto-table-wrap {
+  overflow-x: auto;
+}
+
+.ade-gasto-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ade-gasto-table th,
+.ade-gasto-table td {
+  padding: 10px 16px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ade-gasto-table thead th {
+  color: var(--ade-text-muted);
+  font-weight: 500;
+}
+
+.ade-gasto-table tbody tr {
+  border-top: 1px solid var(--ade-divider);
+}
+
+.ade-gasto-table tbody th {
+  font-weight: 500;
+}
+
+.ade-gasto-table td:nth-child(n + 3),
+.ade-gasto-table th:nth-child(n + 3) {
+  text-align: right;
+}
+
+.ade-gasto-table td {
+  color: var(--ade-text-muted);
+  font: 12.5px var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-table td:nth-child(2) {
+  font-family: var(--ade-font-sans);
+}
+
+.ade-gasto-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .ade-gasto {
+    padding: 16px;
+  }
+
+  .ade-gasto-range {
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+
+  .ade-gasto-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ade-gasto-figure {
+    font-size: 22px;
+  }
+
+  .ade-gasto-trend-vs {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .ade-spend-est {
@@ -2682,43 +2990,74 @@ button.ade-subagent:hover .ade-subagent-open {
   display: none;
 }
 
-/* Inicio: estado vacío del chat nuevo sobre el vidrio aclarado. */
+/* Inicio: la pregunta en el centro, el compositor abajo y el tramado naranja sobre la Luna. */
+.ade-shell:has(.ade-home) {
+  background: rgb(10 11 14 / 0.55);
+}
+
 .ade-home {
   position: relative;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  isolation: isolate;
+  display: grid;
   min-height: 0;
-  padding: 32px 24px 7%;
-  overflow-y: auto;
-  background: radial-gradient(70% 60% at 86% 8%, rgb(7 8 10 / 0.38), rgb(7 8 10 / 0.78) 100%);
+  overflow: hidden;
 }
 
-.ade-home-inner {
-  display: grid;
-  gap: 24px;
-  width: min(700px, 100%);
-  margin: 0 auto;
+/* The art stays on the visible box; only this column scrolls. */
+.ade-home-scroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 32px 24px 28px;
+  overflow-y: auto;
+}
+
+/* Solo con el fondo Luna: con «Liso» o una imagen propia el Inicio queda como lo eligió el usuario. */
+.ade-home-art {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.38;
+  pointer-events: none;
+  --dither-cell: 3px;
+}
+
+[data-ade-bg="luna"] ~ .ade-shell .ade-home-art {
+  display: block;
 }
 
 .ade-home-greeting {
   display: grid;
-  gap: 12px;
+  flex: 1 0 auto;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 0;
+  text-align: center;
 }
 
 .ade-home-greeting h1 {
   margin: 0;
   color: var(--ade-text);
-  font-size: clamp(34px, 5vw, 56px);
-  font-weight: 400;
-  line-height: 1.04;
-  letter-spacing: -0.045em;
-  text-shadow: 0 2px 24px rgb(0 0 0 / 0.55);
+  font-size: clamp(30px, 3.2vw, 44px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-shadow: 0 2px 24px rgb(0 0 0 / 0.7);
+}
+
+.ade-home-inner {
+  display: grid;
+  gap: 12px;
+  width: min(760px, 100%);
+  margin: 0 auto;
 }
 
 .ade-overnight {
   margin: 0 0 16px;
+  background: rgb(16 18 23 / 0.88);
   padding: 10px 12px;
   border: 1px solid var(--ade-border);
   border-radius: 10px;
@@ -2778,8 +3117,8 @@ button.ade-subagent:hover .ade-subagent-open {
 
 .ade-home-needs-you:hover,
 .ade-home-needs-you:focus-visible {
-  background: color-mix(in srgb, var(--ade-accent) 20%, transparent);
-  color: var(--ade-accent);
+  background: var(--ade-accent);
+  color: var(--ade-ink);
   outline: 2px solid var(--ade-accent);
   outline-offset: 2px;
 }
@@ -4354,16 +4693,8 @@ button.ade-subagent:hover .ade-subagent-open {
     border-radius: 16px;
   }
 
-  .ade-home {
-    padding: 24px 20px 5%;
-  }
-
-  .ade-home-inner {
-    gap: 18px;
-  }
-
-  .ade-home-greeting h1 {
-    font-size: clamp(32px, 4.2vw, 46px);
+  .ade-home-scroll {
+    padding: 24px 20px;
   }
 }
 
@@ -4570,17 +4901,12 @@ button.ade-subagent:hover .ade-subagent-open {
     padding: 16px;
   }
 
-  .ade-home {
-    justify-content: flex-start;
-    padding: 28px 16px 24px;
-  }
-
-  .ade-home-inner {
-    gap: 18px;
+  .ade-home-scroll {
+    padding: 16px 16px 24px;
   }
 
   .ade-home-greeting h1 {
-    font-size: 34px;
+    font-size: 28px;
   }
 
   .ade-composer.ade-composer-home {

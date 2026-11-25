@@ -6,7 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 import { serverEnvironment, usageAccessAtom } from "../state.ts";
-import { summaryIncomplete } from "./spend.logic.ts";
+import { type ProviderLimits, summaryIncomplete } from "./spend.logic.ts";
 
 export const limitAccountsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
@@ -34,11 +34,11 @@ export const USAGE_PROVIDER_OF_DRIVER: Record<string, UsageProviderKind> = {
 
 /**
  * Per machine, the providers it pays as a flat subscription (from the accounts whose limits it
- * reads), and per provider the fullest window of those accounts (0–1) for the breakdown.
+ * reads), and those accounts' limit windows for the breakdown.
  */
 export const flatProvidersAtom = Atom.make((get) => {
   const byEnvironment = new Map<EnvironmentId, Set<UsageProviderKind>>();
-  const peaks = new Map<UsageProviderKind, number>();
+  const limits: ProviderLimits[] = [];
   for (const account of get(limitAccountsAtom)) {
     const provider = USAGE_PROVIDER_OF_DRIVER[String(account.driver)];
     if (provider === undefined) continue;
@@ -46,10 +46,9 @@ export const flatProvidersAtom = Atom.make((get) => {
       const providers = byEnvironment.get(environmentId) ?? new Set();
       byEnvironment.set(environmentId, providers.add(provider));
     }
-    const used = Math.max(0, ...account.limits.windows.map((window) => window.usedPercent)) / 100;
-    peaks.set(provider, Math.max(peaks.get(provider) ?? 0, used));
+    limits.push({ provider, windows: account.limits.windows });
   }
-  return { byEnvironment, peaks };
+  return { byEnvironment, limits };
 }).pipe(Atom.withLabel("ade-flat-providers"));
 
 export interface SpendUsage {
