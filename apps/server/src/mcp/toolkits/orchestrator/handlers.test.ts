@@ -53,14 +53,15 @@ const handlersFor = (from: ThreadId, { sent, delegated }: Seen) =>
           isBotThread: (id) => Effect.succeed(id === ana || id === beto),
         }),
         Layer.mock(ForkGaps.ForkGaps)({
-          openGap: (id) =>
+          // Ana opened a second gap after the one she is building for.
+          openGaps: (id) =>
             Effect.succeed(
-              id === plain
-                ? null
-                : ({
-                    name: "vídeo",
-                    steps: [{ rung: id === ana ? "build" : "reuse", result: "trying" }],
-                  } as never),
+              (id === plain
+                ? []
+                : [
+                    { steps: [{ rung: id === ana ? "build" : "reuse", result: "trying" }] },
+                    { steps: [{ rung: "reuse", result: "trying" }] },
+                  ]) as never,
             ),
         }),
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
@@ -123,6 +124,11 @@ it.effect("a thread on a gap's build rung builds here, in a new worktree that as
     ]);
     const remote = { environmentId: EnvironmentId.make("environment:other") };
     expect(yield* delegate(ana, remote)).toEqual([]);
+    // Naming this machine is still delegating here.
+    const here = { environmentId: EnvironmentId.make("environment:bot-to-bot") };
+    expect(yield* delegate(ana, here)).toMatchObject([
+      { isolation: "worktree", runtimeMode: "approval-required" },
+    ]);
     // Other rungs, and threads with no gap, delegate as they always did.
     for (const from of [beto, plain]) {
       expect(yield* delegate(from, remote)).toMatchObject([

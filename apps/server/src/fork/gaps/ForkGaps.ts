@@ -62,8 +62,8 @@ export class ForkGaps extends Context.Service<
     readonly answerInstall: (
       input: ForkGapAnswerInstallInput,
     ) => Effect.Effect<ForkGap, ForkBotsError>;
-    /** The gap a thread is climbing now, which narrows what it may delegate and propose. */
-    readonly openGap: (threadId: ThreadId) => Effect.Effect<ForkGap | null, ForkBotsError>;
+    /** The gaps a thread is climbing now, which narrow what it may delegate and propose. */
+    readonly openGaps: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ForkGap>, ForkBotsError>;
   }
 >()("t3/fork/gaps/ForkGaps") {}
 
@@ -458,6 +458,7 @@ export const make = Effect.gen(function* () {
                   runtimeMode: from.runtimeMode,
                   instanceId: from.modelSelection.instanceId,
                   model: from.modelSelection.model,
+                  sendAttempt: 0,
                   answer: "pending" as const,
                   decidedAt: null,
                 },
@@ -535,38 +536,34 @@ export const make = Effect.gen(function* () {
         }
         const bot = bots.find((candidate) => candidate.id === gap.botId);
         const approves = parsed.answer === "approve";
-        if (approves && (yield* isSpent(gap))) {
-          yield* close(stored, gap, bot);
-          return yield* new ForkBotsError({
-            reason: "conflict",
-            message: "Cancelada: el hueco agotó su tope de pasos o de tokens. No se aprobó nada.",
-          });
-        }
         const thread = yield* askingThread(gap, asked, bot);
         const reachable = thread !== null;
         const withAnswer = (
           answer: ForkGapInstall["answer"],
           decidedAt: ForkGapInstall["decidedAt"],
+          sendAttempt = asked.sendAttempt,
         ): ForkGap => ({
           ...gap,
           steps: gap.steps.map((done) =>
             done.install?.id === parsed.id
-              ? { ...done, install: { ...asked, answer, decidedAt } }
+              ? { ...done, install: { ...asked, answer, decidedAt, sendAttempt } }
               : done,
           ),
         });
         const now = yield* nowIso;
+        const cancelled = Effect.gen(function* () {
+          yield* save(stored, withAnswer("cancelled", now), bot);
+          return yield* new ForkBotsError({
+            reason: "conflict",
+            message:
+              "Cancelada: el hueco se cerró, o el bot o su hilo cambiaron desde que lo pidió. No se aprobó nada.",
+          });
+        });
         if (!reachable) {
-          const answer = approves ? "cancelled" : "rejected";
-          const closed = withAnswer(answer, now);
+          if (approves) return yield* cancelled;
+          const closed = withAnswer("rejected", now);
           yield* save(stored, closed, bot);
-          return !approves
-            ? closed
-            : yield* new ForkBotsError({
-                reason: "conflict",
-                message:
-                  "Cancelada: el hueco se cerró, o el bot o su hilo cambiaron desde que lo pidió. No se aprobó nada.",
-              });
+          return closed;
         }
         // A yes never waits in a queue, where the thread's mode could change before it starts.
         if (approves && thread.activeRunId !== null) {
@@ -575,35 +572,63 @@ export const make = Effect.gen(function* () {
             message: "Espera a que el bot termine su turno; la petición sigue pendiente.",
           });
         }
+        // After the idle check: with no turn running, no finished turn can add tokens meanwhile.
+        if (approves && (yield* isSpent(gap))) {
+          yield* close(stored, gap, bot);
+          return yield* new ForkBotsError({
+            reason: "conflict",
+            message: "Cancelada: el hueco agotó su tope de pasos o de tokens. No se aprobó nada.",
+          });
+        }
         const decided = withAnswer(approves ? "approved" : "rejected", now);
         const install = decided.steps.find((done) => done.install?.id === parsed.id)!.install!;
         yield* save(stored, decided, bot);
+        // Read again right before sending: the bot may have been edited off this thread, or the
+        // thread failed over, while the answer was being saved.
+        const botNow = (yield* forkBots.list({})).bots.find(
+          (candidate) => candidate.id === gap.botId,
+        );
+        if (approves && (yield* askingThread(gap, asked, botNow)) === null) return yield* cancelled;
         // Straight to the thread that asked, never to wherever the bot is now. The orchestrator
         // rechecks the mode under its own lock, in case it rose after the check above. The id
         // comes from the request, so a retry after a lost reply is not delivered twice.
-        const messageId = MessageId.make(`fork-gap-answer:${asked.id}:${parsed.answer}`);
-        const sent = yield* threads
-          .sendToThread({
-            projectId: gap.projectId,
-            commandId: CommandId.make(messageId),
-            threadId: gap.threadId,
-            messageId,
-            text: answerText(decided, install),
-            attachments: [],
-            mode: "queue",
-            createdBy: "user",
-            creationSource: "web",
-          })
-          .pipe(
-            Effect.provideService(DispatchModeLimit, {
-              runtimeMode: asked.runtimeMode,
-              interactionMode: "default",
-            }),
-            Effect.result,
+        const send = (attempt: number) => {
+          const messageId = MessageId.make(
+            `fork-gap-answer:${asked.id}:${parsed.answer}:${attempt}`,
           );
+          return threads
+            .sendToThread({
+              projectId: gap.projectId,
+              commandId: CommandId.make(messageId),
+              threadId: gap.threadId,
+              messageId,
+              text: answerText(decided, install),
+              attachments: [],
+              mode: "queue",
+              createdBy: "user",
+              creationSource: "web",
+            })
+            .pipe(
+              Effect.provideService(DispatchModeLimit, {
+                runtimeMode: asked.runtimeMode,
+                interactionMode: "default",
+              }),
+              Effect.result,
+            );
+        };
+        let attempt = asked.sendAttempt;
+        let sent = yield* send(attempt);
+        // The orchestrator replays a refusal it recorded for this id; only then is a new id safe.
+        if (
+          sent._tag === "Failure" &&
+          sent.failure._tag === "OrchestratorCommandPreviouslyRejectedError"
+        ) {
+          attempt += 1;
+          sent = yield* send(attempt);
+        }
         if (sent._tag === "Failure") {
           // The answer is not spent on a message that never left: it waits again.
-          yield* save(stored, withAnswer("pending", null), bot);
+          yield* save(stored, withAnswer("pending", null, attempt), bot);
           return yield* new ForkBotsError({
             reason: "dispatchFailed",
             message:
@@ -615,12 +640,10 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const openGap = Effect.fn("ForkGaps.openGap")(function* (threadId: ThreadId) {
+  const openGaps = Effect.fn("ForkGaps.openGaps")(function* (threadId: ThreadId) {
     const stored = yield* lock.withPermits(1)(store.read());
-    return (
-      stored.gaps.findLast(
-        (candidate) => candidate.status === "open" && candidate.threadId === threadId,
-      ) ?? null
+    return stored.gaps.filter(
+      (candidate) => candidate.status === "open" && candidate.threadId === threadId,
     );
   });
 
@@ -630,7 +653,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.map((stored) => ({ gaps: stored.gaps }))),
     step,
     answerInstall,
-    openGap,
+    openGaps,
   });
 });
 

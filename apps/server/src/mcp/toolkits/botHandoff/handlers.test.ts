@@ -62,9 +62,9 @@ const handlersFor = (gapSteps: GapSteps | null, proposed: Array<string>) =>
             }),
         }),
         Layer.mock(ForkGaps.ForkGaps)({
-          openGap: () =>
+          openGaps: () =>
             Effect.succeed(
-              gapSteps === null ? null : ({ name: "vídeo", steps: gapSteps } as never),
+              gapSteps === null ? [] : ([{ name: "vídeo", steps: gapSteps }] as never),
             ),
         }),
       ),

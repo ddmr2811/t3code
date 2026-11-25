@@ -770,6 +770,8 @@ describe("ForkBots", () => {
           const directory = JSON.parse(yield* fs.readFileString(botsFile));
           directory.proposals[0].runtimeMode = "full-access";
           yield* fs.writeFileString(botsFile, JSON.stringify(directory, null, 2));
+          // A coordinator lowered since then does not turn it into an acceptable one.
+          threadModes.set(threadId, "approval-required");
           const accepted = yield* service
             .answerProposal({ id: proposal.id, answer: "accept" })
             .pipe(Effect.flip);

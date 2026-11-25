@@ -74,6 +74,8 @@ export const ForkGapInstall = Schema.Struct({
   runtimeMode: RuntimeMode,
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  /** Raised when the orchestrator refused a send, so the next try is not that refusal replayed. */
+  sendAttempt: Schema.Int,
   /** Answered once. `cancelled`: the gap closed, or the bot or its thread changed since it asked. */
   answer: Schema.Literals(["pending", "approved", "rejected", "cancelled"]),
   decidedAt: Schema.NullOr(IsoDateTime),

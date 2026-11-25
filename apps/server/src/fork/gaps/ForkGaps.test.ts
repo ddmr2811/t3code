@@ -66,8 +66,10 @@ const withGaps = <A, E>(
     readonly turnTokens: Array<number>;
     /** Each thread's mode now, which its user may raise after the bot asked. */
     readonly threadModes: Map<ThreadId, RuntimeMode>;
-    /** `down`: a message fails before it is committed. `lostReply`: it fails after. */
-    readonly outage: { mode: "none" | "down" | "lostReply" };
+    /** `down`: fails before it is committed. `lostReply`: fails after. `refused`: recorded as refused. */
+    readonly outage: { mode: "none" | "down" | "lostReply" | "refused" };
+    /** Runs right after the next read of the bot directory, as an edit from another client. */
+    readonly afterNextList: Array<() => void>;
     readonly gapsFile: string;
     readonly fs: FileSystem.FileSystem;
   }) => Effect.Effect<A, E>,
@@ -83,16 +85,17 @@ const withGaps = <A, E>(
   const sent: Array<readonly [ThreadId, string]> = [];
   const turnTokens: Array<number> = [];
   const threadModes = new Map<ThreadId, RuntimeMode>();
-  const outage: { mode: "none" | "down" | "lostReply" } = { mode: "none" };
+  const outage: { mode: "none" | "down" | "lostReply" | "refused" } = { mode: "none" };
+  const afterNextList: Array<() => void> = [];
+  const refused = new Set<string>();
   const mocks = Layer.mergeAll(
     Layer.mock(ForkBots.ForkBots)({
       list: () =>
-        Effect.succeed({
-          bots: bots.map((bot) => ({ ...bot, projectId: project })),
-          handoffs: [],
-          proposals: [],
-          updatedAt: null,
-        } as never),
+        Effect.sync(() => {
+          const read = bots.map((bot) => ({ ...bot, projectId: project }));
+          afterNextList.shift()?.();
+          return { bots: read, handoffs: [], proposals: [], updatedAt: null } as never;
+        }),
     }),
     Layer.mock(ProjectService.ProjectService)({
       getById: () => Effect.succeedSome({ id: project, title: "Proyecto" } as never),
@@ -121,6 +124,14 @@ const withGaps = <A, E>(
       sendToThread: ((input: { threadId: ThreadId; text: string; messageId: string }) =>
         Effect.suspend(() => {
           if (outage.mode === "down") return Effect.fail({ _tag: "ProviderDown" } as never);
+          // The orchestrator records a refusal by id and replays it for that id from then on.
+          if (refused.has(input.messageId)) {
+            return Effect.fail({ _tag: "OrchestratorCommandPreviouslyRejectedError" } as never);
+          }
+          if (outage.mode === "refused") {
+            refused.add(input.messageId);
+            return Effect.fail({ _tag: "OrchestratorCommandRejectedError" } as never);
+          }
           // The orchestrator keeps one message per id, as its command receipts do.
           if (!committed.includes(input.messageId)) sent.push([input.threadId, input.text]);
           committed.push(input.messageId);
@@ -144,6 +155,7 @@ const withGaps = <A, E>(
       turnTokens,
       threadModes,
       outage,
+      afterNextList,
       gapsFile: path.join(config.stateDir, "fork", "gaps.json"),
       fs: yield* FileSystem.FileSystem,
     });
@@ -303,6 +315,36 @@ it.effect("a yes that could not be delivered is not spent, and a retry delivers 
       expect(sent).toHaveLength(1);
     }),
   ),
+);
+
+it.effect("a yes the orchestrator refused once can be given again", () =>
+  withGaps(({ gaps, sent, outage }) =>
+    Effect.gen(function* () {
+      const id = yield* askInstall(gaps, ana);
+      // The bot's provider was being reconfigured; the refusal stays recorded under that id.
+      outage.mode = "refused";
+      expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("dispatchFailed");
+      outage.mode = "none";
+      yield* gaps.answerInstall({ id, answer: "approve" });
+      expect(sent).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect(
+  "a yes is cancelled when the bot is edited off its thread while it is being answered",
+  () =>
+    withGaps(({ gaps, bots, sent, afterNextList }) =>
+      Effect.gen(function* () {
+        const id = yield* askInstall(gaps, ana);
+        afterNextList.push(() => {
+          bots[0]!.threadId = ThreadId.make("thread-ana-new");
+        });
+        expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("conflict");
+        expect(sent).toEqual([]);
+        expect((yield* gaps.list).gaps[0]?.steps.at(-1)?.install?.answer).toBe("cancelled");
+      }),
+    ),
 );
 
 it.effect("a yes waits for the bot's turn to end, so it never sits in a queue", () =>
