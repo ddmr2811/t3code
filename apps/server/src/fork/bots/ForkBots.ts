@@ -1033,7 +1033,14 @@ const make = Effect.gen(function* () {
             "Bot proposals have no room left; the user must answer the pending ones first.",
           );
         }
-        yield* fileStore.write({ ...directory, proposals, updatedAt: proposal.createdAt });
+        const next = { ...directory, proposals, updatedAt: proposal.createdAt };
+        // Leave room to answer it: accepting adds a bot no larger than the proposal, a «No» less.
+        if (savedBytes(next) + savedBytes(proposal) > FORK_BOTS_MAX_FILE_BYTES) {
+          return yield* limitExceeded(
+            "The bot file has no room left to answer a proposal; remove bots or answer pending ones.",
+          );
+        }
+        yield* fileStore.write(next);
         return proposal;
       }),
     );

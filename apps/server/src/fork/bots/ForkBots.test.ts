@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  FORK_BOTS_MAX_FILE_BYTES,
   type ForkBotUpsertInput,
   ProjectId,
   type RuntimeMode,
@@ -948,6 +949,26 @@ describe("ForkBots", () => {
             instructions: wide(8000),
           });
           expect(manual.handle).toBe("manual");
+
+          // A proposal that fits but would leave no room to accept or refuse it is not stored.
+          const nearlyFull = JSON.parse(yield* fs.readFileString(botsFile));
+          nearlyFull.proposals = [];
+          nearlyFull.vetoes = [];
+          const size = () =>
+            new TextEncoder().encode(`${JSON.stringify(nearlyFull, null, 2)}\n`).byteLength;
+          for (let index = 0; size() < FORK_BOTS_MAX_FILE_BYTES - 20_000; index += 1) {
+            nearlyFull.vetoes.push({
+              projectId: `proj-pad-${Math.floor(index / FORK_BOTS_VETOES_PER_PROJECT)}`,
+              handle: `${index}`.padEnd(32, "x"),
+              name: wide(80),
+            });
+          }
+          yield* fs.writeFileString(botsFile, JSON.stringify(nearlyFull, null, 2));
+          const noRoom = yield* service.propose(longest(97), from).pipe(Effect.flip);
+          expect(noRoom).toMatchObject({
+            reason: "limitExceeded",
+            message: expect.stringContaining("no room left to answer"),
+          });
         }),
       ),
     );
