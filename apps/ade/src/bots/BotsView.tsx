@@ -813,7 +813,6 @@ function QuickCreate(props: {
   const openThread = allThreads.find(
     (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === selectedKey,
   );
-  const firstProject = [...(allProjects.get(props.fallbackEnv)?.values() ?? [])][0];
   const choices = pickBotProject(
     text,
     [...allProjects].flatMap(([environmentId, projects]) =>
@@ -823,29 +822,32 @@ function QuickCreate(props: {
         title: project.title,
       })),
     ),
+    // The thread open for real, never the machine Bots happens to show.
     openThread?.projectId != null
       ? { environmentId: openThread.environmentId, projectId: openThread.projectId }
-      : firstProject === undefined
-        ? null
-        : { environmentId: props.fallbackEnv, projectId: firstProject.id },
+      : null,
   );
 
   const reset = () => {
     setAsking(false);
+    setPicked(null);
     setProposal(null);
     setText("");
     setError(null);
   };
 
   const [asking, setAsking] = useState(false);
-  const choice = choices.length === 1 ? choices[0]! : null;
+  // The machine and project the user settled, kept so «Rellenar a mano» opens there too.
+  const [picked, setPicked] = useState<BotProjectChoice | null>(null);
+  const choice = picked ?? (choices.length === 1 ? choices[0]! : null);
 
-  const propose = async (picked: BotProjectChoice | null = choice) => {
+  const propose = async (where: BotProjectChoice | null = choice) => {
     const sentence = text.trim();
     if (sentence === "" || busy) return;
     if (choices.length === 0) return setError("Primero añade un proyecto en alguna máquina.");
     // The sentence leaves this device only once its machine is settled.
-    if (picked === null) return setAsking(true);
+    if (where === null) return setAsking(true);
+    setPicked(where);
     setAsking(false);
     setBusy(true);
     setError(null);
@@ -854,11 +856,11 @@ function QuickCreate(props: {
       registry,
       forkBotsDraftCommand,
       {
-        environmentId: picked.environmentId,
-        input: { text: sentence, projectId: picked.projectId },
+        environmentId: where.environmentId,
+        input: { text: sentence, projectId: where.projectId },
       },
       "No se pudo proponer el bot",
-      (draft) => setProposal({ environmentId: picked.environmentId, draft }),
+      (draft) => setProposal({ environmentId: where.environmentId, draft }),
     );
     setBusy(false);
     if (failure !== null) setError(failure);
@@ -938,6 +940,7 @@ function QuickCreate(props: {
           onChange={(event) => {
             setText(event.target.value);
             setAsking(false);
+            setPicked(null);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {

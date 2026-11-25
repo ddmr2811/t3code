@@ -316,8 +316,8 @@ const words = (text: string) =>
 
 /**
  * Where a sentence's bot goes: the project it names, as whole words and on any paired machine,
- * the longest name winning («hubra web» over «hubra»); otherwise `open`, the project the user has
- * open. A name on several machines prefers the open one's; more than one result means ask.
+ * the longest name winning («hubra web» over «hubra»); otherwise `open`, the project of the thread
+ * the user has open. More than one result means asking which machine before the sentence leaves.
  */
 export function pickBotProject(
   text: string,
@@ -332,7 +332,12 @@ export function pickBotProject(
   const best = named
     .filter((project) => words(project.title).length === longest)
     .map(({ environmentId, projectId }) => ({ environmentId, projectId }));
-  if (best.length === 0) return open === null ? [] : [open];
-  const onOpenMachine = best.filter((choice) => choice.environmentId === open?.environmentId);
-  return onOpenMachine.length > 0 ? onOpenMachine : best;
+  if (best.length > 0 || open !== null) return best.length > 0 ? best : [open!];
+  // Nothing named and no thread open: one choice per machine, so several machines mean asking.
+  return projects
+    .filter(
+      (project, index) =>
+        projects.findIndex((other) => other.environmentId === project.environmentId) === index,
+    )
+    .map(({ environmentId, projectId }) => ({ environmentId, projectId }));
 }

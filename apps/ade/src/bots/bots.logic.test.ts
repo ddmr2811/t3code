@@ -268,15 +268,19 @@ describe("pickBotProject", () => {
     expect(pickBotProject("PR de Hubra", projects, open)[0]?.environmentId).toBe(nexo);
   });
 
-  it("settles a name on several machines on the open one, and asks when that does not", () => {
+  it("asks which machine whenever the named project is on several, whatever is open", () => {
     const twice = [...projects, project(cx53, "hubra-53", "Hubra")];
     const openOnNexo = { environmentId: nexo, projectId: ProjectId.make("hubra-web") };
-    expect(pickBotProject("PR de Hubra", twice, openOnNexo)).toEqual([
+    expect(
+      pickBotProject("PR de Hubra", twice, openOnNexo).map((choice) => choice.environmentId),
+    ).toEqual([nexo, cx53]);
+  });
+
+  it("asks which machine when nothing is named and no thread is open", () => {
+    expect(pickBotProject("un bot que resuma", projects, null)).toEqual([
+      { environmentId: pc, projectId: "web" },
       { environmentId: nexo, projectId: "hubra" },
     ]);
-    expect(
-      pickBotProject("PR de Hubra", twice, open).map((choice) => choice.environmentId),
-    ).toEqual([nexo, cx53]);
   });
 });
 
