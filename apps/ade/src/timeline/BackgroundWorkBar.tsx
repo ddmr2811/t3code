@@ -31,6 +31,14 @@ export function BackgroundWorkBar(props: {
   const [stop, setStop] = useState<BackgroundWorkStopRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const work = thread === null ? null : backgroundWork(thread.projection);
+  // Other work, or none: the list and a failed Stop belonged to the work before.
+  const tasksKey = work?.tasks.map((task) => task.taskId).join("\n") ?? null;
+  const [shownFor, setShownFor] = useState(tasksKey);
+  if (shownFor !== tasksKey) {
+    setShownFor(tasksKey);
+    setOpen(false);
+    setError(null);
+  }
   if (work === null) return null;
   const threadKey = scopedThreadKey(threadRef);
   const stopping = isBackgroundWorkStopPending(stop, threadKey, work.tasks, false);
