@@ -22,7 +22,7 @@ import {
   togglePendingAlerts,
   usePendingTrayNotifications,
 } from "./notifications.ts";
-import { BotNotices, useBotNotices } from "./BotNotices.tsx";
+import { BotNotices, GapLoadErrors, useBotNotices } from "./BotNotices.tsx";
 import { FirstRequest, RequestCards, trayHasFocus } from "./Requests.tsx";
 import {
   buildPendingTrayItems,
@@ -461,6 +461,7 @@ export function DecisionsPanel() {
           ) : null}
         </div>
       ) : null}
+      <GapLoadErrors />
       {effectiveMode !== "lista" ? null : (
         <>
           <BotNotices

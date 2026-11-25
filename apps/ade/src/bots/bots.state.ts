@@ -109,6 +109,8 @@ export const allBotsAtom = Atom.make((get) => {
   const proposalsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotProposal>>();
   const gapsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkGap>>();
   const errors: BotLoadError[] = [];
+  /** Machines whose pending installs could not be read, so the tray can say so. */
+  const gapErrors: EnvironmentId[] = [];
 
   for (const environmentId of enabledEnvironmentIds(catalog)) {
     const result = get(forkBotsListQuery({ environmentId, input: {} }));
@@ -124,10 +126,10 @@ export const allBotsAtom = Atom.make((get) => {
       handoffsByEnv.set(environmentId, result.value.handoffs);
       proposalsByEnv.set(environmentId, result.value.proposals);
     }
-    // A server without gaps fails this read; it then has no installs to ask about.
     const gaps = get(forkGapsListQuery({ environmentId, input: {} }));
     if (gaps._tag === "Success") gapsByEnv.set(environmentId, gaps.value.gaps);
+    if (gaps._tag === "Failure") gapErrors.push(environmentId);
   }
 
-  return { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, errors };
+  return { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, errors, gapErrors };
 }).pipe(Atom.withLabel("ade-all-bots"));

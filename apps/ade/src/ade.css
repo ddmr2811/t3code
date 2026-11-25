@@ -1575,6 +1575,11 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Exactly what is approved: runs of spaces inside an argument are not collapsed. */
+.ade-install-command {
+  white-space: pre-wrap;
+}
+
 .ade-proposal-instructions summary {
   cursor: pointer;
   color: var(--ade-text-muted);

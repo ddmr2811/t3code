@@ -105,6 +105,20 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
   return [...installs, ...proposals, ...handoffs];
 }
 
+/** An install nobody can see is one nobody can refuse, so a failed read is said out loud. */
+export function GapLoadErrors() {
+  const { gapErrors } = useAtomValue(allBotsAtom);
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  if (gapErrors.length === 0) return null;
+  const machines = gapErrors.map((id) => catalog.entries.get(id)?.target.label ?? id).join(", ");
+  return (
+    <p className="ade-error" role="alert">
+      No se pudieron leer las instalaciones que piden los bots de {machines}. Puede haber alguna
+      esperando tu respuesta.
+    </p>
+  );
+}
+
 /**
  * Bot notices wait here until the user answers them or opens the sender's thread. `include`
  * picks the ones to show: the tray's current one, or those not snoozed.
@@ -133,12 +147,12 @@ export function BotNotices(props: {
     setSending((current) => new Set(current).add(key));
     setError(null);
     const failure = await run();
-    // Also after a failure: an install answered for a bot that left its thread is closed.
-    refreshBots(registry, environmentId);
+    // A failed answer keeps its card, so the reason stays beside what it was about.
     if (failure !== null) {
       setSending((current) => new Set([...current].filter((sent) => sent !== key)));
-      setError(failure);
+      return setError(failure);
     }
+    refreshBots(registry, environmentId);
   };
 
   return (
@@ -441,16 +455,18 @@ function InstallNotice(
         </dd>
         <dt>Comando</dt>
         <dd>
-          <code>{install.command}</code>
+          <code className="ade-install-command">{install.command}</code>
         </dd>
         <dt>Vuelta atrás</dt>
         <dd>
-          <code>{install.rollback}</code>
+          <code className="ade-install-command">{install.rollback}</code>
         </dd>
       </dl>
       <p className="ade-request-note">
-        Tu «sí» vale una vez, para este comando y en esta máquina. Lo ejecuta el bot con sus
-        permisos; cada instalación se pregunta aparte.
+        Tu «sí» vale una vez, para este comando, en esta máquina y en el hilo que lo pidió.{" "}
+        {install.runtimeMode === "approval-required"
+          ? "El bot te pedirá permiso otra vez al ejecutarlo."
+          : `El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[install.runtimeMode]}».`}
       </p>
     </NoticeFrame>
   );
