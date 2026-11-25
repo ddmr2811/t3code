@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off processEnvInEffect:off - spawns the real server and pairs over its real HTTP routes.
 // Fork: `usage:read` opens the usage summary and nothing else. A real server, a real pairing link
 // and a real token exchange; only the scope in the link is chosen by the test.
 import * as NodeChildProcess from "node:child_process";
@@ -88,12 +89,12 @@ it.live("a client paired with only usage:read reads usage and no other diagnosti
           requested_token_type: AuthAccessTokenType,
           scope: AuthUsageReadScope,
         }),
-      }).then((response) => response.json());
+      }).then((response) => response.json() as Promise<{ access_token: string; scope: string }>);
       const issued = await fetch(`${origin}/api/auth/websocket-ticket`, {
         method: "POST",
         headers: { authorization: `Bearer ${exchanged.access_token}` },
-      }).then((response) => response.json());
-      return { ticket: issued.ticket as string, scope: exchanged.scope as string };
+      }).then((response) => response.json() as Promise<{ ticket: string }>);
+      return { ticket: issued.ticket, scope: exchanged.scope };
     });
     assert.equal(scope, AuthUsageReadScope);
 
@@ -121,7 +122,7 @@ it.live("a client paired with only usage:read reads usage and no other diagnosti
     assert.isArray(summary.buckets);
 
     const history = { windowMs: 60_000, bucketMs: 60_000 };
-    const denied = [
+    const denied: ReadonlyArray<Effect.Effect<unknown, { readonly _tag: string }>> = [
       client[WS_METHODS.serverGetTraceDiagnostics]({}),
       client[WS_METHODS.serverGetProcessDiagnostics]({}),
       client[WS_METHODS.serverGetProcessResourceHistory](history),
@@ -135,7 +136,7 @@ it.live("a client paired with only usage:read reads usage and no other diagnosti
       client[WS_METHODS.forkActivityFeed]({}),
     ];
     for (const call of denied) {
-      const error = yield* Effect.flip(call as Effect.Effect<unknown, { readonly _tag: string }>);
+      const error = yield* Effect.flip(Effect.asVoid(call));
       assert.equal(error._tag, "EnvironmentAuthorizationError");
     }
   }).pipe(Effect.scoped),
