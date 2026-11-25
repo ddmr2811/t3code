@@ -3438,6 +3438,86 @@ button.ade-subagent:hover .ade-subagent-open {
   font: 13px var(--ade-font-sans);
 }
 
+.ade-bot-quick {
+  display: grid;
+  gap: 10px;
+}
+
+.ade-bot-quick-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.ade-bot-quick-row textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 14px/1.45 var(--ade-font-sans);
+  resize: vertical;
+}
+
+.ade-bot-quick-row textarea:focus-visible {
+  border-color: var(--ade-accent);
+  outline: none;
+}
+
+.ade-bot-quick-row .ade-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.ade-bot-quick-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ade-bot-quick-error .ade-error {
+  margin: 0;
+}
+
+.ade-bot-proposal {
+  border-color: var(--ade-accent);
+}
+
+.ade-bot-quick-where {
+  min-width: min(100%, 280px);
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 13px var(--ade-font-sans);
+}
+
+.ade-bot-quick-where:focus-visible {
+  border-color: var(--ade-accent);
+  outline: none;
+}
+
+/* The quiet buttons sit level with «Crear». */
+.ade-bot-quick .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-bot-proposal-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
 .ade-bots-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
@@ -4345,6 +4425,14 @@ button.ade-subagent:hover .ade-subagent-open {
 
   .ade-bots-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ade-bot-quick-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ade-bot-quick-row .ade-button {
+    justify-self: end;
   }
 
   .ade-bots-chat {

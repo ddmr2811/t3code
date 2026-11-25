@@ -773,6 +773,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("dashboard node exporter prometheus machines prod tailscale ip metrics")],
   },
   {
+    id: "fork-bot-draft-model",
+    title: msg("Bot drafting model"),
+    to: "/settings/general",
+    scope: "environment",
+    searchTerms: [msg("ade bots create sentence draft gemini flash kimi opencode antigravity")],
+  },
+  {
     id: "response-streaming",
     title: msg("Response streaming"),
     to: "/settings/threads",

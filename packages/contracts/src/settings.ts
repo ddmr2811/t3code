@@ -1418,6 +1418,11 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+const ForkBotDraftModelSetting = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+});
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1548,6 +1553,10 @@ export const ServerSettings = Schema.Struct({
   /** Fork: the Dashboard's arrangement, shared by every client of this server. */
   forkDashboard: ForkDashboardLayout.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_FORK_DASHBOARD_LAYOUT)),
+  ),
+  /** Fork: the model that drafts a bot from one sentence; null picks Gemini Flash, then Kimi. */
+  forkBotDraftModelSelection: Schema.NullOr(ForkBotDraftModelSetting).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1993,6 +2002,7 @@ export const ServerSettingsPatch = Schema.Struct({
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   forkNodeExporters: Schema.optionalKey(Schema.Array(ForkNodeExporter)),
   forkDashboard: Schema.optionalKey(ForkDashboardLayoutWrite),
+  forkBotDraftModelSelection: Schema.optionalKey(Schema.NullOr(ForkBotDraftModelSetting)),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
