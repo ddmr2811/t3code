@@ -3426,6 +3426,22 @@ button.ade-subagent:hover .ade-subagent-open {
   border-color: var(--ade-accent);
 }
 
+.ade-bot-quick-where {
+  min-width: min(100%, 280px);
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 13px var(--ade-font-sans);
+}
+
+.ade-bot-quick-where:focus-visible {
+  border-color: var(--ade-accent);
+  outline: none;
+}
+
 /* The quiet buttons sit level with «Crear». */
 .ade-bot-quick .ade-button-quiet {
   margin-top: 0;
