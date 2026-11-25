@@ -68,6 +68,7 @@ import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 import {
   decodeStoredBotDirectory,
   EMPTY_BOT_DIRECTORY,
+  FORK_BOTS_VETOES_PER_PROJECT,
   listBots,
   type StoredBotDirectory,
 } from "./store.ts";
@@ -1003,10 +1004,10 @@ const make = Effect.gen(function* () {
         }
         const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
         if (
-          project.some(
-            (candidate) =>
-              candidate.status === "rejected" &&
-              (same(candidate.handle, proposal.handle) || same(candidate.name, proposal.name)),
+          directory.vetoes.some(
+            (veto) =>
+              veto.projectId === proposal.projectId &&
+              (same(veto.handle, proposal.handle) || same(veto.name, proposal.name)),
           )
         ) {
           return yield* new ForkBotsError({
@@ -1020,7 +1021,7 @@ const make = Effect.gen(function* () {
             message: "Another bot already uses this handle.",
           });
         }
-        const proposals = yield* keptProposals([...directory.proposals, proposal]);
+        const proposals = [...directory.proposals, proposal];
         yield* fileStore.write({ ...directory, proposals, updatedAt: proposal.createdAt });
         return proposal;
       }),
@@ -1028,39 +1029,37 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * What a later proposal is checked against: every pending one, every refusal (the veto) and
-   * each project's latest accepted. Proposals of deleted projects go; a failed lookup keeps them.
+   * The answer replaces the project's previous answered proposal (kept for the weekly wait); a
+   * «No» adds a veto. Deleted projects go; a failed lookup keeps them.
    */
-  const keptProposals = Effect.fn("ForkBots.keptProposals")(function* (
-    proposals: ReadonlyArray<ForkBotProposal>,
-  ) {
-    const latestAccepted = new Map<ProjectId, ForkBotProposal["id"]>();
-    for (const proposal of proposals) {
-      if (proposal.status === "accepted") latestAccepted.set(proposal.projectId, proposal.id);
-    }
-    const deleted = new Set<ProjectId>();
-    for (const projectId of new Set(proposals.map((proposal) => proposal.projectId))) {
-      const found = yield* projects.getById(projectId).pipe(Effect.option);
-      if (Option.isSome(found) && Option.isNone(found.value)) deleted.add(projectId);
-    }
-    return proposals.filter(
-      (proposal) =>
-        !deleted.has(proposal.projectId) &&
-        (proposal.status !== "accepted" || latestAccepted.get(proposal.projectId) === proposal.id),
-    );
-  });
-
   const markDecided = Effect.fn("ForkBots.markDecided")(function* (
     directory: StoredBotDirectory,
     proposal: ForkBotProposal,
   ) {
+    const { projectId, handle, name } = proposal;
+    const refusals = directory.vetoes.filter((veto) => veto.projectId === projectId);
+    const full = refusals.length >= FORK_BOTS_VETOES_PER_PROJECT;
+    const vetoes =
+      proposal.status === "rejected"
+        ? [
+            ...directory.vetoes.filter((veto) => !full || veto !== refusals[0]),
+            { projectId, handle, name },
+          ]
+        : directory.vetoes;
+    const deleted = new Set<ProjectId>();
+    for (const id of new Set([...directory.proposals, ...vetoes].map((entry) => entry.projectId))) {
+      const found = yield* projects.getById(id).pipe(Effect.option);
+      if (Option.isSome(found) && Option.isNone(found.value)) deleted.add(id);
+    }
     return {
       ...directory,
-      proposals: yield* keptProposals(
-        directory.proposals.map((candidate) =>
-          candidate.id === proposal.id ? { ...proposal, instructions: "" } : candidate,
-        ),
+      proposals: directory.proposals.flatMap((candidate) =>
+        deleted.has(candidate.projectId) ||
+        (candidate.projectId === projectId && candidate.status !== "pending")
+          ? []
+          : [candidate.id === proposal.id ? { ...proposal, instructions: "" } : candidate],
       ),
+      vetoes: vetoes.filter((veto) => !deleted.has(veto.projectId)),
       updatedAt: proposal.decidedAt,
     };
   });
@@ -1119,27 +1118,14 @@ const make = Effect.gen(function* () {
           if (isRuntimeModeAbove(runtimeMode, ceiling)) runtimeMode = ceiling;
         }
         const id = `bot:${SecureRandom.uuidV4Unsafe()}`;
-        const acceptedAs = (botId: ForkBot["id"]): ForkBotProposal => ({
-          ...proposal,
-          status: "accepted",
-          botId,
-          decidedAt,
-        });
-        const bot = yield* saveBot(
-          {
-            handle: proposal.handle,
-            name: proposal.name,
-            role: proposal.role,
-            instructions: proposal.instructions,
-            projectId: proposal.projectId,
-            runtimeMode,
-            modelSelection: proposal.modelSelection,
-            coordinator: false,
-          },
+        const accepted: ForkBotProposal = { ...proposal, status: "accepted", botId: id, decidedAt };
+        const { handle, name, role, instructions, projectId, modelSelection } = proposal;
+        yield* saveBot(
+          { handle, name, role, instructions, projectId, runtimeMode, modelSelection },
           id,
-          (next, saved) => markDecided(next, acceptedAs(saved.id)),
+          (next) => markDecided(next, accepted),
         );
-        return acceptedAs(bot.id);
+        return accepted;
       }),
     );
     if (answered.status === "rejected") {

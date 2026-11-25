@@ -33,6 +33,7 @@ import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkBots from "./ForkBots.ts";
+import { FORK_BOTS_VETOES_PER_PROJECT } from "./store.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const projectA = ProjectId.make("proj-a");
@@ -869,10 +870,9 @@ describe("ForkBots", () => {
               });
             }
           }
+          // Only each project's last answered proposal stays; the first «No» is a veto apart.
           const proposals = (yield* service.list({})).proposals;
-          // Every refusal stays; of the accepted, only each project's latest.
-          expect(proposals.filter((p) => p.status === "accepted")).toHaveLength(2);
-          expect(proposals.filter((p) => p.status === "rejected")).toHaveLength(13);
+          expect(proposals.map((p) => p.handle).toSorted()).toEqual(["a12", "b12"]);
           const weekly = yield* service
             .propose({ ...draft, handle: "otro", name: "Otro" }, a.from)
             .pipe(Effect.flip);
@@ -880,6 +880,38 @@ describe("ForkBots", () => {
           yield* TestClock.adjust("7 days");
           const again = yield* service.propose(draft, a.from).pipe(Effect.flip);
           expect(again).toMatchObject({ reason: "conflict" });
+        }),
+      ),
+    );
+
+    it.effect("keeps a project's proposals and refusals small enough for 50 projects", () =>
+      withBots(({ service, botsFile, fs }) =>
+        Effect.gen(function* () {
+          const { from } = yield* coordinatorThread(service);
+          const longest = (index: number) => ({
+            handle: `${index}`.padEnd(32, "x"),
+            name: `${index}`.padEnd(80, "n"),
+            role: "r".repeat(120),
+            instructions: "i".repeat(4000),
+            routine: "y".repeat(500),
+            reason: "z".repeat(500),
+          });
+          // More refusals than are kept, then one answered and one pending, all at full length.
+          for (let index = 0; index <= FORK_BOTS_VETOES_PER_PROJECT + 5; index += 1) {
+            const proposal = yield* service.propose(longest(index), from);
+            yield* service.answerProposal({ id: proposal.id, answer: "reject" });
+            yield* TestClock.adjust("7 days");
+          }
+          yield* service.propose(longest(99), from);
+          const stored = JSON.parse(yield* fs.readFileString(botsFile));
+          expect(stored.vetoes).toHaveLength(FORK_BOTS_VETOES_PER_PROJECT);
+          expect(stored.proposals).toHaveLength(2);
+          const perProject = JSON.stringify({
+            proposals: stored.proposals,
+            vetoes: stored.vetoes,
+          }).length;
+          // 50 projects at worst stay well under the 1 MiB bot file, beside the bots themselves.
+          expect(perProject * 50).toBeLessThan(600_000);
         }),
       ),
     );
