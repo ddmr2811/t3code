@@ -24,12 +24,14 @@ export function BackgroundWorkBar(props: {
   // The quiet thread keeps its value while replies stream, so tokens re-render nothing here.
   const thread = useAtomValue(environmentThreadDetails.quietThreadAtom(threadRef));
   const canStop = useAtomValue(operateAccessAtom(threadRef.environmentId)) === "operate";
-  // Interrupt stops the active run first, not this work; the composer owns that Stop.
-  const runIsLive =
-    useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
+  // Interrupt stops the active run first, not this work; the composer owns that Stop. A waiting
+  // run is checkpoint drain, and Stop there reaches the background work, as in T3.
+  const activeRun = useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun;
+  const runIsLive = activeRun != null && activeRun.status !== "waiting";
   const [open, setOpen] = useState(false);
   const [stop, setStop] = useState<BackgroundWorkStopRequest | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Tied to the work it was about, so a late failure never lands on newer work.
+  const [error, setError] = useState<{ tasksKey: string | null; message: string } | null>(null);
   const work = thread === null ? null : backgroundWork(thread.projection);
   // Other work, or none: the list and a failed Stop belonged to the work before.
   const tasksKey = work?.tasks.map((task) => task.taskId).join("\n") ?? null;
@@ -48,6 +50,7 @@ export function BackgroundWorkBar(props: {
   // while in case the provider never lets go, as in T3.
   const interrupt = async () => {
     const request = { threadKey, taskIds: work.tasks.map((task) => task.taskId), retryAt: null };
+    const requestKey = tasksKey;
     setStop(request);
     setError(null);
     const failure = await runCommand(
@@ -58,7 +61,7 @@ export function BackgroundWorkBar(props: {
     );
     if (failure !== null) {
       setStop(null);
-      setError(failure);
+      setError({ tasksKey: requestKey, message: failure });
       return;
     }
     const accepted = {
@@ -131,9 +134,9 @@ export function BackgroundWorkBar(props: {
           ))}
         </ul>
       ) : null}
-      {error === null ? null : (
+      {error === null || error.tasksKey !== tasksKey ? null : (
         <p className="ade-error" role="alert">
-          {error}
+          {error.message}
         </p>
       )}
     </div>

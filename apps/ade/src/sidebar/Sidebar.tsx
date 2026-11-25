@@ -820,11 +820,12 @@ export function SelectedThread() {
   const machine = useAtomValue(environmentCatalog.catalogValueAtom, (catalog) =>
     ref === null ? null : (catalog.entries.get(ref.environmentId)?.target.label ?? null),
   );
-  const shell = useAtomValue(
-    ref === null ? NO_SHELL : environmentShell.stateValueAtom(ref.environmentId),
+  // The status alone: the whole shell state changes with every streamed delta.
+  const shellStatus = useAtomValue(
+    ref === null ? NO_SHELL : environmentShell.statusAtom(ref.environmentId),
   );
   // Only a live shell's word is final; before it, the thread may simply not have arrived.
-  useOpenThreadFamily(ref, shell?.status === "live" && thread === null);
+  useOpenThreadFamily(ref, shellStatus === "live" && thread === null);
   if (ref === null) return null;
   const requests =
     machine === null || thread === null ? null : (
