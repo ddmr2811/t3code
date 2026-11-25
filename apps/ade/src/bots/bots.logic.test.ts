@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   type ForkBot,
   ProjectId,
   ProviderInstanceId,
@@ -19,6 +20,7 @@ import {
   lacksMethod,
   nightlyPromptUpdate,
   parseMention,
+  pickBotProject,
   validateBotDraft,
 } from "./bots.logic.ts";
 
@@ -229,5 +231,36 @@ describe("lacksMethod", () => {
     expect(lacksMethod(overTheWire(Exit.die(`Unknown request tag: other.method`)), tag)).toBe(
       false,
     );
+  });
+});
+
+describe("pickBotProject", () => {
+  const pc = EnvironmentId.make("pc");
+  const nexo = EnvironmentId.make("nexo");
+  const project = (environmentId: EnvironmentId, id: string, title: string) => ({
+    environmentId,
+    projectId: ProjectId.make(id),
+    title,
+  });
+  const projects = [
+    project(pc, "web", "t3code-fork"),
+    project(nexo, "hubra", "Hubra"),
+    project(nexo, "hubra-web", "hubra-web"),
+    project(pc, "hub", "Hub"),
+  ];
+  const open = { environmentId: pc, projectId: ProjectId.make("web") };
+
+  it.each([
+    ["un bot que revise mis PR de Hubra cada mañana", "hubra"],
+    ["revisa los PR de HUBRA-WEB", "hubra-web"],
+    ["vigila los tests de hubrá", "hubra"],
+    // «Hub» is a word of the sentence only when it stands alone.
+    ["un bot para hubris", "web"],
+  ])("«%s» goes to %s", (sentence, expected) => {
+    expect(pickBotProject(sentence, projects, open)?.projectId).toBe(expected);
+  });
+
+  it("takes the named project's machine, not the open one's", () => {
+    expect(pickBotProject("PR de Hubra", projects, open)?.environmentId).toBe(nexo);
   });
 });

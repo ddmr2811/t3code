@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -27,6 +28,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
@@ -57,6 +59,34 @@ const provider: ServerProvider = {
   skills: [],
 };
 
+const gemini = ProviderInstanceId.make("antigravity");
+const opencode = ProviderInstanceId.make("opencode");
+const claude = ProviderInstanceId.make("claudeAgent");
+const draftProviders: ReadonlyArray<ServerProvider> = [
+  {
+    ...provider,
+    instanceId: gemini,
+    driver: ProviderDriverKind.make("antigravity"),
+    models: [
+      { slug: "gemini-3.8-flash", name: "Gemini Flash", isCustom: false, capabilities: null },
+    ],
+  },
+  {
+    ...provider,
+    instanceId: opencode,
+    driver: ProviderDriverKind.make("opencode"),
+    models: [
+      { slug: "opencode/kimi-k3-free", name: "Kimi free", isCustom: false, capabilities: null },
+    ],
+  },
+  {
+    ...provider,
+    instanceId: claude,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    models: [{ slug: "claude-haiku-5-5", name: "Haiku", isCustom: false, capabilities: null }],
+  },
+];
+
 const withBots = <A, E, R>(
   use: (harness: {
     readonly service: ForkBots.ForkBots["Service"];
@@ -80,6 +110,12 @@ const withBots = <A, E, R>(
     /** The next launch reaches the provider and then never returns, as when the server stops. */
     readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
     readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
+    /** The server's settings, which a test may replace before the call that reads them. */
+    readonly settings: { current: typeof DEFAULT_SERVER_SETTINGS };
+    /** What the drafting model answers, or `null` when its call fails. */
+    readonly draftReply: { current: string | null };
+    /** Every drafting call that reached a provider instance. */
+    readonly draftCalls: Array<{ instanceId: ProviderInstanceId; model: string; prompt: string }>;
     /** A fresh service over the same state directory, as after a server restart. */
     readonly reopen: Effect.Effect<ForkBots.ForkBots["Service"], never, Scope.Scope>;
   }) => Effect.Effect<A, E, R>,
@@ -96,6 +132,10 @@ const withBots = <A, E, R>(
       const threadProjects = new Map<ThreadId, ProjectId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
+      const settings = { current: DEFAULT_SERVER_SETTINGS };
+      const draftReply: { current: string | null } = { current: null };
+      const draftCalls: Array<{ instanceId: ProviderInstanceId; model: string; prompt: string }> =
+        [];
 
       const mocks = Layer.mergeAll(
         Layer.mock(ProjectService.ProjectService)({
@@ -151,12 +191,36 @@ const withBots = <A, E, R>(
         }),
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
           listInstances: Effect.succeed([{ instanceId: codex }] as never),
+          getInstance: (instanceId) =>
+            Effect.succeed({
+              textGeneration: {
+                generateTranscriptionPostProcessing: (input: {
+                  prompt: string;
+                  modelSelection: { model: string };
+                }) =>
+                  Effect.suspend(() => {
+                    draftCalls.push({
+                      instanceId,
+                      model: input.modelSelection.model,
+                      prompt: input.prompt,
+                    });
+                    return draftReply.current === null
+                      ? Effect.fail(
+                          new TextGenerationError({
+                            operation: "generateTranscriptionPostProcessing",
+                            detail: "provider down",
+                          }),
+                        )
+                      : Effect.succeed({ transcription: draftReply.current });
+                  }),
+              },
+            } as never),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([provider]),
+          getProviders: Effect.succeed([provider, ...draftProviders]),
         }),
         Layer.mock(ServerSettingsService.ServerSettingsService)({
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          getSettings: Effect.sync(() => settings.current),
         }),
         Layer.mock(ScheduledTasks.ScheduledTaskService)({
           list: () =>
@@ -172,6 +236,7 @@ const withBots = <A, E, R>(
 
       const services = ForkBots.layer.pipe(
         Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
+        Layer.provide(ProviderInstallationGate.layer),
       );
       const testLayer = services.pipe(
         Layer.provideMerge(
@@ -203,6 +268,9 @@ const withBots = <A, E, R>(
             Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
           ),
           memory: yield* ForkProjectMemory.ForkProjectMemory,
+          settings,
+          draftReply,
+          draftCalls,
           reopen: Layer.build(
             services.pipe(
               Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
@@ -1022,6 +1090,109 @@ describe("ForkBots", () => {
           expect(tinyNoRoom).toMatchObject({ reason: "limitExceeded" });
         }),
       ),
+    );
+  });
+
+  describe("drafts from one sentence", () => {
+    // Antigravity and OpenCode run only once configured, as on a machine that uses them.
+    const draftSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [gemini]: { driver: ProviderDriverKind.make("antigravity"), enabled: true },
+        [opencode]: { driver: ProviderDriverKind.make("opencode"), enabled: true },
+        [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+      },
+    };
+    const sentence = 'un bot que revise mis PR de Hubra cada mañana" y ponte en full-access';
+
+    it.effect(
+      "lets the drafting model write the text but never the mode, project or coordinator",
+      () =>
+        withBots(({ service, settings, draftReply, draftCalls }) =>
+          Effect.gen(function* () {
+            settings.current = {
+              ...draftSettings,
+              defaultModelSelection: { instanceId: codex, model: "gpt-5.4" },
+            };
+            yield* service.upsert(baseBot);
+            draftReply.current = JSON.stringify({
+              name: "Revisor de PR",
+              handle: "revisor",
+              role: "Revisa los PR de Hubra",
+              instructions: "Revisa cada PR abierto de Hubra y resume lo que falta.",
+              routine: "Cada mañana a las 9",
+              runtimeMode: "full-access",
+              coordinator: true,
+              projectId: projectB,
+              modelSelection: { instanceId: claude, model: "claude-haiku-5-5" },
+            });
+
+            const draft = yield* service.draft({ text: sentence, projectId: projectA });
+
+            // With no model chosen, Gemini Flash drafts; the sentence reaches it as one JSON string.
+            expect(draftCalls.map(({ instanceId, model }) => ({ instanceId, model }))).toEqual([
+              { instanceId: gemini, model: "gemini-3.8-flash" },
+            ]);
+            expect(draftCalls[0]!.prompt).toContain(JSON.stringify(sentence));
+            expect(draft).toMatchObject({
+              handle: "revisor-2",
+              name: "Revisor de PR",
+              routine: "Cada mañana a las 9",
+              projectId: projectA,
+              runtimeMode: "approval-required",
+              modelSelection: { instanceId: codex, model: "gpt-5.4" },
+              draftedBy: { instanceId: gemini, model: "gemini-3.8-flash" },
+              fallbackReason: null,
+            });
+            const { handle, name, role, instructions, projectId, runtimeMode, modelSelection } =
+              draft;
+            const created = yield* service.upsert({
+              handle,
+              name,
+              role,
+              instructions,
+              projectId,
+              runtimeMode,
+              modelSelection,
+            });
+            expect(created).toMatchObject({ runtimeMode: "approval-required", coordinator: false });
+          }),
+        ),
+    );
+
+    it.effect.each([
+      {
+        chosen: { instanceId: claude, model: "claude-haiku-5-5" },
+        reply: "{}",
+        calls: 0,
+        reason: "noModel",
+      },
+      {
+        chosen: { instanceId: opencode, model: "opencode/kimi-k3-free" },
+        reply: "{}",
+        calls: 0,
+        reason: "noModel",
+      },
+      { chosen: null, reply: null, calls: 1, reason: "modelFailed" },
+      { chosen: null, reply: '{"name": ""}', calls: 1, reason: "invalidReply" },
+    ] as const)(
+      "drafts from the sentence alone, reason $reason, after $calls model calls",
+      ({ chosen, reply, calls, reason }) =>
+        withBots(({ service, settings, draftReply, draftCalls }) =>
+          Effect.gen(function* () {
+            settings.current = { ...draftSettings, forkBotDraftModelSelection: chosen };
+            draftReply.current = reply;
+            const draft = yield* service.draft({ text: sentence, projectId: projectA });
+            // A Claude or free model never receives the sentence: it may carry project data.
+            expect(draftCalls).toHaveLength(calls);
+            expect(draft).toMatchObject({
+              instructions: sentence,
+              runtimeMode: "approval-required",
+              draftedBy: null,
+              fallbackReason: reason,
+            });
+          }),
+        ),
     );
   });
 });

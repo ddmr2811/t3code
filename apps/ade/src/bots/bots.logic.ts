@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   FORK_BOTS_INSTRUCTIONS_MAX_LENGTH,
   FORK_BOTS_NAME_MAX_LENGTH,
   FORK_BOTS_ROLE_MAX_LENGTH,
@@ -282,4 +283,36 @@ export function lacksMethod(cause: Cause.Cause<unknown>, tag: string): boolean {
   const defect = Cause.squash(cause);
   const message = defect instanceof Error ? defect.message : defect;
   return message === `Unknown request tag: ${tag}`;
+}
+
+export interface BotProjectChoice {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}
+
+const words = (text: string) =>
+  ` ${text
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()} `;
+
+/**
+ * The project a sentence names, as whole words and on any paired machine, the longest name
+ * winning («hubra web» over «hubra»); otherwise `open`, the project the user has open.
+ */
+export function pickBotProject(
+  text: string,
+  projects: ReadonlyArray<BotProjectChoice & { readonly title: string }>,
+  open: BotProjectChoice | null,
+): BotProjectChoice | null {
+  const sentence = words(text);
+  const named = projects
+    .filter((project) => words(project.title).trim() !== "")
+    .filter((project) => sentence.includes(words(project.title)))
+    .toSorted((left, right) => words(right.title).length - words(left.title).length)[0];
+  return named === undefined
+    ? open
+    : { environmentId: named.environmentId, projectId: named.projectId };
 }

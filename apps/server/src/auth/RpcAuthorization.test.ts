@@ -5,6 +5,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthAccessWriteScope,
+  type AuthEnvironmentScope,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
@@ -151,6 +152,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.forkBotsSendMessage,
       WS_METHODS.forkBotsHandoff,
       WS_METHODS.forkBotsDismissHandoff,
+      WS_METHODS.forkBotsDraft,
       WS_METHODS.forkMemoryUpsert,
       WS_METHODS.forkMemoryRemove,
     ]) {
@@ -855,6 +857,36 @@ it.effect("requires provider management to send /logout through a bot", () =>
       yield* operator[method]({ id: "bot:a", text: " /LOGOUT " }).pipe(Effect.flip),
     ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
     expect(handled).toEqual(["hola"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a thread reader from spending a model call on a bot draft", () =>
+  Effect.gen(function* () {
+    const method = WS_METHODS.forkBotsDraft;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof method> => tag !== method,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(method, (input) =>
+      Effect.sync(() => {
+        handled.push(input.text);
+      }).pipe(Effect.andThen(Effect.fail(new ForkBotsError({ reason: "notFound", message: "" })))),
+    );
+    const clientWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+      );
+    const input = { text: "un bot que revise mis PR", projectId: ProjectId.make("p") };
+    const reader = yield* clientWith([AuthOrchestrationReadScope]);
+    expect(yield* reader[method](input).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthOrchestrationOperateScope,
+    });
+    expect(handled).toEqual([]);
+    const operator = yield* clientWith([AuthOrchestrationOperateScope]);
+    yield* operator[method](input).pipe(Effect.flip);
+    expect(handled).toEqual([input.text]);
   }).pipe(Effect.scoped),
 );
 

@@ -37,6 +37,11 @@ export const forkBotsUpsertCommand = createEnvironmentRpcCommand(connectionAtomR
   tag: WS_METHODS.forkBotsUpsert,
 });
 
+export const forkBotsDraftCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-bots:draft",
+  tag: WS_METHODS.forkBotsDraft,
+});
+
 export const forkBotsSetArchivedCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "ade:fork-bots:set-archived",
   tag: WS_METHODS.forkBotsSetArchived,

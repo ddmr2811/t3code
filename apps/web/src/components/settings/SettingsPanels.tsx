@@ -40,6 +40,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { AboutVersionTitle } from "./AboutVersionTitle";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
+import { ForkBotDraftModelRow } from "./ForkBotDraftModelRow";
 import { ForkNodeExportersRow } from "./ForkNodeExportersRow";
 import {
   canCheckForUpdate,
@@ -1276,6 +1277,7 @@ export function GeneralSettingsPanel() {
           }
         />
         <ForkNodeExportersRow />
+        <ForkBotDraftModelRow />
       </SettingsSection>
     </SettingsPageContainer>
   );

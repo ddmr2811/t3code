@@ -8,6 +8,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { ForkFailoverTarget } from "./forkFailover.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: persistent bot directory protocol version. */
@@ -188,6 +189,97 @@ export const ForkBotUpsertInput = Schema.Struct({
   coordinator: Schema.optionalKey(Schema.Boolean),
 });
 export type ForkBotUpsertInput = typeof ForkBotUpsertInput.Type;
+
+export const FORK_BOTS_DRAFT_TEXT_MAX_LENGTH = 2000;
+
+/** One sentence describing the bot the user wants, for the project it should work in. */
+export const ForkBotDraftInput = Schema.Struct({
+  text: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(FORK_BOTS_DRAFT_TEXT_MAX_LENGTH),
+    noMultilineControl,
+  ),
+  projectId: ProjectId,
+});
+export type ForkBotDraftInput = typeof ForkBotDraftInput.Type;
+
+const ForkBotDraftModel = Schema.Struct({ instanceId: ProviderInstanceId, model: TrimmedString });
+
+/**
+ * A bot ready for `forkBots.upsert`. Mode, project and model are the server's, never the model's:
+ * the safest mode, and never a coordinator.
+ */
+export const ForkBotDraft = Schema.Struct({
+  handle: ForkBotHandle,
+  name: ForkBotName,
+  role: ForkBotRole,
+  instructions: ForkBotInstructions,
+  /** Described, not scheduled; empty when the sentence asks for none. */
+  routine: TrimmedString.check(
+    Schema.isMaxLength(FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH),
+    noSingleLineControl,
+  ),
+  projectId: ProjectId,
+  runtimeMode: Schema.Literal("approval-required"),
+  modelSelection: ForkFailoverTarget,
+  /** The model that wrote it; null when it was drafted from the sentence alone. */
+  draftedBy: Schema.NullOr(ForkBotDraftModel),
+  /**
+   * Why no model wrote it: none allowed is usable, its call failed, or its reply was not a valid
+   * bot. Null when `draftedBy` wrote it.
+   */
+  fallbackReason: Schema.NullOr(Schema.Literals(["noModel", "modelFailed", "invalidReply"])),
+});
+export type ForkBotDraft = typeof ForkBotDraft.Type;
+
+/**
+ * Drafting sends the user's sentence to the model: only Gemini through Antigravity or a paid
+ * OpenCode model, never a free OpenCode one or a Claude model reached through OpenCode.
+ */
+export const isForkBotDraftModelAllowed = (driver: string, model: string): boolean =>
+  (driver === "antigravity" || driver === "opencode") &&
+  !/-free$/i.test(model) &&
+  !/claude|anthropic/i.test(model);
+
+interface DraftModelProvider {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: string;
+  readonly models: ReadonlyArray<{
+    readonly slug: string;
+    readonly isLegacy?: boolean | undefined;
+  }>;
+}
+
+/**
+ * The model that drafts bots among the usable `providers`: the chosen one if allowed and listed,
+ * else, with none chosen, Gemini Flash and then Kimi. Null drafts without a model.
+ */
+export function forkBotDraftModel(
+  chosen: { readonly instanceId: ProviderInstanceId; readonly model: string } | null,
+  providers: ReadonlyArray<DraftModelProvider>,
+): { readonly instanceId: ProviderInstanceId; readonly model: string } | null {
+  const usable = (provider: DraftModelProvider, model: DraftModelProvider["models"][number]) =>
+    model.isLegacy !== true && isForkBotDraftModelAllowed(String(provider.driver), model.slug);
+  if (chosen !== null) {
+    const provider = providers.find((candidate) => candidate.instanceId === chosen.instanceId);
+    const listed = provider?.models.find((model) => model.slug === chosen.model);
+    return provider !== undefined && listed !== undefined && usable(provider, listed)
+      ? { instanceId: chosen.instanceId, model: chosen.model }
+      : null;
+  }
+  for (const [driver, pattern] of [
+    ["antigravity", /flash/i],
+    ["opencode", /kimi/i],
+  ] as const) {
+    for (const provider of providers) {
+      if (String(provider.driver) !== driver) continue;
+      const model = provider.models.find(
+        (candidate) => pattern.test(candidate.slug) && usable(provider, candidate),
+      );
+      if (model !== undefined) return { instanceId: provider.instanceId, model: model.slug };
+    }
+  }
+  return null;
+}
 
 export const ForkBotSetArchivedInput = Schema.Struct({
   id: ForkBotId,
