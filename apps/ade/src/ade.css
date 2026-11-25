@@ -1581,8 +1581,17 @@ body {
   font-size: 13px;
 }
 
+.ade-nowrap {
+  white-space: nowrap;
+}
+
+.ade-decision-footer.ade-decision-answers {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 .ade-proposal-instructions pre {
-  max-height: 240px;
+  max-height: min(240px, 20vh);
   margin: 6px 0 0;
   overflow: auto;
   white-space: pre-wrap;

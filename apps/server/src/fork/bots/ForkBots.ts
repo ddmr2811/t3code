@@ -8,7 +8,6 @@ import {
   FORK_BOTS_HANDOFF_PREVIEW_LENGTH,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_MAX_FILE_BYTES,
-  FORK_BOTS_PROPOSAL_HISTORY_PER_PROJECT,
   FORK_BOTS_PROPOSAL_INTERVAL_MS,
   type ForkBot,
   ForkBotAnswerProposalInput,
@@ -420,7 +419,10 @@ const make = Effect.gen(function* () {
   const saveBot = Effect.fn("ForkBots.saveBot")(function* (
     parsed: ForkBotUpsertInput,
     id: ForkBot["id"],
-    finish: (directory: StoredBotDirectory, bot: ForkBot) => StoredBotDirectory = (d) => d,
+    finish: (
+      directory: StoredBotDirectory,
+      bot: ForkBot,
+    ) => Effect.Effect<StoredBotDirectory> = Effect.succeed,
   ) {
     const directory = yield* fileStore.read();
     const existing =
@@ -493,7 +495,7 @@ const make = Effect.gen(function* () {
     if (existing?.threadId != null && kept === undefined) {
       yield* pauseRoutines(id, existing.threadId);
     }
-    yield* fileStore.write(finish({ ...directory, bots, updatedAt: now }, bot));
+    yield* fileStore.write(yield* finish({ ...directory, bots, updatedAt: now }, bot));
     return bot;
   });
 
@@ -1018,28 +1020,49 @@ const make = Effect.gen(function* () {
             message: "Another bot already uses this handle.",
           });
         }
-        // Only this project's oldest go. A pending one already stopped this, so the new one is the
-        // only pending, and the newest stays for the weekly wait.
-        const kept = new Set(
-          [...project, proposal]
-            .slice(-FORK_BOTS_PROPOSAL_HISTORY_PER_PROJECT)
-            .map((candidate) => candidate.id),
-        );
-        const proposals = [...directory.proposals, proposal].filter(
-          (candidate) => candidate.projectId !== proposal.projectId || kept.has(candidate.id),
-        );
+        const proposals = yield* keptProposals([...directory.proposals, proposal]);
         yield* fileStore.write({ ...directory, proposals, updatedAt: proposal.createdAt });
         return proposal;
       }),
     );
   });
 
-  const markDecided = (directory: StoredBotDirectory, proposal: ForkBotProposal) => ({
-    ...directory,
-    proposals: directory.proposals.map((candidate) =>
-      candidate.id === proposal.id ? { ...proposal, instructions: "" } : candidate,
-    ),
-    updatedAt: proposal.decidedAt,
+  /**
+   * What a later proposal is checked against: every pending one, every refusal (the veto) and
+   * each project's latest accepted. Proposals of deleted projects go; a failed lookup keeps them.
+   */
+  const keptProposals = Effect.fn("ForkBots.keptProposals")(function* (
+    proposals: ReadonlyArray<ForkBotProposal>,
+  ) {
+    const latestAccepted = new Map<ProjectId, ForkBotProposal["id"]>();
+    for (const proposal of proposals) {
+      if (proposal.status === "accepted") latestAccepted.set(proposal.projectId, proposal.id);
+    }
+    const deleted = new Set<ProjectId>();
+    for (const projectId of new Set(proposals.map((proposal) => proposal.projectId))) {
+      const found = yield* projects.getById(projectId).pipe(Effect.option);
+      if (Option.isSome(found) && Option.isNone(found.value)) deleted.add(projectId);
+    }
+    return proposals.filter(
+      (proposal) =>
+        !deleted.has(proposal.projectId) &&
+        (proposal.status !== "accepted" || latestAccepted.get(proposal.projectId) === proposal.id),
+    );
+  });
+
+  const markDecided = Effect.fn("ForkBots.markDecided")(function* (
+    directory: StoredBotDirectory,
+    proposal: ForkBotProposal,
+  ) {
+    return {
+      ...directory,
+      proposals: yield* keptProposals(
+        directory.proposals.map((candidate) =>
+          candidate.id === proposal.id ? { ...proposal, instructions: "" } : candidate,
+        ),
+      ),
+      updatedAt: proposal.decidedAt,
+    };
   });
 
   /**
@@ -1076,11 +1099,18 @@ const make = Effect.gen(function* () {
         }
         if (parsed.answer === "reject") {
           const rejected: ForkBotProposal = { ...proposal, status: "rejected", decidedAt };
-          yield* fileStore.write(markDecided(directory, rejected));
+          yield* fileStore.write(yield* markDecided(directory, rejected));
           return rejected;
         }
         // The coordinator may have lost permissions since it proposed; the bot never gets more.
-        const coordinator = directory.bots.find((bot) => bot.id === proposal.proposedBy);
+        // Only the active coordinator of the proposal's project lends its ceiling.
+        const coordinator = directory.bots.find(
+          (bot) =>
+            bot.id === proposal.proposedBy &&
+            bot.coordinator &&
+            !bot.archived &&
+            bot.projectId === proposal.projectId,
+        );
         let runtimeMode = proposal.runtimeMode;
         for (const ceiling of [
           coordinator?.runtimeMode ?? "approval-required",

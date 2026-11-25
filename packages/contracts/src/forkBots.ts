@@ -23,8 +23,8 @@ export const FORK_BOTS_HANDOFF_MAX_HOPS = 4;
 /** Handoffs kept on disk; an id older than the last ones is no longer recognised as a repeat. */
 export const FORK_BOTS_HANDOFF_HISTORY = 100;
 export const FORK_BOTS_HANDOFF_PREVIEW_LENGTH = 200;
-/** Proposals kept per project; a rejected one in it stops the same bot being proposed again. */
-export const FORK_BOTS_PROPOSAL_HISTORY_PER_PROJECT = 10;
+/** Shorter than a bot's own: every pending proposal of every project shares the bot file. */
+const FORK_BOTS_PROPOSAL_INSTRUCTIONS_MAX_LENGTH = 4000;
 const FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH = 500;
 /** A coordinator proposes at most one bot per project within this window. */
 export const FORK_BOTS_PROPOSAL_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -125,6 +125,10 @@ export type ForkBotHandoff = typeof ForkBotHandoff.Type;
 export const ForkBotProposalId = ForkBotHandoffId;
 export type ForkBotProposalId = typeof ForkBotProposalId.Type;
 
+export const ForkBotProposalInstructions = ForkBotInstructions.check(
+  Schema.isMaxLength(FORK_BOTS_PROPOSAL_INSTRUCTIONS_MAX_LENGTH),
+);
+
 export const ForkBotProposalNote = TrimmedNonEmptyString.check(
   Schema.isMaxLength(FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH),
   noMultilineControl,
@@ -139,7 +143,7 @@ export const ForkBotProposal = Schema.Struct({
   name: ForkBotName,
   role: ForkBotRole,
   /** Emptied once answered: the bot then holds them, and a refusal needs only the handle. */
-  instructions: ForkBotInstructions,
+  instructions: ForkBotProposalInstructions,
   /** Described, not scheduled: the user adds it from the bot once it exists. */
   routine: ForkBotProposalNote,
   /** The repeated requests that led to it. */
@@ -166,7 +170,7 @@ export const ForkBotListResult = Schema.Struct({
   bots: Schema.Array(ForkBot).check(Schema.isMaxLength(FORK_BOTS_MAX_COUNT)),
   /** Oldest first. */
   handoffs: Schema.Array(ForkBotHandoff).check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY)),
-  /** Oldest first, the last few per project. A server without proposals sends none. */
+  /** Oldest first. A server without proposals sends none. */
   proposals: Schema.Array(ForkBotProposal).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: Schema.NullOr(IsoDateTime),
 });

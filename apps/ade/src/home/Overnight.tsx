@@ -45,7 +45,11 @@ export function Overnight(props: { needsYouCount: number }) {
   const partial = usage.needsPairing.length > 0 || usage.failed.length > 0 ? " · parcial" : "";
   const spend = usage.pending
     ? "cargando…"
-    : usage.environments.length === 0
+    : // A machine read with no activity shows 0; nothing read at all is no data.
+      !usage.environments.some(
+          ({ summary }) =>
+            summary.buckets.length > 0 || summary.sources.some((source) => source.status === "ok"),
+        )
       ? // Only a known missing usage:read is a permission problem; anything else is no data.
         usage.readable.length === 0 && usage.failed.length === 0 && usage.needsPairing.length > 0
         ? "sin permiso para leerlo"

@@ -34,7 +34,7 @@ export const StoredBotDirectory = Schema.Struct({
   handoffs: Schema.Array(ForkBotHandoff)
     .check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /** Oldest first; capped per project, so one project never pushes out another's. */
+  /** Oldest first: every pending and refused one, and each project's latest accepted. */
   proposals: Schema.Array(ForkBotProposal).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;

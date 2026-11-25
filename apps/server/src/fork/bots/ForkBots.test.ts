@@ -91,6 +91,7 @@ const withBots = <A, E, R>(
       const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
       const threadModes = new Map<ThreadId, RuntimeMode>();
       const archivedThreads = new Set<ThreadId>();
+      const threadProjects = new Map<ThreadId, ProjectId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
@@ -115,6 +116,7 @@ const withBots = <A, E, R>(
               liveThreads.add(threadId);
               threadModels.set(threadId, input.modelSelection);
               threadModes.set(threadId, input.runtimeMode);
+              threadProjects.set(threadId, input.projectId);
               return { threadId } as never;
             });
           },
@@ -125,7 +127,7 @@ const withBots = <A, E, R>(
               ? Effect.succeed({
                   thread: {
                     id: threadId,
-                    projectId: projectA,
+                    projectId: threadProjects.get(threadId),
                     modelSelection: threadModels.get(threadId),
                     runtimeMode: threadModes.get(threadId),
                     interactionMode: "default",
@@ -816,51 +818,68 @@ describe("ForkBots", () => {
           const stored = (yield* service.list({})).proposals.find((p) => p.id === second.id);
           const created = (yield* service.list({})).bots.some((bot) => bot.handle === "otro");
           expect(created).toBe(stored?.status === "accepted");
+
+          // The coordinator was moved to another project, with a new thread there: it no longer
+          // lends its ceiling to a proposal made for this one.
+          archivedThreads.delete(from.threadId);
+          yield* TestClock.adjust("7 days");
+          const fourth = yield* service.propose(
+            { ...draft, handle: "cuarto", name: "Cuarto", runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          const coordinator = (yield* service.list({})).bots.find((bot) => bot.handle === "jefa")!;
+          yield* service.upsert({
+            ...baseBot,
+            id: coordinator.id,
+            handle: "jefa",
+            projectId: projectB,
+            coordinator: true,
+            runtimeMode: "auto-accept-edits",
+          });
+          yield* service.sendMessage({ id: coordinator.id, text: "hola" });
+          const moved = yield* service.answerProposal({ id: fourth.id, answer: "accept" });
+          expect(
+            (yield* service.list({})).bots.find((bot) => bot.id === moved.botId)?.runtimeMode,
+          ).toBe("approval-required");
         }),
       ),
     );
 
-    it.effect("keeps each project's proposals apart, and the weekly wait with them", () =>
-      withBots(({ service, botsFile, fs }) =>
+    it.effect("keeps every refusal and the weekly wait, whatever other projects do", () =>
+      withBots(({ service }) =>
         Effect.gen(function* () {
           const a = yield* coordinatorThread(service);
           const b = yield* coordinatorThread(service, projectB, "jefeb");
-          // Another project already holds many refusals.
-          const refused = (index: number) => ({
-            id: `proposal:c-${index}`,
-            projectId: "proj-c",
-            proposedBy: a.coordinator.id,
-            handle: `vetado${index}`,
-            name: `Vetado ${index}`,
-            role: "Rol",
-            instructions: "",
-            routine: "a demanda",
-            reason: "Pruebas.",
-            runtimeMode: "approval-required",
-            modelSelection: { instanceId: codex, model: "gpt-5.4" },
-            status: "rejected",
-            botId: null,
-            createdAt: "1969-01-01T00:00:00.000Z",
-            decidedAt: "1969-01-01T00:00:00.000Z",
-          });
-          const stored = JSON.parse(yield* fs.readFileString(botsFile));
-          stored.proposals = Array.from({ length: 99 }, (_, index) => refused(index));
-          yield* fs.writeFileString(botsFile, JSON.stringify(stored));
-
-          const first = yield* service.propose(draft, a.from);
-          yield* service.answerProposal({ id: first.id, answer: "accept" });
-          yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, b.from);
-          // Project B's proposal must not push out A's, or A could propose twice in a week.
-          const again = yield* service
-            .propose({ ...draft, handle: "nuevo", name: "Nuevo" }, a.from)
-            .pipe(Effect.flip);
-          expect(again).toMatchObject({
-            reason: "limitExceeded",
-            message: expect.stringContaining("this week"),
-          });
+          const vetoed = yield* service.propose(draft, a.from);
+          yield* service.answerProposal({ id: vetoed.id, answer: "reject" });
+          // Many weeks of proposals later, in this project and another, the first «No» holds.
+          for (let week = 1; week <= 12; week += 1) {
+            yield* TestClock.adjust("7 days");
+            for (const [from, prefix] of [
+              [a.from, "a"],
+              [b.from, "b"],
+            ] as const) {
+              const next = yield* service.propose(
+                { ...draft, handle: `${prefix}${week}`, name: `${prefix} ${week}` },
+                from,
+              );
+              yield* service.answerProposal({
+                id: next.id,
+                answer: week % 2 ? "reject" : "accept",
+              });
+            }
+          }
           const proposals = (yield* service.list({})).proposals;
-          expect(proposals.map((p) => p.id)).toContain(first.id);
-          expect(proposals.filter((p) => p.projectId === "proj-c")).toHaveLength(99);
+          // Every refusal stays; of the accepted, only each project's latest.
+          expect(proposals.filter((p) => p.status === "accepted")).toHaveLength(2);
+          expect(proposals.filter((p) => p.status === "rejected")).toHaveLength(13);
+          const weekly = yield* service
+            .propose({ ...draft, handle: "otro", name: "Otro" }, a.from)
+            .pipe(Effect.flip);
+          expect(weekly).toMatchObject({ message: expect.stringContaining("this week") });
+          yield* TestClock.adjust("7 days");
+          const again = yield* service.propose(draft, a.from).pipe(Effect.flip);
+          expect(again).toMatchObject({ reason: "conflict" });
         }),
       ),
     );

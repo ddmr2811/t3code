@@ -16,8 +16,10 @@ import {
   forkBotsDismissHandoffCommand,
   refreshBots,
 } from "../bots/bots.state.ts";
-import { runCommand } from "../composer/Composer.tsx";
+import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
+import { availableMachineModelOptions } from "../failover/failover.logic.ts";
+import { serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
 
 type BotNotice = {
@@ -186,6 +188,7 @@ function NoticeFrame(
   props: NoticeProps & {
     label: string;
     openLabel: string;
+    heading?: ReactNode;
     children: ReactNode;
     actions: ReactNode;
   },
@@ -200,8 +203,9 @@ function NoticeFrame(
           </span>
         </div>
       </div>
-      <h3>{props.title}</h3>
+      <h3>{props.heading ?? props.title}</h3>
       {props.children}
+      <div className="ade-decision-footer ade-decision-answers">{props.actions}</div>
       <div className="ade-decision-footer">
         {props.onOpen === null ? null : (
           <button type="button" className="ade-backlayer-link" onClick={props.onOpen}>
@@ -210,7 +214,6 @@ function NoticeFrame(
             <span className="ade-backlayer-hint">Capa trasera</span>
           </button>
         )}
-        {props.actions}
         {props.later}
       </div>
     </section>
@@ -225,11 +228,22 @@ function ProposalNotice(
   },
 ) {
   const canAnswer = useAtomValue(forkBotsAnswerProposalCommand.permissionAtom(props.environmentId));
+  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const { proposal } = props;
+  const model = availableMachineModelOptions(config).find(
+    (option) =>
+      option.instanceId === proposal.modelSelection.instanceId &&
+      option.model === proposal.modelSelection.model,
+  );
   const disabled = canAnswer !== true || props.sending;
   return (
     <NoticeFrame
       {...props}
+      heading={
+        <>
+          ¿Creo el bot {proposal.name} (<span className="ade-nowrap">@{proposal.handle}</span>)?
+        </>
+      }
       label="Bot nuevo"
       openLabel="Abrir el hilo del coordinador"
       actions={
@@ -261,8 +275,12 @@ function ProposalNotice(
       }
     >
       <p className="ade-request-note">
-        {props.coordinator === undefined ? "El coordinador" : `@${props.coordinator.handle}`} lo
-        propone porque: {proposal.reason}
+        {props.coordinator === undefined ? (
+          "El coordinador"
+        ) : (
+          <span className="ade-nowrap">@{props.coordinator.handle}</span>
+        )}{" "}
+        lo propone porque: {proposal.reason}
       </p>
       <dl className="ade-proposal-facts">
         <dt>Rol</dt>
@@ -270,9 +288,13 @@ function ProposalNotice(
         <dt>Rutina</dt>
         <dd>{proposal.routine}</dd>
         <dt>Modelo</dt>
-        <dd>{proposal.modelSelection.model}</dd>
+        <dd>
+          {model === undefined
+            ? proposal.modelSelection.model
+            : `${model.providerLabel} · ${model.modelName}`}
+        </dd>
         <dt>Permisos</dt>
-        <dd>{proposal.runtimeMode}</dd>
+        <dd>{RUNTIME_MODE_TEXT[proposal.runtimeMode]}</dd>
       </dl>
       <details className="ade-proposal-instructions">
         <summary>Instrucciones exactas</summary>

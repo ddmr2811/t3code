@@ -73,7 +73,7 @@ import {
 import { deriveInitialThreadTitle } from "../home/home.logic.ts";
 import { ProviderIcon } from "./ProviderIcon.tsx";
 
-const RUNTIME_MODE_TEXT: Record<RuntimeMode, string> = {
+export const RUNTIME_MODE_TEXT: Record<RuntimeMode, string> = {
   "approval-required": "Pedir aprobación",
   "auto-accept-edits": "Aceptar ediciones",
   auto: "Automático",
