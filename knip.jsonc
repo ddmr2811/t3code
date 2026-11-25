@@ -110,6 +110,8 @@
     "apps/ade": {
       // Electron starts the Windows shell by the "main" of desktop/package.json.
       "entry": ["desktop/main.mjs!"],
+      // The Windows installer is packaged by `desktop:win`, as in apps/desktop.
+      "ignoreDependencies": ["electron-builder"],
     },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
