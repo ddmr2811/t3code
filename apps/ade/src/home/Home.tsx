@@ -3,7 +3,6 @@ import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections
 import { Toggle, ToggleGroup } from "@ui-sdk/react/toggle";
 import { Atom } from "effect/reactivity";
 
-import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import { NewThreadComposer } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import {
@@ -39,16 +38,6 @@ const workingCountAtom = Atom.make((get) => workingThreadCount(get(listedThreads
   Atom.withLabel("ade-home-working-count"),
 );
 
-// Inicio's art: the accent in a dither that rises from the bottom over the Luna background.
-const ART_STYLE = gradientFillStyle({
-  color: "var(--ade-accent)",
-  edge: "bottom",
-  length: 200,
-  from: 0.5,
-  to: 0,
-  matrix: "bayer8",
-});
-
 // Kept in memory only so leaving Inicio and returning remembers the picked project without touching localStorage.
 const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
@@ -75,7 +64,7 @@ export function Home() {
 
   return (
     <section className="ade-home" aria-label="Inicio">
-      <span className="ade-home-art" style={ART_STYLE} aria-hidden />
+      <span className="ade-home-art" aria-hidden />
       <div className="ade-home-scroll">
         <header className="ade-home-greeting">
           <h1>¿En qué trabajamos?</h1>
