@@ -22,7 +22,7 @@ import {
 import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
-import { environmentProjects, serverEnvironment } from "../state.ts";
+import { environmentProjects, environmentThreadShells, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
 
 type BotNotice = {
@@ -39,6 +39,8 @@ type BotNotice = {
       readonly install: ForkGapInstall;
       readonly from?: ForkBot;
     }
+  // An install nobody can see is one nobody can refuse, so a failed read waits here too.
+  | { readonly type: "unreadable"; readonly from?: ForkBot }
 );
 
 /**
@@ -46,7 +48,7 @@ type BotNotice = {
  * them: installs a bot asks for, bots a coordinator proposes and handoffs cut for too many hops.
  */
 export function useBotNotices(): ReadonlyArray<BotNotice> {
-  const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv } = useAtomValue(allBotsAtom);
+  const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, gapErrors } = useAtomValue(allBotsAtom);
   const botOf = (environmentId: EnvironmentId, id: string) =>
     (byEnv.get(environmentId) ?? []).find((bot) => bot.id === id);
   const handoffs = [...handoffsByEnv].flatMap(([environmentId, list]) =>
@@ -102,21 +104,14 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
       }),
     ),
   );
-  return [...installs, ...proposals, ...handoffs];
-}
-
-/** An install nobody can see is one nobody can refuse, so a failed read is said out loud. */
-export function GapLoadErrors() {
-  const { gapErrors } = useAtomValue(allBotsAtom);
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  if (gapErrors.length === 0) return null;
-  const machines = gapErrors.map((id) => catalog.entries.get(id)?.target.label ?? id).join(", ");
-  return (
-    <p className="ade-error" role="alert">
-      No se pudieron leer las instalaciones que piden los bots de {machines}. Puede haber alguna
-      esperando tu respuesta.
-    </p>
-  );
+  const unreadable = gapErrors.map((environmentId): BotNotice => ({
+    key: `gaps-unreadable:${environmentId}`,
+    type: "unreadable",
+    label: "Aviso",
+    title: "No se pudieron leer las instalaciones que piden los bots",
+    environmentId,
+  }));
+  return [...unreadable, ...installs, ...proposals, ...handoffs];
 }
 
 /**
@@ -187,6 +182,31 @@ export function BotNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   ),
         };
+        if (notice.type === "unreadable") {
+          return (
+            <NoticeFrame
+              key={key}
+              {...common}
+              label="Aviso"
+              context="Bots"
+              openLabel=""
+              actions={
+                <button
+                  type="button"
+                  className="ade-button-quiet"
+                  onClick={() => refreshBots(registry, environmentId)}
+                >
+                  Reintentar
+                </button>
+              }
+            >
+              <p className="ade-request-note">
+                Puede haber alguna esperando tu respuesta en esta máquina. Si sigue fallando, el
+                archivo de huecos del servidor está dañado o el servidor es anterior a esta función.
+              </p>
+            </NoticeFrame>
+          );
+        }
         if (notice.type === "install") {
           const answer = (value: "approve" | "reject") =>
             void send(key, environmentId, () =>
@@ -409,6 +429,12 @@ function InstallNotice(
     environmentProjects.environmentProjectIndexAtom(props.environmentId),
     (index) => index.get(gap.projectId)?.title ?? null,
   );
+  // The server refuses a yes while the bot works: it would wait in a queue, and the thread's
+  // permissions could change before it starts.
+  const busy = useAtomValue(
+    environmentThreadShells.quietThreadShellAtom(scopeThreadRef(props.environmentId, gap.threadId)),
+    (thread) => thread?.runtime?.activeRunId != null,
+  );
   const disabled = canAnswer !== true || props.sending;
   return (
     <NoticeFrame
@@ -426,9 +452,13 @@ function InstallNotice(
               focusTrayFrom(event.currentTarget);
               props.onAnswer("approve");
             }}
-            disabled={disabled}
+            disabled={disabled || busy}
           >
-            {props.sending ? "Enviando…" : "Sí, solo esta vez"}
+            {props.sending
+              ? "Enviando…"
+              : busy
+                ? "Espera a que el bot termine"
+                : "Sí, solo esta vez"}
           </button>
           <button
             type="button"
