@@ -28,7 +28,17 @@ import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositorie
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { Fragment, lazy, memo, Suspense, useContext, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  lazy,
+  memo,
+  Suspense,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { gradientFillStyle } from "../../../web/src/fork/dither/style.ts";
 import {
@@ -752,8 +762,23 @@ const threadVisitTracker = createThreadVisitTracker({
   visit: threadEnvironment.visit,
 });
 
+const subscribeVisibility = (onChange: () => void) => {
+  document.addEventListener("visibilitychange", onChange);
+  return () => document.removeEventListener("visibilitychange", onChange);
+};
+
+// Only while the thread is on screen: not in a hidden tab, nor under a phone's full-screen layer.
 function ThreadVisitWatermark(props: { threadRef: ScopedThreadRef }) {
-  useAtomMount(threadVisitTracker(props.threadRef));
+  const tabVisible = useSyncExternalStore(
+    subscribeVisibility,
+    () => document.visibilityState === "visible",
+  );
+  const narrow = useAtomValue(narrowViewportAtom);
+  const panelOpen = useAtomValue(toolPanelAtom) !== null;
+  const decisionsOpen = useDecisionsPanel().open;
+  const drawerOpen = useAtomValue(mobileSidebarOpenAtom);
+  const covered = narrow && (panelOpen || decisionsOpen || drawerOpen);
+  useAtomMount(threadVisitTracker(tabVisible && !covered ? props.threadRef : null));
   return null;
 }
 

@@ -3034,7 +3034,7 @@ body {
 }
 
 /* Dim only the face and the frame: the text keeps its AA tokens. */
-.ade-bot-card[data-archived] {
+.ade-bot-card[data-archived]:not([data-selected]) {
   border-color: var(--ade-divider);
 }
 
