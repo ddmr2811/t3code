@@ -6,8 +6,6 @@ import { groupSessions } from "./overview.logic.ts";
 type Input = Parameters<typeof groupSessions>[0][number];
 const session = (id: string, lastWrittenAt: string, overrides: Partial<Input> = {}): Input => ({
   id: ThreadId.make(id),
-  archivedAt: null,
-  deletedAt: null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingGuestMessageCount: 0,

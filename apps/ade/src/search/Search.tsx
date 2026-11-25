@@ -30,7 +30,7 @@ import {
   ThreadStateBadge,
   useDecisionsPanel,
 } from "../sidebar/Sidebar.tsx";
-import { threadState } from "../sidebar/sidebar.logic.ts";
+import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import { searchOpenAtom } from "./SearchButton.tsx";
 
 const RECENT_THREADS = 50;
@@ -161,7 +161,7 @@ function SearchCommands(props: {
                   className="ade-command-item"
                 >
                   <CommandItemIcon>
-                    <ThreadStateBadge state={threadState(thread)} />
+                    <ThreadStateBadge kind={resolveThreadStatusKind(thread)} />
                   </CommandItemIcon>
                   <span className="ade-command-label">{thread.title}</span>
                   <span className="ade-command-aside">

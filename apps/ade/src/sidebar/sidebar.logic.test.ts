@@ -28,8 +28,6 @@ const runtime = (status: "running" | "idle" | "failed") =>
 
 type StateInput = Parameters<typeof threadState>[0];
 const stateInput = (overrides: Partial<StateInput> = {}): StateInput => ({
-  archivedAt: null,
-  deletedAt: null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingGuestMessageCount: 0,
@@ -56,6 +54,14 @@ describe("threadState", () => {
       stateInput({
         latestRun: run("running"),
         runtime: runtime("running") as StateInput["runtime"],
+      }),
+      "working",
+    ],
+    // Its turn ended, but it waits on the subagent it started: the row says it works.
+    [
+      "a parent waiting on its subagent",
+      stateInput({
+        pendingBackgroundTasks: [{ taskId: "task-1", kind: "subagent", description: "Revisar" }],
       }),
       "working",
     ],

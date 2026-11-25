@@ -9,8 +9,14 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useContext, useState } from "react";
 
+import { threadNeedsYou } from "../../../web/src/fork/decisions/decisions.logic.ts";
 import { runCommand } from "../composer/Composer.tsx";
-import { environmentThreadDetails, operateAccessAtom, threadEnvironment } from "../state.ts";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  operateAccessAtom,
+  threadEnvironment,
+} from "../state.ts";
 import { tickElapsed } from "./elapsed.ts";
 import { backgroundWork } from "./timeline.logic.ts";
 
@@ -32,7 +38,16 @@ export function BackgroundWorkBar(props: {
   const [stop, setStop] = useState<BackgroundWorkStopRequest | null>(null);
   // Tied to the work it was about, so a late failure never lands on newer work.
   const [error, setError] = useState<{ tasksKey: string | null; message: string } | null>(null);
-  const work = thread === null ? null : backgroundWork(thread.projection);
+  // This machine's threads that ask the user now, by id: the same rule as «te necesitan». A
+  // string, so other shell updates re-render nothing here.
+  const askingIds = useAtomValue(environmentThreadShells.quietThreadShellsAtom, (shells) =>
+    shells
+      .filter((shell) => shell.environmentId === threadRef.environmentId && threadNeedsYou(shell))
+      .map((shell) => shell.id)
+      .join("\n"),
+  );
+  const work =
+    thread === null ? null : backgroundWork(thread.projection, new Set(askingIds.split("\n")));
   // Other work, or none: the list and a failed Stop belonged to the work before.
   const tasksKey = work?.tasks.map((task) => task.taskId).join("\n") ?? null;
   const [shownFor, setShownFor] = useState(tasksKey);
@@ -79,7 +94,11 @@ export function BackgroundWorkBar(props: {
   return (
     <div className="ade-background">
       <div className="ade-background-bar">
-        <p className="ade-background-title" role="status">
+        <p
+          className="ade-background-title"
+          role="status"
+          data-asks={work.tasks.some((task) => task.asksYou) ? "" : undefined}
+        >
           {work.title}
         </p>
         {startedAtMs === null ? null : (
@@ -113,10 +132,12 @@ export function BackgroundWorkBar(props: {
       </div>
       {open ? (
         <ul className="ade-background-list" aria-label="Trabajo en segundo plano">
-          {work.tasks.map(({ taskId, label, waiting, childThreadId }) => (
+          {work.tasks.map(({ taskId, label, asksYou, childThreadId }) => (
             <li key={taskId}>
               <span className="ade-background-label">{label}</span>
-              <span className="ade-background-state">{waiting ? "Esperando" : "En marcha"}</span>
+              <span className="ade-background-state" data-asks={asksYou ? "" : undefined}>
+                {asksYou ? "Te espera" : "Trabajando"}
+              </span>
               {childThreadId === undefined ? null : (
                 <button
                   type="button"

@@ -7,9 +7,14 @@ import {
 } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
 import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
+import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { CircleDashedIcon } from "@phosphor-icons/react/dist/csr/CircleDashed";
 import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
+import { HourglassIcon } from "@phosphor-icons/react/dist/csr/Hourglass";
+import { ListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
+import { UserIcon } from "@phosphor-icons/react/dist/csr/User";
 import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
 import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
 import {
@@ -18,6 +23,10 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { arrayElementsEqual } from "@t3tools/client-runtime/state/entities";
+import {
+  resolveThreadStatusKind,
+  type ThreadStatusKind,
+} from "@t3tools/client-runtime/state/thread-status";
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import type {
   EnvironmentThreadShell,
@@ -87,18 +96,27 @@ import {
   projectMonogram,
   type RailProject,
   railProjects,
-  type ThreadState,
   threadState,
 } from "./sidebar.logic.ts";
 import { useBotNotices } from "../decisions/BotNotices.tsx";
 import { snoozeClockAtom, snoozesAtom } from "../decisions/snoozed.ts";
 
-const STATE_VIEW = {
-  "needs-you": { Glyph: WarningCircleIcon, text: "Te necesita" },
+// T3's marks (apps/web/src/fork/status/ThreadStatusGlyph.tsx), with its Spanish words.
+// «waiting» is the thread waiting on its own subagent or task, never on the user.
+const STATUS_VIEW = {
+  approval: { Glyph: WarningCircleIcon, text: "Aprobación pendiente" },
+  input: { Glyph: ChatCircleDotsIcon, text: "Esperando tu respuesta" },
+  guest: { Glyph: UserIcon, text: "Solicitud de invitado" },
   working: { Glyph: PulseIcon, text: "Trabajando" },
-  error: { Glyph: XCircleIcon, text: "Error" },
-  done: { Glyph: CheckCircleIcon, text: "Terminado" },
-} satisfies Record<ThreadState, unknown>;
+  connecting: { Glyph: CircleDashedIcon, text: "Conectando" },
+  waiting: { Glyph: HourglassIcon, text: "Trabajando en segundo plano" },
+  failed: { Glyph: XCircleIcon, text: "Falló" },
+  plan: { Glyph: ListChecksIcon, text: "Plan listo" },
+  completed: { Glyph: CheckCircleIcon, text: "Completado" },
+} satisfies Record<ThreadStatusKind, unknown>;
+
+// The header says what state the thread is in, not whether it is news, as T3's does.
+const SHOW_SETTLED_STATES = "1970-01-01T00:00:00.000Z";
 
 // Built on the quiet shells, which keep their reference through streaming: the lists change
 // only when a thread changes in a way a row shows, never on each streamed token.
@@ -259,10 +277,12 @@ export const selectedThreadKeyAtom = Atom.writable(
   },
 ).pipe(Atom.keepAlive);
 
-export function ThreadStateBadge(props: { state: ThreadState; withText?: boolean }) {
-  const { Glyph, text } = STATE_VIEW[props.state];
+/** T3's status mark; nothing for a finished thread the user has already seen. */
+export function ThreadStateBadge(props: { kind: ThreadStatusKind | null; withText?: boolean }) {
+  if (props.kind === null) return null;
+  const { Glyph, text } = STATUS_VIEW[props.kind];
   return (
-    <span className="ade-thread-state" data-state={props.state}>
+    <span className="ade-thread-state" data-kind={props.kind}>
       <Glyph size={14} weight="bold" aria-hidden />
       {props.withText === true ? text : <span className="ade-sr-only">{text}</span>}
     </span>
@@ -471,7 +491,9 @@ const ThreadRow = memo(function ThreadRow(props: {
         aria-current={props.selected ? "true" : undefined}
         onClick={() => props.onSelect(key)}
       >
-        <ThreadStateBadge state={threadState(props.thread)} />
+        <span className="ade-thread-mark">
+          <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} />
+        </span>
         <span className="ade-thread-title">{props.thread.title}</span>
       </button>
     </li>
@@ -538,29 +560,36 @@ export function ThreadTree() {
                   />
                 </h3>
                 <ul className="ade-tree-threads">
-                  {project.threads.map((thread) => {
-                    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-                    return (
-                      <Fragment key={key}>
-                        <ThreadRow
-                          thread={thread}
-                          selected={key === selected}
-                          onSelect={selectThread}
-                        />
-                        {cardsOf(thread).map((waiting) => (
-                          <li key={waiting.id} className="ade-tree-decision">
-                            {waiting.id === thread.id ? null : (
-                              <p className="ade-request-note">Del subagente «{waiting.title}»</p>
-                            )}
-                            <RequestCards
-                              threadRef={scopeThreadRef(waiting.environmentId, waiting.id)}
-                              subscribe
-                            />
-                          </li>
-                        ))}
-                      </Fragment>
-                    );
-                  })}
+                  {/* What waits on you goes first; the rest keep their recency order. */}
+                  {project.threads
+                    .toSorted(
+                      (a, b) =>
+                        Number(threadState(b) === "needs-you") -
+                        Number(threadState(a) === "needs-you"),
+                    )
+                    .map((thread) => {
+                      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+                      return (
+                        <Fragment key={key}>
+                          <ThreadRow
+                            thread={thread}
+                            selected={key === selected}
+                            onSelect={selectThread}
+                          />
+                          {cardsOf(thread).map((waiting) => (
+                            <li key={waiting.id} className="ade-tree-decision">
+                              {waiting.id === thread.id ? null : (
+                                <p className="ade-request-note">Del subagente «{waiting.title}»</p>
+                              )}
+                              <RequestCards
+                                threadRef={scopeThreadRef(waiting.environmentId, waiting.id)}
+                                subscribe
+                              />
+                            </li>
+                          ))}
+                        </Fragment>
+                      );
+                    })}
                 </ul>
                 {hidden === 0 ? null : (
                   <button
@@ -824,6 +853,8 @@ export function SelectedThread() {
   const shellStatus = useAtomValue(
     ref === null ? NO_SHELL : environmentShell.statusAtom(ref.environmentId),
   );
+  // On a phone the title needs the width; the mark alone says the state.
+  const narrow = useAtomValue(narrowViewportAtom);
   // Only a live shell's word is final; before it, the thread may simply not have arrived.
   useOpenThreadFamily(ref, shellStatus === "live" && thread === null);
   if (ref === null) return null;
@@ -846,7 +877,10 @@ export function SelectedThread() {
             <div className="ade-thread-view-name">
               <ProjectMark environmentId={thread.environmentId} projectId={thread.projectId} />
               <h1>{thread.title}</h1>
-              <ThreadStateBadge state={threadState(thread)} />
+              <ThreadStateBadge
+                kind={resolveThreadStatusKind({ ...thread, lastVisitedAt: SHOW_SETTLED_STATES })}
+                withText={!narrow}
+              />
             </div>
             <ThreadStepChip threadRef={ref} thread={thread} />
           </div>

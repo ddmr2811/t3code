@@ -17,7 +17,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 /** Line and file counts the Spanish way, whatever the browser's language. */
@@ -111,20 +110,29 @@ const BACKGROUND_NOUN: Record<OrchestrationV2PendingBackgroundTask["kind"], stri
 };
 
 export interface BackgroundWork {
-  /** «Esperando · <tarea>», or how many when there are several. */
+  /**
+   * «Subagente trabajando · <tarea>», or how many when there are several. «Te espera» only when
+   * one of its threads asks the user something: the agent waiting on its own work is not that.
+   */
   readonly title: string;
   /** When its one task started; null with several, as T3 shows no single clock for them. */
   readonly startedAtMs: number | null;
   readonly tasks: ReadonlyArray<{
     readonly taskId: string;
     readonly label: string;
-    readonly waiting: boolean;
+    readonly asksYou: boolean;
     readonly childThreadId: ThreadId | undefined;
   }>;
 }
 
-/** Work an earlier run left going, such as a delegated task, as the bar above the composer says it. */
-export function backgroundWork(structure: ThreadStructure): BackgroundWork | null {
+/**
+ * Work an earlier run left going, such as a delegated task, as the bar above the composer says
+ * it. `askingThreadIds` are the threads that wait on the user right now.
+ */
+export function backgroundWork(
+  structure: ThreadStructure,
+  askingThreadIds: ReadonlySet<string> = new Set(),
+): BackgroundWork | null {
   const pending = deriveThreadPendingBackgroundTasks(structure);
   const work = presentPendingBackgroundWork(pending);
   if (work === null) return null;
@@ -134,11 +142,17 @@ export function backgroundWork(structure: ThreadStructure): BackgroundWork | nul
     return {
       taskId: item.taskId,
       label: named ? item.label : BACKGROUND_NOUN[item.kind],
-      waiting: backgroundWorkHoldsCompletion([task]),
+      asksYou: item.childThreadId !== undefined && askingThreadIds.has(item.childThreadId),
       childThreadId: item.childThreadId,
     };
   });
-  const verb = work.waiting ? "Esperando" : "En marcha";
+  const verb = tasks.some((task) => task.asksYou)
+    ? "Te espera"
+    : work.items.every((item) => item.kind === "subagent")
+      ? tasks.length === 1
+        ? "Subagente trabajando"
+        : "Subagentes trabajando"
+      : "En marcha";
   const [only] = tasks.length === 1 ? tasks : [];
   const started =
     only === undefined
@@ -213,7 +227,7 @@ export function liveActivity(structure: ThreadStructure): string | null {
   );
   if (latest !== undefined && TOOL_TYPES.has(latest.type) && latest.status === "running") {
     return latest.type === "subagent"
-      ? `Esperando a ${latest.title?.trim() || "un subagente"}`
+      ? `Subagente trabajando · ${latest.title?.trim() || "sin título"}`
       : "Trabajando";
   }
   return "Pensando";
