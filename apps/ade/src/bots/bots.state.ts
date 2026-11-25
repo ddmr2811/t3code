@@ -9,6 +9,7 @@ import {
   type ForkBot,
   type ForkBotHandoff,
   type ForkBotProposal,
+  type ForkGap,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -65,6 +66,20 @@ export const forkBotsAnswerProposalCommand = createEnvironmentRpcCommand(connect
   tag: WS_METHODS.forkBotsAnswerProposal,
 });
 
+export const forkGapsListQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "ade:fork-gaps:list",
+  tag: WS_METHODS.forkGapsList,
+  staleTimeMs: 15_000,
+  idleTtlMs: 60_000,
+  // A bot asks for an install from its own turn, with no ADE action to refresh after.
+  refreshIntervalMs: 60_000,
+});
+
+export const forkGapsAnswerInstallCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-gaps:answer-install",
+  tag: WS_METHODS.forkGapsAnswerInstall,
+});
+
 export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "ade:fork-memory:list",
   tag: WS_METHODS.forkMemoryList,
@@ -84,6 +99,7 @@ export const forkMemoryRemoveCommand = createEnvironmentRpcCommand(connectionAto
 
 export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   registry.refresh(forkBotsListQuery({ environmentId, input: {} }));
+  registry.refresh(forkGapsListQuery({ environmentId, input: {} }));
 }
 
 export const allBotsAtom = Atom.make((get) => {
@@ -91,6 +107,7 @@ export const allBotsAtom = Atom.make((get) => {
   const byEnv = new Map<EnvironmentId, ReadonlyArray<ForkBot>>();
   const handoffsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotHandoff>>();
   const proposalsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotProposal>>();
+  const gapsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkGap>>();
   const errors: BotLoadError[] = [];
 
   for (const environmentId of enabledEnvironmentIds(catalog)) {
@@ -107,7 +124,10 @@ export const allBotsAtom = Atom.make((get) => {
       handoffsByEnv.set(environmentId, result.value.handoffs);
       proposalsByEnv.set(environmentId, result.value.proposals);
     }
+    // A server without gaps fails this read; it then has no installs to ask about.
+    const gaps = get(forkGapsListQuery({ environmentId, input: {} }));
+    if (gaps._tag === "Success") gapsByEnv.set(environmentId, gaps.value.gaps);
   }
 
-  return { byEnv, handoffsByEnv, proposalsByEnv, errors };
+  return { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, errors };
 }).pipe(Atom.withLabel("ade-all-bots"));

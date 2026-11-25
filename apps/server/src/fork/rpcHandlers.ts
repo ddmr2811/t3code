@@ -5,6 +5,7 @@ import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ForkActivity from "./activity/ForkActivity.ts";
 import * as ForkBots from "./bots/ForkBots.ts";
+import * as ForkGaps from "./gaps/ForkGaps.ts";
 import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
@@ -29,6 +30,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkCoordination = yield* ForkCoordination.ForkCoordination;
   const forkFailover = yield* ForkFailover.ForkFailover;
   const forkBots = yield* ForkBots.ForkBots;
+  const forkGaps = yield* ForkGaps.ForkGaps;
   const forkMemory = yield* ForkProjectMemory.ForkProjectMemory;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
@@ -75,6 +77,8 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkBotsHandoff]: (input) => forkBots.handoff(input, { kind: "user" }),
     [WS_METHODS.forkBotsDismissHandoff]: (input) => forkBots.dismissHandoff(input),
     [WS_METHODS.forkBotsAnswerProposal]: (input) => forkBots.answerProposal(input),
+    [WS_METHODS.forkGapsList]: () => forkGaps.list,
+    [WS_METHODS.forkGapsAnswerInstall]: (input) => forkGaps.answerInstall(input),
     // Project memory, as the user edits it.
     [WS_METHODS.forkMemoryList]: (input) => forkMemory.list(input),
     [WS_METHODS.forkMemoryUpsert]: (input) => forkMemory.upsert(input, "user"),

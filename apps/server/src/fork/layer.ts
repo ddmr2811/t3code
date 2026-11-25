@@ -4,6 +4,7 @@ import * as ForkBots from "./bots/ForkBots.ts";
 import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
+import * as ForkGaps from "./gaps/ForkGaps.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkGatewayHttp from "./gateway/http.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
@@ -30,7 +31,9 @@ export const ForkLayer = Layer.mergeAll(
   // Persistent bot directory; bot chats are ordinary orchestration threads. The coordinator
   // reads project memory, which the RPCs and the agent's MCP tools share. Handoffs between bots
   // are traced on the shared project coordination board (`<stateDir>/fork/coordination.json`).
-  ForkBots.layer.pipe(
+  // On top, the ladder a bot climbs when it lacks a tool (`<stateDir>/fork/gaps.json`).
+  ForkGaps.layer.pipe(
+    Layer.provideMerge(ForkBots.layer),
     Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
   ),
 );

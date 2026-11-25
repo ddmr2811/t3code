@@ -48,6 +48,9 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkBotsHandoff]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsDismissHandoff]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsAnswerProposal]: AuthOrchestrationOperateScope,
+  // Answering an install lets a bot run a command, so it needs what messaging a bot needs.
+  [WS_METHODS.forkGapsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkGapsAnswerInstall]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryList]: AuthOrchestrationReadScope,
   [WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
