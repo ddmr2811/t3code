@@ -124,6 +124,7 @@ export function BotsView() {
         <QuickCreate
           fallbackEnv={selectedEnv}
           machines={enabledEnvs}
+          pairedCount={catalog.entries.size}
           machineLabel={machineLabel}
           onCreated={setSelectedEnv}
         />
@@ -793,6 +794,7 @@ const FALLBACK_TEXT: Record<NonNullable<ForkBotDraft["fallbackReason"]>, string>
 function QuickCreate(props: {
   fallbackEnv: EnvironmentId;
   machines: ReadonlyArray<EnvironmentId>;
+  pairedCount: number;
   machineLabel: (id: EnvironmentId) => string;
   onCreated: (environmentId: EnvironmentId) => void;
 }) {
@@ -834,7 +836,7 @@ function QuickCreate(props: {
   const propose = async (pick: BotProjectChoice | null) => {
     const sentence = text.trim();
     if (sentence === "" || busy) return;
-    const destination = botDestination(sentence, machines, pick);
+    const destination = botDestination(sentence, machines, pick, props.pairedCount);
     if (destination.kind === "ask") {
       setPickKey("");
       setError(null);
@@ -941,6 +943,8 @@ function QuickCreate(props: {
           onChange={(event) => {
             setText(event.target.value);
             setAsking(false);
+            // A new sentence has not been sent anywhere yet: «Rellenar a mano» must not reuse it.
+            setSent(null);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {

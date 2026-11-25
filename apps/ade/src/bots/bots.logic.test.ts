@@ -260,32 +260,36 @@ describe("botDestination", () => {
     ],
     // A new attempt brings no pick, whatever was picked before or is open.
     ["a new attempt brings no pick", "PR de Hubra", [pcMachine, nexoMachine]],
+    // A paired machine that cannot take it (outdated, offline) still means two places.
+    ["the other paired machine is unusable", "revisa Alpha y Bravo", [pcMachine]],
   ] as const)("asks with several machines when %s", (_case, text, machines) => {
-    expect(botDestination(text, machines, null)).toEqual({ kind: "ask" });
+    expect(botDestination(text, machines, null, 2)).toEqual({ kind: "ask" });
   });
 
   it("sends only the pick made for this send, and waits if its machine lost its projects", () => {
     const pick = { environmentId: nexo, projectId: ProjectId.make("hubra") };
-    expect(botDestination("x", [pcMachine, nexoMachine], pick)).toEqual({
+    expect(botDestination("x", [pcMachine, nexoMachine], pick, 2)).toEqual({
       kind: "send",
       target: pick,
     });
-    expect(botDestination("x", [pcMachine, { ...nexoMachine, projects: [] }], pick)).toEqual({
+    expect(botDestination("x", [pcMachine, { ...nexoMachine, projects: [] }], pick, 2)).toEqual({
       kind: "wait",
     });
   });
 
   it("uses the single machine's named project, else its first, and waits while it loads", () => {
     const only = [nexoMachine];
-    expect(botDestination("revisa los tests", only, null)).toEqual({
+    expect(botDestination("revisa los tests", only, null, 1)).toEqual({
       kind: "send",
       target: { environmentId: nexo, projectId: "tests" },
     });
-    expect(botDestination("resume errores", only, null)).toEqual({
+    expect(botDestination("resume errores", only, null, 1)).toEqual({
       kind: "send",
       target: { environmentId: nexo, projectId: "hubra" },
     });
-    expect(botDestination("x", [{ ...nexoMachine, projects: [] }], null)).toEqual({ kind: "wait" });
+    expect(botDestination("x", [{ ...nexoMachine, projects: [] }], null, 1)).toEqual({
+      kind: "wait",
+    });
   });
 });
 

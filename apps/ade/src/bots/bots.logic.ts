@@ -343,6 +343,9 @@ export function botDestination(
   text: string,
   machines: ReadonlyArray<BotMachine>,
   picked: BotProjectChoice | null,
+  // Every paired machine, usable or not: one that is merely offline or outdated still means
+  // the user has more than one place this sentence could be meant for.
+  pairedCount: number,
 ):
   | { readonly kind: "send"; readonly target: BotProjectChoice }
   | { readonly kind: "ask" }
@@ -353,7 +356,8 @@ export function botDestination(
       ? { kind: "send", target: picked }
       : { kind: "wait" };
   }
-  if (machines.length !== 1) return machines.length > 1 ? { kind: "ask" } : { kind: "wait" };
+  if (pairedCount > 1 && machines.length > 0) return { kind: "ask" };
+  if (machines.length !== 1) return { kind: "wait" };
   const only = machines[0]!;
   const projectId = suggestBotProject(text, only.projects);
   return projectId === null
