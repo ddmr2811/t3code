@@ -809,7 +809,12 @@ function Workspace(props: { threadRef: ScopedThreadRef; thread: EnvironmentThrea
 }
 
 /** The selected thread's composer, with its queue above it and where it works below. */
-export function Composer(props: { threadRef: ScopedThreadRef; thread: EnvironmentThreadShell }) {
+export function Composer(props: {
+  threadRef: ScopedThreadRef;
+  thread: EnvironmentThreadShell;
+  /** What sits above the queue, such as the work the agent left going. */
+  children?: ReactNode;
+}) {
   const { threadRef, thread } = props;
   const registry = useContext(RegistryContext);
   const access = useAtomValue(operateAccessAtom(threadRef.environmentId));
@@ -828,6 +833,7 @@ export function Composer(props: { threadRef: ScopedThreadRef; thread: Environmen
   };
   return (
     <section className="ade-composer" aria-label="Compositor">
+      {props.children}
       <QueuedRuns threadRef={threadRef} />
       <ComposerForm
         environmentId={threadRef.environmentId}

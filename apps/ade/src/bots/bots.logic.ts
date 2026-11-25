@@ -10,6 +10,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 
 import { threadState } from "../sidebar/sidebar.logic.ts";
 
@@ -274,4 +275,11 @@ export function recentHandoffs(
         ? { handoff, direction: "in", peer: handleOf(handoff.fromBotId) }
         : { handoff, direction: "out", peer: handleOf(handoff.toBotId) },
     );
+}
+
+/** A server older than a method answers it with this defect: the feature is absent, not broken. */
+export function lacksMethod(cause: Cause.Cause<unknown>, tag: string): boolean {
+  const defect = Cause.squash(cause);
+  const message = defect instanceof Error ? defect.message : defect;
+  return message === `Unknown request tag: ${tag}`;
 }

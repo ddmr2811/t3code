@@ -66,6 +66,7 @@ import {
 } from "../failover/failover.state.ts";
 import { toolPanelAtom } from "../panels/FloatingPanel.tsx";
 import { SearchButton } from "../search/SearchButton.tsx";
+import { BackgroundWorkBar } from "../timeline/BackgroundWorkBar.tsx";
 import { ThreadTimeline } from "../timeline/Timeline.tsx";
 import { planStepChip } from "../timeline/timeline.logic.ts";
 import {
@@ -854,13 +855,16 @@ export function SelectedThread() {
           key={key}
           threadRef={ref}
           onOpenChanges={(checkpoint) => openDiff(turnRange(checkpoint))}
+          onOpenThread={setKey}
           requests={requests}
         />
       )}
       {/* With the diff in its place, the timeline's last row shows here. */}
       {openRange !== null ? <div className="ade-requests-outside">{requests}</div> : null}
       {machine === null || thread === null ? null : (
-        <Composer key={`composer:${key}`} threadRef={ref} thread={thread} />
+        <Composer key={`composer:${key}`} threadRef={ref} thread={thread}>
+          <BackgroundWorkBar threadRef={ref} onOpenThread={setKey} />
+        </Composer>
       )}
     </section>
   );

@@ -6,6 +6,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadPendingBackgroundTasks,
   deriveThreadStructureRuntime,
+  pendingBackgroundTaskItem,
   presentPendingBackgroundWork,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
@@ -13,7 +14,11 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as DateTime from "effect/DateTime";
 
 /** Line and file counts the Spanish way, whatever the browser's language. */
 export const formatCount = new Intl.NumberFormat("es").format;
@@ -98,13 +103,6 @@ export function planStepChip(
   };
 }
 
-export interface LiveActivity {
-  /** What the open run does now; null once its turn ended or while a request of its own waits. */
-  readonly now: string | null;
-  /** Work an earlier run left going, such as a delegated task, named when it has a name. */
-  readonly background: string | null;
-}
-
 const BACKGROUND_NOUN: Record<OrchestrationV2PendingBackgroundTask["kind"], string> = {
   subagent: "un subagente",
   command: "un comando",
@@ -112,36 +110,91 @@ const BACKGROUND_NOUN: Record<OrchestrationV2PendingBackgroundTask["kind"], stri
   background_task: "una tarea en segundo plano",
 };
 
-function backgroundLine(tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>) {
-  const work = presentPendingBackgroundWork(tasks);
-  if (work === null) return null;
-  const verb = work.waiting ? "Esperando" : "En marcha";
-  const [only] = work.items;
-  if (work.items.length > 1 || only === undefined) return `${verb} · ${work.items.length} tareas`;
-  const named = tasks.find((task) => task.taskId === only.taskId)?.description?.trim();
-  return `${verb} · ${named ? only.label : BACKGROUND_NOUN[only.kind]}`;
+export interface BackgroundWork {
+  /** «Esperando · <tarea>», or how many when there are several. */
+  readonly title: string;
+  /** When its one task started; null with several, as T3 shows no single clock for them. */
+  readonly startedAtMs: number | null;
+  readonly tasks: ReadonlyArray<{
+    readonly taskId: string;
+    readonly label: string;
+    readonly waiting: boolean;
+    readonly childThreadId: ThreadId | undefined;
+  }>;
 }
 
-/** The same states T3 shows at the end of a thread (starting, thinking, a tool, a wait), in Spanish. */
-export function liveActivity(structure: ThreadStructure): LiveActivity {
-  const background = backgroundLine(deriveThreadPendingBackgroundTasks(structure));
+/** Work an earlier run left going, such as a delegated task, as the bar above the composer says it. */
+export function backgroundWork(structure: ThreadStructure): BackgroundWork | null {
+  const pending = deriveThreadPendingBackgroundTasks(structure);
+  const work = presentPendingBackgroundWork(pending);
+  if (work === null) return null;
+  const tasks = work.items.map((item) => {
+    const task = pending.find((candidate) => candidate.taskId === item.taskId)!;
+    const named = task.description?.trim();
+    return {
+      taskId: item.taskId,
+      label: named ? item.label : BACKGROUND_NOUN[item.kind],
+      waiting: backgroundWorkHoldsCompletion([task]),
+      childThreadId: item.childThreadId,
+    };
+  });
+  const verb = work.waiting ? "Esperando" : "En marcha";
+  const [only] = tasks.length === 1 ? tasks : [];
+  const started =
+    only === undefined
+      ? undefined
+      : pendingBackgroundTaskItem(
+          pending.find((task) => task.taskId === only.taskId)!,
+          structure.turnItems,
+        )?.startedAt;
+  return {
+    title: `${verb} · ${only === undefined ? `${tasks.length} tareas` : only.label}`,
+    startedAtMs: started ? DateTime.toEpochMillis(started) : null,
+    tasks,
+  };
+}
+
+/** A subagent card's clock: running time while it works, its whole run once it ended. */
+export function subagentElapsedMs(
+  item: Extract<OrchestrationV2TurnItem, { type: "subagent" }>,
+  nowMs: number,
+): number | null {
+  const iso = (value: DateTime.Utc | null) => (value === null ? null : DateTime.formatIso(value));
+  return deriveSubagentElapsedMs(
+    { status: item.status, startedAt: iso(item.startedAt), completedAt: iso(item.completedAt) },
+    nowMs,
+  );
+}
+
+/** Elapsed time the Spanish way: «52 s», «3 min 05 s», «1 h 05 min». */
+export function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  if (minutes === 0) return `${seconds} s`;
+  if (minutes < 60) return `${minutes} min ${pad(seconds % 60)} s`;
+  return `${Math.floor(minutes / 60)} h ${pad(minutes % 60)} min`;
+}
+
+/** What the open run does now, as T3 shows it at the end of a thread, in Spanish; null when nothing. */
+export function liveActivity(structure: ThreadStructure): string | null {
   const runtime = deriveThreadStructureRuntime(structure);
   const run = deriveThreadActivityRun(structure);
   // Its approval or question shows below; nothing is thinking meanwhile.
   const asks = structure.runtimeRequests.some((request) => request.status === "pending");
   if (asks || runtime === null || run === null || run.turnEnded === true) {
-    return { now: null, background };
+    return null;
   }
   switch (runtime.status) {
     case "preparing":
-      return { now: "Preparando el espacio de trabajo", background };
+      return "Preparando el espacio de trabajo";
     case "queued":
-      return { now: "En cola", background };
+      return "En cola";
     case "starting":
     case "running":
       break;
     default:
-      return { now: null, background };
+      return null;
   }
   if (run.providerStartingLabel !== undefined) {
     const instance = structure.runs.find(
@@ -151,7 +204,7 @@ export function liveActivity(structure: ThreadStructure): LiveActivity {
       (session) => session.providerInstanceId === instance,
     )?.driver;
     const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
-    return { now: name === undefined ? "Arrancando" : `Arrancando ${name}`, background };
+    return name === undefined ? "Arrancando" : `Arrancando ${name}`;
   }
   const latest = structure.turnItems.findLast(
     (item) =>
@@ -159,13 +212,9 @@ export function liveActivity(structure: ThreadStructure): LiveActivity {
       (TOOL_TYPES.has(item.type) || item.type === "assistant_message" || item.type === "reasoning"),
   );
   if (latest !== undefined && TOOL_TYPES.has(latest.type) && latest.status === "running") {
-    return {
-      now:
-        latest.type === "subagent"
-          ? `Esperando a ${latest.title?.trim() || "un subagente"}`
-          : "Trabajando",
-      background,
-    };
+    return latest.type === "subagent"
+      ? `Esperando a ${latest.title?.trim() || "un subagente"}`
+      : "Trabajando";
   }
-  return { now: "Pensando", background };
+  return "Pensando";
 }

@@ -1,6 +1,11 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  formatSubagentDisplayTitle,
+  subagentCardDetail,
+} from "@t3tools/client-runtime/state/subagent-display";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { shouldShowLoadEarlierControl } from "@t3tools/client-runtime/state/threads";
@@ -12,27 +17,39 @@ import {
   turnItemOutputImages,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2TurnItem,
-  ScopedThreadRef,
-  ThreadId,
+import {
+  isOrchestrationV2WorkActive,
+  PROVIDER_DISPLAY_NAMES,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { AsyncResult } from "effect/reactivity";
 import { memo, type ReactNode, use, useContext, useMemo, useState } from "react";
 
+import { ProviderIcon } from "../composer/ProviderIcon.tsx";
+import { environmentCatalog } from "../connection/runtime.ts";
 import {
   environmentProjects,
   environmentThreadDetails,
   environmentThreadShells,
   orchestrationEnvironment,
+  serverEnvironment,
   threadEnvironment,
 } from "../state.ts";
 import { AgentMarkdown } from "./AgentMarkdown.tsx";
+import { tickElapsed } from "./elapsed.ts";
 import { MediaStrip, ThreadMedia } from "./Media.tsx";
-import { formatCount, groupTurns, liveActivity, rowKind } from "./timeline.logic.ts";
+import {
+  formatCount,
+  groupTurns,
+  liveActivity,
+  rowKind,
+  subagentElapsedMs,
+} from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
   OrchestrationV2TurnItem,
@@ -42,6 +59,8 @@ interface RowTarget {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }
+/** Opens a thread by its scoped key, as the sidebar does. */
+type OpenThread = (key: string) => void;
 
 const STATUS_TEXT: Partial<Record<OrchestrationV2TurnItem["status"], string>> = {
   pending: "en cola",
@@ -194,6 +213,84 @@ function ToolRow(props: RowTarget & { item: OrchestrationV2TurnItem }) {
   );
 }
 
+const SUBAGENT_STATUS: Record<OrchestrationV2TurnItem["status"], string> = {
+  pending: "En marcha",
+  running: "En marcha",
+  waiting: "Esperando",
+  idle: "En pausa",
+  completed: "Terminado",
+  failed: "Falló",
+  cancelled: "Cancelado",
+  interrupted: "Cancelado",
+};
+
+/** A subagent or delegated task, as T3 shows it: who runs it, how it goes, and a way into it. */
+function SubagentCard(props: RowTarget & { item: Item<"subagent">; onOpenThread: OpenThread }) {
+  const { item } = props;
+  const provider = useAtomValue(
+    serverEnvironment.configValueAtom(props.environmentId),
+    (config) =>
+      config?.providers.find((candidate) => candidate.instanceId === item.providerInstanceId) ??
+      null,
+  );
+  // A task delegated to another machine opens there, when this ADE is paired with it.
+  const target =
+    item.childThreadId !== null
+      ? scopeThreadRef(props.environmentId, item.childThreadId)
+      : item.remoteChild === undefined
+        ? null
+        : scopeThreadRef(item.remoteChild.environmentId, item.remoteChild.threadId);
+  const reachable = useAtomValue(
+    environmentCatalog.catalogValueAtom,
+    (catalog) => target !== null && catalog.entries.has(target.environmentId),
+  );
+  const title = formatSubagentDisplayTitle(item.title?.trim() || "Subagente");
+  const status = SUBAGENT_STATUS[item.status];
+  const live = isOrchestrationV2WorkActive(item.status);
+  const detail = subagentCardDetail(
+    live ? item.progress || item.result : item.result || item.progress,
+  );
+  const content = (
+    <>
+      <ProviderIcon
+        provider={{
+          driver: item.driver,
+          instanceId: item.providerInstanceId,
+          label: provider?.displayName ?? PROVIDER_DISPLAY_NAMES[item.driver] ?? item.driver,
+          accentColor: provider?.accentColor,
+        }}
+      />
+      <span className="ade-subagent-text">
+        <span className="ade-subagent-title">
+          {title}
+          {item.remoteChild === undefined ? null : (
+            <span className="ade-subagent-where"> en {item.remoteChild.label}</span>
+          )}
+        </span>
+        <span className="ade-subagent-status" data-status={item.status}>
+          {detail === null ? status : `${status} · ${detail}`}
+        </span>
+      </span>
+      <span
+        className="ade-subagent-time"
+        ref={tickElapsed((nowMs) => subagentElapsedMs(item, nowMs), live)}
+      />
+    </>
+  );
+  if (target === null || !reachable) return <div className="ade-subagent">{content}</div>;
+  return (
+    <button
+      type="button"
+      className="ade-subagent"
+      aria-label={`Abrir ${title}: ${status}`}
+      onClick={() => props.onOpenThread(scopedThreadKey(target))}
+    >
+      {content}
+      <CaretRightIcon size={14} aria-hidden className="ade-subagent-open" />
+    </button>
+  );
+}
+
 function StreamingText(props: RowTarget & { item: Item<"assistant_message"> }) {
   const text = useAtomValue(
     environmentThreadDetails.assistantMessageTextAtom(
@@ -262,7 +359,7 @@ function UserMessage(props: RowTarget & { item: Item<"user_message"> }) {
 
 // Rows keep their object while unchanged, so only the row whose item moved renders again.
 const TimelineRow = memo(function TimelineRow(
-  props: RowTarget & { row: OrchestrationV2ProjectedTurnItem },
+  props: RowTarget & { row: OrchestrationV2ProjectedTurnItem; onOpenThread: OpenThread },
 ) {
   const { item } = props.row;
   const deferred =
@@ -302,7 +399,11 @@ const TimelineRow = memo(function TimelineRow(
       return (
         <>
           {deferred}
-          <ToolRow {...props} item={item} />
+          {item.type === "subagent" ? (
+            <SubagentCard {...props} item={item} />
+          ) : (
+            <ToolRow {...props} item={item} />
+          )}
         </>
       );
     case "notice":
@@ -382,21 +483,19 @@ function TurnChanges(props: {
 function LiveActivityRow(props: { threadRef: ScopedThreadRef }) {
   // The quiet thread keeps its value while replies stream, so tokens re-render nothing here.
   const thread = useAtomValue(environmentThreadDetails.quietThreadAtom(props.threadRef));
-  const { now, background } = thread === null ? NO_ACTIVITY : liveActivity(thread.projection);
+  const now = thread === null ? null : liveActivity(thread.projection);
   return (
     <li className="ade-live" role="status">
       {now === null ? null : <p className="ade-live-line">{now}</p>}
-      {background === null ? null : <p className="ade-live-line">{background}</p>}
     </li>
   );
 }
-
-const NO_ACTIVITY = { now: null, background: null };
 
 /** The thread's turns, read only. Streamed text renders inside its own row. */
 export function ThreadTimeline(props: {
   threadRef: ScopedThreadRef;
   onOpenChanges: (checkpoint: ThreadCheckpointSummary) => void;
+  onOpenThread: OpenThread;
   /** What the agent waits on, shown where it stopped: after the last turn. */
   requests: ReactNode;
 }) {
@@ -451,6 +550,7 @@ export function ThreadTimeline(props: {
                     environmentId={environmentId}
                     threadId={threadId}
                     row={row}
+                    onOpenThread={props.onOpenThread}
                   />
                 ))}
                 {checkpoint === undefined ? null : (
