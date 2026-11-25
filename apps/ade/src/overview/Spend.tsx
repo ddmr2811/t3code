@@ -3,20 +3,16 @@ import { connectionRouteId } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AuthTerminalOperateScope,
-  AuthUsageReadScope,
   type EnvironmentId,
-  sessionGrantsScope,
   type ThreadId,
   type UsageProviderKind,
 } from "@t3tools/contracts";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useMemo, useState } from "react";
 
 import { ADE_SCOPES, NOT_IN_WEB_LINKS } from "../connection/pairing.ts";
-import { environmentCatalog } from "../connection/runtime.ts";
 import { PairingForm } from "../Machines.tsx";
 import { environmentSession, environmentThreadDetails, serverEnvironment } from "../state.ts";
 import {
@@ -26,6 +22,7 @@ import {
   type SpendLine,
   spendSummary,
   weekWindow,
+  widenScopes,
 } from "./spend.logic.ts";
 import { flatProvidersAtom, spendUsageAtom } from "./spend.state.ts";
 
@@ -111,30 +108,19 @@ function Ruler(props: { valueUsd: number; capUsd: number }) {
 
 /**
  * A session can't add `usage:read` to itself, so the way in is a new code from that machine,
- * paired at its stored address for exactly what this session holds plus `usage:read`.
+ * paired at its stored address for exactly what this session holds plus `usage:read`. The
+ * pairing, address and permissions all come from the connection the session was last read over.
  */
 function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
   const [open, setOpen] = useState(false);
-  const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(props.environmentId);
-  const session = AsyncResult.getOrElse(
-    useAtomValue(environmentSession.sessionStateAtom(props.environmentId)),
-    () => null,
+  const result = useAtomValue(environmentSession.sessionStateAtom(props.environmentId));
+  const prepared = Option.getOrNull(
+    useAtomValue(environmentSession.preparedConnectionValueAtom(props.environmentId)),
   );
-  const profile = entry === undefined ? undefined : Option.getOrUndefined(entry.profile);
-  if (entry === undefined || profile?._tag !== "BearerConnectionProfile" || session === null) {
-    return (
-      <p className="ade-summary-caption">
-        {props.label}: vuelve a emparejarla en Máquinas con un enlace que lleve «Ver totales de
-        uso».
-      </p>
-    );
+  const scopes = widenScopes(result, [...ADE_SCOPES, AuthTerminalOperateScope]);
+  if (prepared === null || scopes === null) {
+    return <p className="ade-summary-caption">{props.label}: comprobando sus permisos…</p>;
   }
-  const scopes = [
-    ...[...ADE_SCOPES, AuthTerminalOperateScope].filter(
-      (scope) => scope !== AuthUsageReadScope && sessionGrantsScope(session, scope),
-    ),
-    AuthUsageReadScope,
-  ];
   const cliOnly = scopes.some((scope) => NOT_IN_WEB_LINKS.includes(scope));
   return (
     <div className="ade-spend-widen">
@@ -166,8 +152,8 @@ function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
             onDone={() => setOpen(false)}
             widen={{
               environmentId: props.environmentId,
-              host: profile.httpBaseUrl,
-              pairing: connectionRouteId(entry.target),
+              host: prepared.httpBaseUrl,
+              pairing: connectionRouteId(prepared.target),
               scopes,
             }}
           />

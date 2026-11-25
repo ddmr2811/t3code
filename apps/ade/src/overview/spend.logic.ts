@@ -1,5 +1,9 @@
 import {
+  type AuthEnvironmentScope,
+  AuthUsageReadScope,
   type EnvironmentId,
+  type SessionGrantInput,
+  sessionGrantsScope,
   USAGE_CONTRACT_VERSION,
   type TurnTokenUsage,
   type UsageBucket,
@@ -9,6 +13,21 @@ import {
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
 import { countedBuckets, type EnvironmentUsage } from "@t3tools/shared/usageMerge";
+import { AsyncResult } from "effect/reactivity";
+
+/**
+ * What widening a pairing to `usage:read` asks for: exactly what the session holds of `candidates`
+ * plus `usage:read`. Nothing while the session is read again: it may be a replaced pairing's.
+ */
+export function widenScopes(
+  result: AsyncResult.AsyncResult<SessionGrantInput, unknown>,
+  candidates: ReadonlyArray<AuthEnvironmentScope>,
+): ReadonlyArray<AuthEnvironmentScope> | null {
+  const session = result.waiting ? null : AsyncResult.getOrElse(result, () => null);
+  if (session === null) return null;
+  const held = candidates.filter((scope) => sessionGrantsScope(session, scope));
+  return [...held.filter((scope) => scope !== AuthUsageReadScope), AuthUsageReadScope];
+}
 
 /** Monday to today in the browser's zone: the week the Gasto card counts. */
 export function weekWindow(now?: Date): UsageSummaryInput {
