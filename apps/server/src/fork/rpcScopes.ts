@@ -4,6 +4,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   FORK_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -54,6 +55,10 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkMemoryList]: AuthOrchestrationReadScope,
   [WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
+  // Integrations: the token is a setting; answering a bot's request is operating it.
+  [WS_METHODS.forkIntegrationsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.forkIntegrationsConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.forkIntegrationsAnswer]: AuthOrchestrationOperateScope,
 } as const;
 
 type ForkRpcMethod = (typeof FORK_WS_METHODS)[keyof typeof FORK_WS_METHODS];

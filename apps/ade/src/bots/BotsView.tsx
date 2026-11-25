@@ -38,6 +38,7 @@ import {
 import { BotAvatar } from "./BotAvatar.tsx";
 import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
+import { IntegrationConnections, IntegrationLevels } from "./Integrations.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
 import { BotSpend } from "../overview/Spend.tsx";
 import { USAGE_PROVIDER_OF_DRIVER } from "../overview/spend.state.ts";
@@ -310,7 +311,7 @@ function MachineBots(props: {
   return (
     <>
       <div className="ade-projects-toolbar">
-        <span />
+        <IntegrationConnections environmentId={environmentId} />
         <button
           type="button"
           className="ade-button"
@@ -581,6 +582,7 @@ function BotEditor(props: {
     model: bot?.modelSelection.model ?? "",
     coordinator: bot?.coordinator ?? false,
   }));
+  const [integrations, setIntegrations] = useState(bot?.integrations ?? {});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -621,6 +623,7 @@ function BotEditor(props: {
           runtimeMode: validated.value.runtimeMode,
           modelSelection: { instanceId: validated.value.instanceId, model: validated.value.model },
           coordinator: validated.value.coordinator,
+          integrations,
         },
       },
       "No se pudo guardar el bot",
@@ -738,6 +741,7 @@ function BotEditor(props: {
             </small>
           </span>
         </label>
+        <IntegrationLevels value={integrations} onChange={setIntegrations} />
         <label>
           Instrucciones
           <textarea

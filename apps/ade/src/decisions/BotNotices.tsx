@@ -9,6 +9,7 @@ import {
   type ForkBotProposal,
   type ForkGap,
   type ForkGapInstall,
+  type ForkIntegrationRequest,
 } from "@t3tools/contracts";
 import { type ReactNode, useContext, useState } from "react";
 
@@ -19,6 +20,13 @@ import {
   forkGapsAnswerInstallCommand,
   refreshBots,
 } from "../bots/bots.state.ts";
+import {
+  INTEGRATION_APP_LABELS,
+  INTEGRATION_GROUP_LABELS,
+  forkIntegrationsAnswerCommand,
+  pendingIntegrationRequestsAtom,
+  refreshIntegrations,
+} from "../bots/integrations.state.ts";
 import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
@@ -39,16 +47,23 @@ type BotNotice = {
       readonly install: ForkGapInstall;
       readonly from?: ForkBot;
     }
+  | {
+      readonly type: "integration";
+      readonly request: ForkIntegrationRequest;
+      readonly from?: ForkBot;
+    }
   // An install nobody can see is one nobody can refuse, so a failed read waits here too.
   | { readonly type: "unreadable"; readonly from?: ForkBot }
 );
 
 /**
  * What the bots wait on the user for, on every machine, keyed like the decisions panel counts
- * them: installs a bot asks for, bots a coordinator proposes and handoffs cut for too many hops.
+ * them: installs and outside-app actions a bot asks for, bots a coordinator proposes and handoffs
+ * cut for too many hops.
  */
 export function useBotNotices(): ReadonlyArray<BotNotice> {
   const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, gapErrors } = useAtomValue(allBotsAtom);
+  const pendingRequests = useAtomValue(pendingIntegrationRequestsAtom);
   const botOf = (environmentId: EnvironmentId, id: string) =>
     (byEnv.get(environmentId) ?? []).find((bot) => bot.id === id);
   const handoffs = [...handoffsByEnv].flatMap(([environmentId, list]) =>
@@ -111,7 +126,19 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
     title: "No se pudieron leer las instalaciones que piden los bots",
     environmentId,
   }));
-  return [...unreadable, ...installs, ...proposals, ...handoffs];
+  const integrations = pendingRequests.map(({ environmentId, request }): BotNotice => {
+    const from = botOf(environmentId, request.botId);
+    return {
+      key: `integration:${environmentId}:${request.id}`,
+      type: "integration",
+      label: INTEGRATION_APP_LABELS[request.app],
+      title: `¿Dejo que @${from?.handle ?? "?"} haga ${request.action} en ${INTEGRATION_APP_LABELS[request.app]}?`,
+      environmentId,
+      request,
+      ...(from === undefined ? {} : { from }),
+    };
+  });
+  return [...unreadable, ...installs, ...integrations, ...proposals, ...handoffs];
 }
 
 /**
@@ -148,6 +175,7 @@ export function BotNotices(props: {
       return setError(failure);
     }
     refreshBots(registry, environmentId);
+    refreshIntegrations(registry, environmentId);
   };
 
   return (
@@ -182,6 +210,25 @@ export function BotNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   ),
         };
+        if (notice.type === "integration") {
+          return (
+            <IntegrationNotice
+              key={key}
+              {...common}
+              request={notice.request}
+              onAnswer={(answer) =>
+                void send(key, environmentId, () =>
+                  runCommand(
+                    registry,
+                    forkIntegrationsAnswerCommand,
+                    { environmentId, input: { id: notice.request.id, answer } },
+                    answer === "approve" ? "No se pudo ejecutar" : "No se pudo guardar el «No»",
+                  ),
+                )
+              }
+            />
+          );
+        }
         if (notice.type === "unreadable") {
           return (
             <NoticeFrame
@@ -501,6 +548,76 @@ function InstallNotice(
       </p>
     </NoticeFrame>
   );
+}
+
+/** The arguments are the bot's data: shown exactly as they will run, never rendered as markup. */
+function IntegrationNotice(
+  props: NoticeProps & {
+    request: ForkIntegrationRequest;
+    onAnswer: (answer: "approve" | "deny") => void;
+  },
+) {
+  const canAnswer = useAtomValue(forkIntegrationsAnswerCommand.permissionAtom(props.environmentId));
+  const { request } = props;
+  const disabled = canAnswer !== true || props.sending;
+  return (
+    <NoticeFrame
+      {...props}
+      label={INTEGRATION_APP_LABELS[request.app]}
+      context="Integraciones"
+      openLabel="Abrir el hilo del bot"
+      actions={
+        <>
+          <button
+            type="button"
+            className="ade-button"
+            data-agent-confirm
+            onClick={(event) => {
+              focusTrayFrom(event.currentTarget);
+              props.onAnswer("approve");
+            }}
+            disabled={disabled}
+          >
+            {props.sending ? "Enviando…" : "Sí, una vez"}
+          </button>
+          <button
+            type="button"
+            className="ade-button-quiet"
+            onClick={(event) => {
+              focusTrayFrom(event.currentTarget);
+              props.onAnswer("deny");
+            }}
+            disabled={disabled}
+          >
+            No
+          </button>
+        </>
+      }
+    >
+      <dl className="ade-proposal-facts">
+        <dt>Acción</dt>
+        <dd>{request.action}</dd>
+        <dt>Permiso</dt>
+        <dd>{INTEGRATION_GROUP_LABELS[request.group] ?? request.group}</dd>
+      </dl>
+      <div className="ade-proposal-instructions">
+        <p className="ade-request-note">Argumentos exactos</p>
+        <pre>{prettyArguments(request.arguments)}</pre>
+      </div>
+      <p className="ade-request-note">
+        El «sí» vale una sola vez y para estos argumentos: la llamada la hace el servidor, no el
+        bot. Un «No» es definitivo y el bot no puede repetir esta misma petición en 24 horas.
+      </p>
+    </NoticeFrame>
+  );
+}
+
+function prettyArguments(json: string): string {
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2);
+  } catch {
+    return json;
+  }
 }
 
 function HandoffNotice(

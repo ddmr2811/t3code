@@ -22,6 +22,7 @@ import {
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   AuthTerminalOperateScope,
   AuthUsageReadScope,
   type AuthEnvironmentScope,
@@ -55,6 +56,8 @@ export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
 export interface PairingInput {
   /** Also ask for a shell on the machine. Off by default: it is more than driving its agents. */
   readonly terminal?: boolean;
+  /** Also ask to change the machine's settings, which storing an integration's token needs. */
+  readonly credentials?: boolean;
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
@@ -153,7 +156,11 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
     // The server grants only what the link carries, so asking never widens a narrower link.
-    scopes: input.terminal === true ? [...ADE_SCOPES, AuthTerminalOperateScope] : ADE_SCOPES,
+    scopes: [
+      ...ADE_SCOPES,
+      ...(input.terminal === true ? [AuthTerminalOperateScope] : []),
+      ...(input.credentials === true ? [AuthSettingsWriteScope] : []),
+    ],
     clientMetadata: presentation.metadata,
     dpopProof,
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));

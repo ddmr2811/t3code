@@ -65,6 +65,8 @@ import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { BotHandoffToolkit } from "./toolkits/botHandoff/tools.ts";
 import * as BotHandoffHandlers from "./toolkits/botHandoff/handlers.ts";
 import * as ForkBots from "../fork/bots/ForkBots.ts";
+import { IntegrationsToolkit } from "./toolkits/integrations/tools.ts";
+import * as IntegrationsHandlers from "./toolkits/integrations/handlers.ts";
 import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
@@ -1351,6 +1353,12 @@ const layerProjectMemoryToolkit = toolkitRegistration(
 // Fork: a bot hands work to another through the fork's ForkBots service.
 const layerBotHandoffToolkit = toolkitRegistration(BotHandoffToolkit, BotHandoffHandlers.layer);
 
+// Fork: a bot reaches outside apps only through the fork's ForkIntegrations service.
+const layerIntegrationsToolkit = toolkitRegistration(
+  IntegrationsToolkit,
+  IntegrationsHandlers.layer,
+);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1416,6 +1424,7 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerProjectMemoryToolkit,
   layerBotHandoffToolkit,
+  layerIntegrationsToolkit,
   layerEnvironmentToolkit,
   layerThemeToolkit,
   layerPreviewControlsRegistration,

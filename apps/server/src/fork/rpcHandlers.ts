@@ -10,6 +10,7 @@ import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
+import * as ForkIntegrations from "./integrations/ForkIntegrations.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
 import * as ForkProjectMemory from "./memory/ForkProjectMemory.ts";
@@ -32,6 +33,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
   const forkBots = yield* ForkBots.ForkBots;
   const forkGaps = yield* ForkGaps.ForkGaps;
   const forkMemory = yield* ForkProjectMemory.ForkProjectMemory;
+  const forkIntegrations = yield* ForkIntegrations.ForkIntegrations;
   const sessions = yield* SessionStore.SessionStore;
   return ForkRpcGroup.of({
     // Extensions settings page.
@@ -83,5 +85,9 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkMemoryList]: (input) => forkMemory.list(input),
     [WS_METHODS.forkMemoryUpsert]: (input) => forkMemory.upsert(input, "user"),
     [WS_METHODS.forkMemoryRemove]: (input) => forkMemory.remove(input),
+    // Outside apps: the token goes in and never comes back out.
+    [WS_METHODS.forkIntegrationsList]: () => forkIntegrations.list,
+    [WS_METHODS.forkIntegrationsConnect]: (input) => forkIntegrations.connect(input),
+    [WS_METHODS.forkIntegrationsAnswer]: (input) => forkIntegrations.answer(input),
   });
 });

@@ -654,6 +654,44 @@ describe("ForkBots", () => {
         }),
       ),
     );
+
+    it.effect("refuses an agent handing work to a bot that may do more in an outside app", () =>
+      withBots(({ service, texts }) =>
+        Effect.gen(function* () {
+          const reader = yield* service.upsert({
+            ...baseBot,
+            handle: "lectora",
+            integrations: { github: { read: "allow", "merge-delete": "ask" } },
+          });
+          const merger = yield* service.upsert({
+            ...baseBot,
+            handle: "fusiona",
+            integrations: { github: { read: "allow", "merge-delete": "allow" } },
+          });
+          const agent = {
+            kind: "agent",
+            limits: { runtimeMode: "full-access", interactionMode: "default" },
+          } as const;
+          const pass = (id: string, fromId: string, toHandle: string) =>
+            service.handoff({ id, fromId, toHandle, text: `fusiona el PR (${id})` }, agent);
+
+          // `ask` is below `allow`: the reader would get merges done without the user's yes.
+          expect(yield* pass("handoff:up", reader.id, "fusiona").pipe(Effect.flip)).toMatchObject({
+            reason: "permissionDenied",
+          });
+          expect(texts).toEqual([]);
+          // The other way round nothing is gained, and the user may always send it the work.
+          expect((yield* pass("handoff:down", merger.id, "lectora")).handoff.status).toBe(
+            "delivered",
+          );
+          const fromUser = yield* service.handoff(
+            { id: "handoff:user", fromId: reader.id, toHandle: "fusiona", text: "hazlo" },
+            { kind: "user" },
+          );
+          expect(fromUser.handoff.status).toBe("delivered");
+        }),
+      ),
+    );
   });
 
   describe("bot proposals", () => {

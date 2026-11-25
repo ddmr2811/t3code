@@ -8,6 +8,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { ForkFailoverTarget } from "./forkFailover.ts";
+import { ForkBotIntegrations } from "./forkIntegrations.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: persistent bot directory protocol version. */
@@ -88,6 +89,8 @@ export const ForkBot = Schema.Struct({
   memoryHash: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Hops of the handoff that last reached it; a message from the user resets it to 0. */
   handoffHops: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** What it may do in outside apps; nothing unless the user grants it. */
+  integrations: ForkBotIntegrations.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -186,6 +189,7 @@ export const ForkBotUpsertInput = Schema.Struct({
   runtimeMode: Schema.optionalKey(RuntimeMode),
   modelSelection: ForkFailoverTarget,
   coordinator: Schema.optionalKey(Schema.Boolean),
+  integrations: Schema.optionalKey(ForkBotIntegrations),
 });
 export type ForkBotUpsertInput = typeof ForkBotUpsertInput.Type;
 

@@ -3,6 +3,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import {
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { HostResourcesSnapshot } from "./resourceTelemetry.ts";
@@ -48,6 +49,15 @@ import {
   ForkGapListInput,
   ForkGapListResult,
 } from "./forkGaps.ts";
+import {
+  ForkIntegrationAnswerInput,
+  ForkIntegrationConnectInput,
+  ForkIntegrationListInput,
+  ForkIntegrationListResult,
+  ForkIntegrationRequest,
+  ForkIntegrationsError,
+  ForkIntegrationStatus,
+} from "./forkIntegrations.ts";
 import {
   ForkAuthorizeCompleteInput,
   ForkAuthorizeEvent,
@@ -127,6 +137,10 @@ export const FORK_WS_METHODS = {
   forkMemoryList: "forkMemory.list",
   forkMemoryUpsert: "forkMemory.upsert",
   forkMemoryRemove: "forkMemory.remove",
+  // Fork: outside apps the bots act on through the server.
+  forkIntegrationsList: "forkIntegrations.list",
+  forkIntegrationsConnect: "forkIntegrations.connect",
+  forkIntegrationsAnswer: "forkIntegrations.answer",
 } as const;
 
 // Fork: Extensions settings page.
@@ -388,6 +402,30 @@ const WsForkMemoryRemoveRpc = Rpc.make(FORK_WS_METHODS.forkMemoryRemove, {
   error: ForkMemoryRpcError,
 });
 
+// Fork: integrations with outside apps.
+const ForkIntegrationsRpcError = Schema.Union([
+  ForkIntegrationsError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsForkIntegrationsListRpc = Rpc.make(FORK_WS_METHODS.forkIntegrationsList, {
+  payload: ForkIntegrationListInput,
+  success: ForkIntegrationListResult,
+  error: ForkIntegrationsRpcError,
+});
+
+const WsForkIntegrationsConnectRpc = Rpc.make(FORK_WS_METHODS.forkIntegrationsConnect, {
+  payload: ForkIntegrationConnectInput,
+  success: ForkIntegrationStatus,
+  error: ForkIntegrationsRpcError,
+});
+
+const WsForkIntegrationsAnswerRpc = Rpc.make(FORK_WS_METHODS.forkIntegrationsAnswer, {
+  payload: ForkIntegrationAnswerInput,
+  success: ForkIntegrationRequest,
+  error: ForkIntegrationsRpcError,
+});
+
 export const FORK_RPCS = [
   WsForkExtensionsSnapshotRpc,
   WsForkExtensionsCheckHealthRpc,
@@ -424,6 +462,9 @@ export const FORK_RPCS = [
   WsForkMemoryListRpc,
   WsForkMemoryUpsertRpc,
   WsForkMemoryRemoveRpc,
+  WsForkIntegrationsListRpc,
+  WsForkIntegrationsConnectRpc,
+  WsForkIntegrationsAnswerRpc,
 ] as const;
 
 /** Fork: changing an agent's extensions changes what its provider can run. */
@@ -447,4 +488,7 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkGapsAnswerInstall]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
+  // Storing a credential is an environment setting, as for the issue trackers.
+  [FORK_WS_METHODS.forkIntegrationsConnect]: AuthSettingsWriteScope,
+  [FORK_WS_METHODS.forkIntegrationsAnswer]: AuthOrchestrationOperateScope,
 } as const;

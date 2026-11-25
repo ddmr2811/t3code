@@ -10,6 +10,7 @@ import {
   FORK_BOTS_MAX_FILE_BYTES,
   FORK_BOTS_PROPOSAL_INTERVAL_MS,
   type ForkBot,
+  type ForkBotIntegrations,
   ForkBotAnswerProposalInput,
   ForkBotProposal,
   ForkBotDismissHandoffInput,
@@ -34,6 +35,7 @@ import {
   type ServerProvider,
   type ThreadId,
   isProviderNativeSubagentThread,
+  integrationAbove,
   isRuntimeModeAbove,
   projectKeyFromName,
   resolveProjectProviderInstanceEnabled,
@@ -479,6 +481,7 @@ const make = Effect.gen(function* () {
       runtimeMode,
       modelSelection: parsed.modelSelection,
       coordinator,
+      integrations: parsed.integrations ?? existing?.integrations ?? {},
     };
     // The thread was started with the old prompt, mode, and model; the next message starts
     // a fresh one so the bot never silently overrides what the user set on that thread.
@@ -596,15 +599,28 @@ const make = Effect.gen(function* () {
 
   /**
    * The one way a message reaches a bot's thread, from the user or from another bot. Callers hold
-   * the bot's lock, so each bot has one queue. `limits` are an agent sender's modes.
+   * the bot's lock, so each bot has one queue. `limits` are an agent sender's modes, and
+   * `senderIntegrations` what the sending bot may do in outside apps.
    */
   const deliver = Effect.fn("ForkBots.deliver")(function* (
     bot: ForkBot,
     text: string,
     patch: Partial<Pick<ForkBot, "handoffHops">>,
     limits: DispatchModes | undefined,
+    senderIntegrations?: ForkBotIntegrations,
   ) {
     if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
+    // A bot never gets done through another what it may not do itself in an outside app.
+    const broader =
+      senderIntegrations === undefined
+        ? undefined
+        : integrationAbove(bot.integrations, senderIntegrations);
+    if (broader !== undefined) {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: `Bot @${bot.handle} may use ${broader}, which this sender may not. Ask the user to send it the work.`,
+      });
+    }
 
     let existingThread: ThreadId | null = null;
     let threadModel: Pick<ModelSelection, "instanceId" | "model"> = bot.modelSelection;
@@ -872,6 +888,7 @@ const make = Effect.gen(function* () {
           handoffMessage(reserved.handoff, from, parsed.text),
           { handoffHops: reserved.handoff.hops },
           sender.kind === "agent" ? sender.limits : undefined,
+          sender.kind === "agent" ? from.integrations : undefined,
         ).pipe(
           // Failed or interrupted: the same id may be sent again.
           // By design at least once: an interruption after the message was queued sends it again.
