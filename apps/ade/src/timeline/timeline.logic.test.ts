@@ -1,7 +1,8 @@
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupTurns, planStepChip } from "./timeline.logic.ts";
+import { groupTurns, liveActivity, planStepChip } from "./timeline.logic.ts";
 
 // Only the fields grouping reads; the rest of a real item does not change the outcome.
 const row = (
@@ -55,5 +56,82 @@ describe("planStepChip", () => {
 
   it("shows nothing for a plan left by an earlier run", () => {
     expect(planStepChip([plan("completed", "running")], "run-c")).toBeNull();
+  });
+});
+
+describe("liveActivity", () => {
+  const at = DateTime.makeUnsafe("2026-11-25T08:00:00.000Z");
+  const instance = "claude";
+  const run = (id: string, ordinal: number, status: string) => ({
+    id,
+    ordinal,
+    status,
+    providerInstanceId: instance,
+    activeAttemptId: `attempt-${id}`,
+    requestedAt: at,
+    startedAt: at,
+    completedAt: status === "running" ? null : at,
+  });
+  // The provider opened its turn, so the run is past "Arrancando".
+  const providerTurn = (runId: string) => ({
+    id: `turn-${runId}`,
+    runAttemptId: `attempt-${runId}`,
+    ordinal: 1,
+    status: "running",
+    startedAt: at,
+    completedAt: null,
+  });
+  const item = (type: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id: `item-${type}`,
+    type,
+    status,
+    runId: "run-2",
+    ...extra,
+  });
+  const structure = (extra: Record<string, unknown> = {}) =>
+    ({
+      thread: { providerInstanceId: instance, activeProviderThreadId: null, pullRequests: [] },
+      runs: [run("run-2", 2, "running")],
+      providerTurns: [providerTurn("run-2")],
+      providerSessions: [],
+      providerThreads: [],
+      runtimeRequests: [],
+      messages: [],
+      turnItems: [item("reasoning", "completed")],
+      ...extra,
+    }) as never;
+
+  it("says the agent thinks between tools, and names the subagent it waits on", () => {
+    expect(liveActivity(structure()).now).toBe("Pensando");
+    const subagent = item("subagent", "running", { title: "Actualizar servidores" });
+    expect(liveActivity(structure({ turnItems: [subagent] })).now).toBe(
+      "Esperando a Actualizar servidores",
+    );
+  });
+
+  it("claims nothing while the agent asks, or once its turn ended", () => {
+    const asking = structure({ runtimeRequests: [{ id: "request-1", status: "pending" }] });
+    expect(liveActivity(asking).now).toBeNull();
+    const ended = structure({ providerTurns: [{ ...providerTurn("run-2"), status: "completed" }] });
+    expect(liveActivity(ended).now).toBeNull();
+  });
+
+  it("names a delegated task an earlier run left going while a new run thinks", () => {
+    const delegated = structure({
+      runs: [run("run-1", 1, "completed"), run("run-2", 2, "running")],
+      providerThreads: [
+        {
+          id: "provider-thread-1",
+          providerInstanceId: instance,
+          pendingBackgroundTasks: [
+            { taskId: "task-1", kind: "subagent", description: "Actualizar servidores F8-F9" },
+          ],
+        },
+      ],
+    });
+    expect(liveActivity(delegated)).toEqual({
+      now: "Pensando",
+      background: "Esperando · Actualizar servidores F8-F9",
+    });
   });
 });

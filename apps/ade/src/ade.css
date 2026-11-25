@@ -933,6 +933,39 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Sits under the last turn, closer than the gap between turns. */
+.ade-live {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin-top: -12px;
+}
+
+.ade-live:empty {
+  display: none;
+}
+
+.ade-live-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* A still dot: no animation runs while the agent works for minutes. */
+.ade-live-line::before {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ade-accent);
+  content: "";
+}
+
 .ade-tool-empty,
 .ade-notice {
   margin: 4px 0 0;
