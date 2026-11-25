@@ -24,6 +24,9 @@ export function BackgroundWorkBar(props: {
   // The quiet thread keeps its value while replies stream, so tokens re-render nothing here.
   const thread = useAtomValue(environmentThreadDetails.quietThreadAtom(threadRef));
   const canStop = useAtomValue(operateAccessAtom(threadRef.environmentId)) === "operate";
+  // Interrupt stops the active run first, not this work; the composer owns that Stop.
+  const runIsLive =
+    useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
   const [open, setOpen] = useState(false);
   const [stop, setStop] = useState<BackgroundWorkStopRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +89,7 @@ export function BackgroundWorkBar(props: {
           <button
             type="button"
             className="ade-background-action"
-            disabled={stopping}
+            disabled={stopping || runIsLive}
             onClick={() => void interrupt()}
           >
             {stopping ? "Parando…" : "Parar"}
