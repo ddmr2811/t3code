@@ -969,6 +969,25 @@ describe("ForkBots", () => {
             reason: "limitExceeded",
             message: expect.stringContaining("no room left to answer"),
           });
+          // Nor a tiny one: the accepted bot's own fields need room beyond the proposal's text.
+          for (let index = 0; size() < FORK_BOTS_MAX_FILE_BYTES - 3000; index += 1) {
+            nearlyFull.vetoes.push({
+              projectId: `proj-fill-${index}`,
+              handle: `f${index}`,
+              name: "f",
+            });
+          }
+          yield* fs.writeFileString(botsFile, JSON.stringify(nearlyFull, null, 2));
+          const tiny = {
+            handle: "ab",
+            name: "a",
+            role: "a",
+            instructions: "",
+            routine: "a",
+            reason: "a",
+          };
+          const tinyNoRoom = yield* service.propose(tiny, from).pipe(Effect.flip);
+          expect(tinyNoRoom).toMatchObject({ reason: "limitExceeded" });
         }),
       ),
     );
