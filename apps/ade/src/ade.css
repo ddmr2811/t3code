@@ -1059,30 +1059,31 @@ button.ade-subagent:hover .ade-subagent-open {
 
 .ade-background-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 12px;
   align-items: center;
   min-width: 0;
   font-size: 13px;
 }
 
 .ade-background-title {
-  display: flex;
-  flex: 1 1 200px;
-  gap: 8px;
-  align-items: center;
+  flex: 1;
   min-width: 0;
   margin: 0;
+  overflow: hidden;
   color: var(--ade-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A still dot: no animation runs while a task works for minutes. */
 .ade-background-title::before {
-  flex: none;
+  display: inline-block;
   width: 6px;
   height: 6px;
+  margin-right: 8px;
   border-radius: 50%;
   background: var(--ade-accent);
+  vertical-align: middle;
   content: "";
 }
 
