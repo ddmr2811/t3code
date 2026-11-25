@@ -51,13 +51,19 @@ export function handleFrom(text: string): string {
   return slug.length >= 2 ? slug : "bot";
 }
 
+// Words a short name does not end on.
+const TRAILING_FILLER =
+  /^(?:a|al|con|cada|de|del|el|en|la|las|lo|los|mi|mis|para|por|que|su|sus|tu|tus|un|una|y)$/i;
+
 /** Plan B without a model: the sentence names the bot and is its instructions. */
 export function sentenceDraft(text: string): DraftReply {
-  const firstLine = text.split("\n")[0]!.trim();
+  // Tabs and runs of spaces would fail the single-line name and role.
+  const firstLine = text.split("\n")[0]!.replace(/\s+/g, " ").trim();
   const task = capitalize(firstLine.replace(LEADING_REQUEST, "").trim() || firstLine);
-  const name = clip(task, 32);
-  const handle = handleFrom(task.split(/\s+/).slice(0, 3).join(" "));
-  return { name, handle, role: clip(task, 120), instructions: text, routine: "" };
+  const words = task.split(" ").slice(0, 4);
+  while (words.length > 1 && TRAILING_FILLER.test(words.at(-1)!)) words.pop();
+  const name = clip(words.join(" "), 32);
+  return { name, handle: handleFrom(name), role: clip(task, 120), instructions: text, routine: "" };
 }
 
 /** `handle`, or `handle-2`, `handle-3`… when another bot already uses it. */

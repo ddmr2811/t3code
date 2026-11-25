@@ -224,21 +224,38 @@ export const ForkBotDraft = Schema.Struct({
   /** The model that wrote it; null when it was drafted from the sentence alone. */
   draftedBy: Schema.NullOr(ForkBotDraftModel),
   /**
-   * Why no model wrote it: none allowed is usable, its call failed, or its reply was not a valid
-   * bot. Null when `draftedBy` wrote it.
+   * Why no model wrote it: none allowed is usable, the chosen one is not on the allowed list, its
+   * call failed, or its reply was not a valid bot. Null when `draftedBy` wrote it.
    */
-  fallbackReason: Schema.NullOr(Schema.Literals(["noModel", "modelFailed", "invalidReply"])),
+  fallbackReason: Schema.NullOr(
+    Schema.Literals(["noModel", "modelNotAllowed", "modelFailed", "invalidReply"]),
+  ),
 });
 export type ForkBotDraft = typeof ForkBotDraft.Type;
 
 /**
- * Drafting sends the user's sentence to the model: only Gemini through Antigravity or a paid
- * OpenCode model, never a free OpenCode one or a Claude model reached through OpenCode.
+ * Drafting sends the user's sentence, which may carry project data, to the model. Only these
+ * exact models may receive it, preferred first: Gemini Flash through Antigravity, then Kimi
+ * through OpenCode Go.
  */
+const FORK_BOT_DRAFT_MODELS = [
+  { driver: "antigravity", model: "gemini-3.8-flash" },
+  { driver: "antigravity", model: "gemini-3.8-flash-low" },
+  { driver: "antigravity", model: "gemini-3.8-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.8-flash-high" },
+  { driver: "antigravity", model: "gemini-3.7-flash-low" },
+  { driver: "antigravity", model: "gemini-3.7-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.7-flash-high" },
+  { driver: "antigravity", model: "gemini-3.6-flash-low" },
+  { driver: "antigravity", model: "gemini-3.6-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.6-flash-high" },
+  { driver: "opencode", model: "opencode-go/kimi-k3" },
+  { driver: "opencode", model: "opencode-go/kimi-k3.1-pro" },
+  { driver: "opencode", model: "opencode-go/kimi-k2.7-code" },
+] as const;
+
 export const isForkBotDraftModelAllowed = (driver: string, model: string): boolean =>
-  (driver === "antigravity" || driver === "opencode") &&
-  !/-free$/i.test(model) &&
-  !/claude|anthropic/i.test(model);
+  FORK_BOT_DRAFT_MODELS.some((allowed) => allowed.driver === driver && allowed.model === model);
 
 interface DraftModelProvider {
   readonly instanceId: ProviderInstanceId;
@@ -251,32 +268,27 @@ interface DraftModelProvider {
 
 /**
  * The model that drafts bots among the usable `providers`: the chosen one if allowed and listed,
- * else, with none chosen, Gemini Flash and then Kimi. Null drafts without a model.
+ * else, with none chosen, the first allowed one listed. Null drafts without a model.
  */
 export function forkBotDraftModel(
   chosen: { readonly instanceId: ProviderInstanceId; readonly model: string } | null,
   providers: ReadonlyArray<DraftModelProvider>,
 ): { readonly instanceId: ProviderInstanceId; readonly model: string } | null {
-  const usable = (provider: DraftModelProvider, model: DraftModelProvider["models"][number]) =>
-    model.isLegacy !== true && isForkBotDraftModelAllowed(String(provider.driver), model.slug);
+  const offers = (provider: DraftModelProvider, model: string) =>
+    isForkBotDraftModelAllowed(String(provider.driver), model) &&
+    provider.models.some((listed) => listed.slug === model && listed.isLegacy !== true);
   if (chosen !== null) {
     const provider = providers.find((candidate) => candidate.instanceId === chosen.instanceId);
-    const listed = provider?.models.find((model) => model.slug === chosen.model);
-    return provider !== undefined && listed !== undefined && usable(provider, listed)
+    return provider !== undefined && offers(provider, chosen.model)
       ? { instanceId: chosen.instanceId, model: chosen.model }
       : null;
   }
-  for (const [driver, pattern] of [
-    ["antigravity", /flash/i],
-    ["opencode", /kimi/i],
-  ] as const) {
-    for (const provider of providers) {
-      if (String(provider.driver) !== driver) continue;
-      const model = provider.models.find(
-        (candidate) => pattern.test(candidate.slug) && usable(provider, candidate),
-      );
-      if (model !== undefined) return { instanceId: provider.instanceId, model: model.slug };
-    }
+  for (const allowed of FORK_BOT_DRAFT_MODELS) {
+    const provider = providers.find(
+      (candidate) =>
+        String(candidate.driver) === allowed.driver && offers(candidate, allowed.model),
+    );
+    if (provider !== undefined) return { instanceId: provider.instanceId, model: allowed.model };
   }
   return null;
 }

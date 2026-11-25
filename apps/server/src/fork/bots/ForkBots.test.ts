@@ -77,6 +77,12 @@ const draftProviders: ReadonlyArray<ServerProvider> = [
     driver: ProviderDriverKind.make("opencode"),
     models: [
       { slug: "opencode/kimi-k3-free", name: "Kimi free", isCustom: false, capabilities: null },
+      {
+        slug: "opencode-go/deepseek-v4.1-flash",
+        name: "DeepSeek Flash",
+        isCustom: false,
+        capabilities: null,
+      },
     ],
   },
   {
@@ -1165,13 +1171,20 @@ describe("ForkBots", () => {
         chosen: { instanceId: claude, model: "claude-haiku-5-5" },
         reply: "{}",
         calls: 0,
-        reason: "noModel",
+        reason: "modelNotAllowed",
       },
       {
         chosen: { instanceId: opencode, model: "opencode/kimi-k3-free" },
         reply: "{}",
         calls: 0,
-        reason: "noModel",
+        reason: "modelNotAllowed",
+      },
+      // Paid and listed, but not on the explicit list.
+      {
+        chosen: { instanceId: opencode, model: "opencode-go/deepseek-v4.1-flash" },
+        reply: "{}",
+        calls: 0,
+        reason: "modelNotAllowed",
       },
       { chosen: null, reply: null, calls: 1, reason: "modelFailed" },
       { chosen: null, reply: '{"name": ""}', calls: 1, reason: "invalidReply" },
@@ -1182,17 +1195,32 @@ describe("ForkBots", () => {
           Effect.gen(function* () {
             settings.current = { ...draftSettings, forkBotDraftModelSelection: chosen };
             draftReply.current = reply;
-            const draft = yield* service.draft({ text: sentence, projectId: projectA });
-            // A Claude or free model never receives the sentence: it may carry project data.
+            // A pasted tab must not break the single-line name and role.
+            const text = sentence.replace(" PR ", "\tPR ");
+            const draft = yield* service.draft({ text, projectId: projectA });
+            // Only an allowed model receives the sentence: it may carry project data.
             expect(draftCalls).toHaveLength(calls);
             expect(draft).toMatchObject({
-              instructions: sentence,
+              instructions: text,
               runtimeMode: "approval-required",
               draftedBy: null,
               fallbackReason: reason,
             });
           }),
         ),
+    );
+
+    it.effect("proposes an available model when the default one went away", () =>
+      withBots(({ service, settings }) =>
+        Effect.gen(function* () {
+          settings.current = {
+            ...draftSettings,
+            defaultModelSelection: { instanceId: codex, model: "gpt-retired" },
+          };
+          const draft = yield* service.draft({ text: sentence, projectId: projectA });
+          expect(draft.modelSelection).toEqual({ instanceId: codex, model: "gpt-5.4" });
+        }),
+      ),
     );
   });
 });

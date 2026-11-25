@@ -29,6 +29,7 @@ import {
   ForkBotsError,
   ForkBotUpsertInput,
   forkBotDraftModel,
+  isForkBotDraftModelAllowed,
   MessageId,
   type ModelSelection,
   type ProjectId,
@@ -442,25 +443,43 @@ const make = Effect.gen(function* () {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError(() => unavailable("Could not read the drafting model setting.")),
     );
-    const providers = (yield* providerRegistry.getProviders.pipe(
-      Effect.orElseSucceed(() => []),
-    )).filter(
+    const allProviders = yield* providerRegistry.getProviders.pipe(Effect.orElseSucceed(() => []));
+    const providers = allProviders.filter(
       (provider) =>
         providerIsSelectable(provider) &&
         resolveProjectProviderInstanceEnabled(settings, parsed.projectId, provider.instanceId),
     );
-    const firstModel = providers.flatMap((provider) =>
+    const usableModels = providers.flatMap((provider) =>
       provider.models
         .filter((model) => model.isLegacy !== true)
         .map((model) => ({ instanceId: provider.instanceId, model: model.slug })),
-    )[0];
-    const selection =
-      project.value.defaultModelSelection ?? settings.defaultModelSelection ?? firstModel;
+    );
+    // A default whose provider or model went away would only make «Crear» fail.
+    const selection = [
+      project.value.defaultModelSelection,
+      settings.defaultModelSelection,
+      usableModels[0],
+    ].find(
+      (candidate) =>
+        candidate != null &&
+        usableModels.some(
+          (usable) =>
+            usable.instanceId === candidate.instanceId && usable.model === candidate.model,
+        ),
+    );
     if (selection === undefined) {
       return yield* unavailable("No provider is available for a bot in this project.");
     }
     // Only the chosen or default allowed model: no fallback to another provider's model.
-    const drafter = forkBotDraftModel(settings.forkBotDraftModelSelection, providers);
+    const chosen = settings.forkBotDraftModelSelection;
+    const drafter = forkBotDraftModel(chosen, providers);
+    const chosenDriver = allProviders.find(
+      (provider) => provider.instanceId === chosen?.instanceId,
+    )?.driver;
+    const notAllowed =
+      chosen !== null &&
+      chosenDriver !== undefined &&
+      !isForkBotDraftModelAllowed(String(chosenDriver), chosen.model);
     const reply =
       drafter === null
         ? undefined
@@ -512,7 +531,7 @@ const make = Effect.gen(function* () {
       build(sentenceDraft(parsed.text), reason).pipe(
         Effect.mapError(() => invalidInput("Could not draft a bot from this sentence.")),
       );
-    if (reply === undefined) return yield* fromSentence("noModel");
+    if (reply === undefined) return yield* fromSentence(notAllowed ? "modelNotAllowed" : "noModel");
     if (Option.isNone(reply)) return yield* fromSentence("modelFailed");
     return yield* decodeDraftReply(extractJsonObject(reply.value)).pipe(
       Effect.flatMap((fields) => build(fields, null)),
