@@ -62,12 +62,18 @@ function LineAmount(props: { line: SpendLine; limitShare: number | undefined }) 
     <span>
       {usd(line.costUsd)}
       {line.kind === "estimated" ? <span className="ade-spend-est"> est.</span> : null}
+      {line.kind === "mixed" ? <span className="ade-spend-est"> incluye est.</span> : null}
       {line.unpricedTokens > 0 ? ` + ${unpriced}` : null}
     </span>
   );
 }
 
-const LINE_LABEL = { real: "reportado", estimated: "a tarifa", flat: "suscripción" } as const;
+const LINE_LABEL = {
+  real: "reportado",
+  mixed: "reportado y a tarifa",
+  estimated: "a tarifa",
+  flat: "suscripción",
+} as const;
 
 function Ruler(props: { valueUsd: number; capUsd: number }) {
   return (
@@ -149,6 +155,12 @@ export function SpendCard() {
         {hasCap ? <span className="ade-spend-of"> de {usd(cap)}</span> : null}
       </p>
       <p className="ade-summary-caption">reportado esta semana · hoy {usd(spend.today.realUsd)}</p>
+      {spend.week.mixedUsd > 0 ? (
+        <p className="ade-summary-caption">
+          {usd(spend.week.mixedUsd)} de esa cifra{" "}
+          <span className="ade-spend-est">incluye est.</span> a tarifa
+        </p>
+      ) : null}
       {spend.week.estimatedUsd > 0 ? (
         <p className="ade-summary-caption">
           + {usd(spend.week.estimatedUsd)} <span className="ade-spend-est">est.</span> a tarifa, sin
@@ -169,7 +181,7 @@ export function SpendCard() {
       </ul>
       {missing.length > 0 ? (
         <p className="ade-summary-caption" data-level="high">
-          Total parcial: falta {missing.join(", ")}.
+          Total parcial: no está todo el uso de {missing.join(", ")}.
         </p>
       ) : null}
       {usage.failed.length > 0 ? (

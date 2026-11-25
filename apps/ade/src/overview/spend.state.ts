@@ -6,6 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 import { serverEnvironment, usageAccessAtom } from "../state.ts";
+import { summaryIncomplete } from "./spend.logic.ts";
 
 export const limitAccountsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
@@ -55,7 +56,7 @@ export interface SpendUsage {
   readonly environments: ReadonlyArray<EnvironmentUsage>;
   /** Machines paired before F7, without `usage:read`: pairing again is the way out. */
   readonly needsPairing: ReadonlyArray<string>;
-  /** Machines whose session check or usage read failed; their spend is missing from the total. */
+  /** Machines whose session check, usage read or transcripts failed; the total misses some. */
   readonly failed: ReadonlyArray<string>;
   /** Machines whose usage this ADE may read, to refresh them. */
   readonly readable: ReadonlyArray<EnvironmentId>;
@@ -86,7 +87,10 @@ export const spendUsageAtom = Atom.family((windowKey: string) =>
       pending ||= result.waiting;
       if (result._tag === "Failure") failed.push(label);
       const summary = AsyncResult.getOrElse(result, () => null);
-      if (summary !== null) environments.push({ environmentId, label, summary });
+      if (summary === null) continue;
+      // Its own sources can fail or be read in part: that total is short too.
+      if (result._tag !== "Failure" && summaryIncomplete(summary)) failed.push(label);
+      environments.push({ environmentId, label, summary });
     }
     return { environments, needsPairing, failed, readable, pending };
   }).pipe(Atom.withLabel(`ade-spend-usage:${windowKey}`)),

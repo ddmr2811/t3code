@@ -15,6 +15,7 @@ import {
   AuthTokenExchangeGrantType,
   AuthUsageReadScope,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+  ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   WS_METHODS,
   WsRpcGroup,
@@ -134,6 +135,9 @@ it.live("a client paired with only usage:read reads usage and no other diagnosti
       client[WS_METHODS.forkInsightsLimitHistory]({ hours: 1 }),
       client[WS_METHODS.forkInsightsActivity]({ days: 1 }),
       client[WS_METHODS.forkActivityFeed]({}),
+      // Nor orchestration: not the config, not the thread list.
+      client[WS_METHODS.serverGetConfig]({}),
+      Stream.runHead(client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({})),
     ];
     for (const call of denied) {
       const error = yield* Effect.flip(Effect.asVoid(call));

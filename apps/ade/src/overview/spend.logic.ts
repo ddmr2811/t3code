@@ -3,11 +3,12 @@ import {
   USAGE_CONTRACT_VERSION,
   type TurnTokenUsage,
   type UsageBucket,
+  type UsageSummary,
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
-import { type EnvironmentUsage, isModelCostUnknown, mergeUsage } from "@t3tools/shared/usageMerge";
+import { countedBuckets, type EnvironmentUsage } from "@t3tools/shared/usageMerge";
 
 /** Monday to today in the browser's zone: the week the Gasto card counts. */
 export function weekWindow(now?: Date): UsageSummaryInput {
@@ -19,11 +20,12 @@ export function weekWindow(now?: Date): UsageSummaryInput {
 }
 
 /**
- * `real`: money the provider reported. `estimated`: tokens at list price, nothing billed.
- * `flat`: a subscription with a limit on that machine, so its list price is not paid.
- * `unpriced`: no rate is known, which is not the same as free.
+ * `real`: money the provider reported. `mixed`: a group the server marks priced but where some
+ * records were reported, so its amount is part real and part list price; it counts toward the cap.
+ * `estimated`: tokens at list price, nothing billed. `flat`: a subscription with a limit on that
+ * machine, so its list price is not paid. `unpriced`: no rate is known, which is not free.
  */
-export type SpendKind = "real" | "estimated" | "flat" | "unpriced";
+export type SpendKind = "real" | "mixed" | "estimated" | "flat" | "unpriced";
 
 export interface SpendLine {
   readonly provider: UsageProviderKind;
@@ -36,8 +38,10 @@ export interface SpendLine {
 }
 
 export interface SpendPeriod {
-  /** Only reported money; the cap counts this alone. */
+  /** Reported money plus groups that include some; the cap counts this. */
   readonly realUsd: number;
+  /** The part of `realUsd` from groups that also include list-price estimates. */
+  readonly mixedUsd: number;
   /** List price of tokens nobody billed; shown apart and labelled «est.». */
   readonly estimatedUsd: number;
   readonly lines: ReadonlyArray<SpendLine>;
@@ -46,58 +50,74 @@ export interface SpendPeriod {
 /** Providers each machine pays as a flat subscription. A machine missing here pays per use. */
 export type FlatByEnvironment = ReadonlyMap<EnvironmentId, ReadonlySet<UsageProviderKind>>;
 
-const KIND_ORDER: Record<SpendKind, number> = { real: 0, estimated: 1, flat: 2, unpriced: 3 };
+const KIND_ORDER: Record<SpendKind, number> = {
+  real: 0,
+  mixed: 1,
+  estimated: 2,
+  flat: 3,
+  unpriced: 4,
+};
 
-// mergeUsage keys models by provider and name. Tagging the name with its kind keeps the kinds
-// apart through the merge (shared transcript folders still count once); the tag is cut after.
-const KIND_TAG = "\u0000";
+// Older servers do not say how many records were reported, so a priced group may be mixed.
+const isListPriceOnly = (bucket: UsageBucket) =>
+  bucket.costSource === "modelPriced" && bucket.providerReportedRecords === 0;
 
 function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   if (flat) return "flat";
   if (bucket.costSource === "providerReported") return "real";
-  return bucket.costSource === "modelPriced" ? "estimated" : "unpriced";
+  if (bucket.costSource === "unpriced") return "unpriced";
+  return isListPriceOnly(bucket) ? "estimated" : "mixed";
 }
 
+const bucketTokens = (bucket: UsageBucket) =>
+  bucket.totals.uncachedInputTokens +
+  bucket.totals.cachedInputTokens +
+  bucket.totals.cacheCreationTokens +
+  bucket.totals.outputTokens;
+
+const bucketUnpricedTokens = (bucket: UsageBucket) =>
+  bucket.unpricedTokens ??
+  (bucket.records === 0
+    ? 0
+    : Math.round((bucketTokens(bucket) * bucket.unpricedRecords) / bucket.records));
+
+/** Each group once (shared transcript folders and partial rescans deduplicated), then classified. */
 function period(
   environments: ReadonlyArray<EnvironmentUsage>,
   flatByEnvironment: FlatByEnvironment,
 ): SpendPeriod {
-  const tagged = environments.map((environment) => {
-    const flat = flatByEnvironment.get(environment.environmentId);
-    return {
-      ...environment,
-      summary: {
-        ...environment.summary,
-        buckets: environment.summary.buckets.map((bucket) => ({
-          ...bucket,
-          model: `${bucket.model}${KIND_TAG}${bucketKind(bucket, flat?.has(bucket.provider) === true)}`,
-        })),
-      },
-    };
-  });
-  const lines = mergeUsage(tagged, USAGE_CONTRACT_VERSION)
-    .models.filter((model) => model.totalTokens > 0)
-    .map((model): SpendLine => {
-      const [name = model.model, kind = "unpriced"] = model.model.split(KIND_TAG) as [
-        string,
-        SpendKind,
-      ];
-      return {
-        provider: model.provider,
-        model: name,
-        kind,
-        costUsd: kind === "real" || kind === "estimated" ? model.costUsd : 0,
-        tokens: model.totalTokens,
-        unpricedTokens: kind === "unpriced" ? model.totalTokens : model.unpricedTokens,
-      };
-    })
+  const byLine = new Map<string, SpendLine>();
+  for (const { environmentId, bucket } of countedBuckets(environments, USAGE_CONTRACT_VERSION)) {
+    const flat = flatByEnvironment.get(environmentId)?.has(bucket.provider) === true;
+    const kind = bucketKind(bucket, flat);
+    const key = `${bucket.provider} ${bucket.model} ${kind}`;
+    const line = byLine.get(key);
+    const priced = kind === "flat" || kind === "unpriced" ? 0 : bucket.costUsd;
+    byLine.set(key, {
+      provider: bucket.provider,
+      model: bucket.model,
+      kind,
+      costUsd: (line?.costUsd ?? 0) + priced,
+      tokens: (line?.tokens ?? 0) + bucketTokens(bucket),
+      unpricedTokens:
+        (line?.unpricedTokens ?? 0) +
+        (kind === "unpriced" ? bucketTokens(bucket) : bucketUnpricedTokens(bucket)),
+    });
+  }
+  const lines = [...byLine.values()]
+    .filter((line) => line.tokens > 0)
     .toSorted(
       (a, b) =>
         KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || b.costUsd - a.costUsd || b.tokens - a.tokens,
     );
   const total = (kind: SpendKind) =>
     lines.reduce((sum, line) => sum + (line.kind === kind ? line.costUsd : 0), 0);
-  return { realUsd: total("real"), estimatedUsd: total("estimated"), lines };
+  return {
+    realUsd: total("real") + total("mixed"),
+    mixedUsd: total("mixed"),
+    estimatedUsd: total("estimated"),
+    lines,
+  };
 }
 
 /** Today's and this week's spend across machines; shared transcript folders count once. */
@@ -120,22 +140,32 @@ export function spendSummary(
   };
 }
 
+/** Whether a machine's own summary says some transcripts could not be read: its total is short. */
+export const summaryIncomplete = (summary: UsageSummary) =>
+  summary.sources.some((source) => source.status === "failed" || source.status === "partial");
+
 export const rateKey = (provider: UsageProviderKind, model: string) => `${provider} ${model}`;
 
 /**
- * The list price per token of each provider's model, from this week's priced records. A bot's
- * turn tokens times this rate is its estimate, so it follows the server's `usagePricing`.
+ * The list price per token of each provider's model, from this week's groups priced from the
+ * rate table alone, never from reported money. A bot's turn tokens times it is its estimate.
  */
 export function ratesByModel(
   environments: ReadonlyArray<EnvironmentUsage>,
 ): ReadonlyMap<string, number> {
-  const rates = new Map<string, number>();
-  for (const model of mergeUsage(environments, USAGE_CONTRACT_VERSION).models) {
-    const pricedTokens = model.totalTokens - model.unpricedTokens;
-    if (isModelCostUnknown(model) || pricedTokens <= 0) continue;
-    rates.set(rateKey(model.provider, model.model), model.costUsd / pricedTokens);
+  const sums = new Map<string, { usd: number; tokens: number }>();
+  for (const { bucket } of countedBuckets(environments, USAGE_CONTRACT_VERSION)) {
+    if (!isListPriceOnly(bucket)) continue;
+    const key = rateKey(bucket.provider, bucket.model);
+    const sum = sums.get(key) ?? { usd: 0, tokens: 0 };
+    sums.set(key, {
+      usd: sum.usd + bucket.costUsd,
+      tokens: sum.tokens + bucketTokens(bucket) - bucketUnpricedTokens(bucket),
+    });
   }
-  return rates;
+  return new Map(
+    [...sums].flatMap(([key, sum]) => (sum.tokens > 0 ? [[key, sum.usd / sum.tokens]] : [])),
+  );
 }
 
 export interface EstimateTurn {

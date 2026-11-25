@@ -9,7 +9,14 @@ import type { EnvironmentUsage } from "@t3tools/shared/usageMerge";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { botEstimate, ratesByModel, rulerTicks, spendSummary, weekWindow } from "./spend.logic.ts";
+import {
+  botEstimate,
+  ratesByModel,
+  rulerTicks,
+  spendSummary,
+  summaryIncomplete,
+  weekWindow,
+} from "./spend.logic.ts";
 
 const bucket = (
   provider: UsageProviderKind,
@@ -33,23 +40,32 @@ const bucket = (
   costSource: "modelPriced",
   records: 2,
   unpricedRecords: 0,
+  providerReportedRecords: 0,
   sessions: 1,
   ...extra,
 });
 
-const machine = (buckets: UsageBucket[], id = "env-1"): EnvironmentUsage => ({
+const machine = (
+  buckets: UsageBucket[],
+  id = "env-1",
+  { hostId = id, status = "ok", readAt = "2026-11-25T10:00:00.000Z" } = {} as {
+    hostId?: string;
+    status?: "ok" | "partial" | "failed";
+    readAt?: string;
+  },
+): EnvironmentUsage => ({
   environmentId: id as EnvironmentId,
   label: id,
   summary: {
     contractVersion: USAGE_CONTRACT_VERSION,
-    readAt: "2026-11-25T10:00:00.000Z",
+    readAt,
     timeZone: "Europe/Madrid",
     sinceDay: "2026-11-23" as UsageDay,
     untilDay: "2026-11-25" as UsageDay,
     buckets,
     sources: [...new Set(buckets.map((entry) => entry.provider))].map((provider) => ({
-      fingerprint: { hostId: id, provider, resolvedHomePath: "/home/dev", volumeId: "1:1" },
-      status: "ok" as const,
+      fingerprint: { hostId, provider, resolvedHomePath: "/home/dev", volumeId: "1:1" },
+      status,
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -106,6 +122,37 @@ describe("spendSummary", () => {
   it("counts today from the last day only, and the week from every day", () => {
     expect(week.realUsd).toBe(7);
   });
+});
+
+describe("spendSummary with what the server cannot split", () => {
+  it("a priced group with reported records counts toward the cap, labelled as including estimates", () => {
+    const mixed = machine([
+      bucket("codex", "gpt-5", "2026-11-25", 6, { providerReportedRecords: 1 }),
+    ]);
+    const { today } = spendSummary([mixed], new Map());
+    expect(today.realUsd).toBe(6);
+    expect(today.mixedUsd).toBe(6);
+    expect(today.estimatedUsd).toBe(0);
+  });
+
+  it("a newer partial rescan of the same folder on another machine is not counted twice", () => {
+    const cell = () => bucket("claude", "claude-opus-5-5", "2026-11-25", 4);
+    const owner = machine([cell()], "pc", { hostId: "shared" });
+    const rescan = machine([cell()], "wsl", {
+      hostId: "shared",
+      status: "partial",
+      readAt: "2026-11-25T11:00:00.000Z",
+    });
+    const flat = new Map([["pc" as EnvironmentId, new Set(["claude" as const])]]);
+    const { today } = spendSummary([owner, rescan], flat);
+    expect(today.lines.reduce((sum, line) => sum + line.tokens, 0)).toBe(1000);
+  });
+});
+
+it("summaryIncomplete flags a summary whose own sources failed or were read in part", () => {
+  const read = (status: "ok" | "partial" | "failed") =>
+    summaryIncomplete(machine([bucket("claude", "m", "2026-11-25", 1)], "a", { status }).summary);
+  expect([read("ok"), read("partial"), read("failed")]).toEqual([false, true, true]);
 });
 
 describe("botEstimate", () => {

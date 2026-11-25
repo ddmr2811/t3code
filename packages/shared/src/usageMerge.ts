@@ -328,6 +328,28 @@ const EMPTY_MERGED: MergedUsage = {
   contractMismatches: [],
 };
 
+/** The buckets `mergeUsage` counts, each once, with the machine whose reading owns it. */
+export function countedBuckets(
+  environments: readonly EnvironmentUsage[],
+  expectedContractVersion: number,
+): Array<{ readonly environmentId: EnvironmentId; readonly bucket: UsageBucket }> {
+  const current = environments.filter((environment) =>
+    isCompatibleUsageContractVersion(environment.summary.contractVersion, expectedContractVersion),
+  );
+  const sourceKey = sourceIdentity(current);
+  const { ownerScanByFingerprint, supplementalBucketsByEnvironment, sessionsByFingerprint } =
+    claimSources(current, sourceKey);
+  return current.flatMap((environment) =>
+    ownedContribution(
+      environment,
+      ownerScanByFingerprint,
+      supplementalBucketsByEnvironment.get(environment.environmentId) ?? new Set(),
+      sessionsByFingerprint,
+      sourceKey,
+    ).buckets.map((bucket) => ({ environmentId: environment.environmentId, bucket })),
+  );
+}
+
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,
