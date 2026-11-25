@@ -15,7 +15,12 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { type FormEvent, useContext, useState } from "react";
 
-import { pairMachine, TOKEN_IN_QUERY_TEXT, tokenInQuery } from "./connection/pairing.ts";
+import {
+  pairMachine,
+  type PairingInput,
+  TOKEN_IN_QUERY_TEXT,
+  tokenInQuery,
+} from "./connection/pairing.ts";
 import { environmentCatalog } from "./connection/runtime.ts";
 import { machineStatus } from "./connection/status.ts";
 import { machinesChanged } from "./connection/tabs.ts";
@@ -92,12 +97,17 @@ function MachineRow(props: { environmentId: EnvironmentId; entry: ConnectionCata
   );
 }
 
-function PairingForm(props: { onDone: () => void }) {
+/** With `widen`, pairs that machine again at its stored address: only the new code is asked. */
+export function PairingForm(props: {
+  onDone: () => void;
+  widen?: PairingInput["widen"] & { readonly host: string; readonly terminal: boolean };
+}) {
   const registry = useContext(RegistryContext);
-  const initial = initialPairingConsumed ? null : addressBar;
-  const [link, setLink] = useState(initial?.link ?? "");
+  const { widen } = props;
+  const initial = initialPairingConsumed || widen !== undefined ? null : addressBar;
+  const [link, setLink] = useState(widen?.host ?? initial?.link ?? "");
   const [code, setCode] = useState("");
-  const [terminal, setTerminal] = useState(false);
+  const [terminal, setTerminal] = useState(widen?.terminal ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initial?.error ?? null);
 
@@ -111,13 +121,16 @@ function PairingForm(props: { onDone: () => void }) {
       {
         ...(code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code }),
         terminal,
+        ...(widen === undefined
+          ? {}
+          : { widen: { environmentId: widen.environmentId, required: widen.required } }),
       },
       // The form shows the failure; the console would only repeat it.
       { reportFailure: false },
     );
     setBusy(false);
     if (AsyncResult.isSuccess(result)) {
-      initialPairingConsumed = true;
+      if (widen === undefined) initialPairingConsumed = true;
       return props.onDone();
     }
     const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
@@ -126,41 +139,46 @@ function PairingForm(props: { onDone: () => void }) {
 
   return (
     <form className="ade-pairing" onSubmit={submit}>
+      {widen === undefined ? (
+        <label>
+          Enlace de emparejamiento o dirección
+          <input
+            value={link}
+            onChange={(event) => setLink(event.target.value)}
+            placeholder="https://maquina:3773/pair#token=…"
+            autoComplete="off"
+            spellCheck={false}
+            required
+          />
+        </label>
+      ) : null}
       <label>
-        Enlace de emparejamiento o dirección
-        <input
-          value={link}
-          onChange={(event) => setLink(event.target.value)}
-          placeholder="https://maquina:3773/pair#token=…"
-          autoComplete="off"
-          spellCheck={false}
-          required
-        />
-      </label>
-      <label>
-        Código (solo si has puesto una dirección)
+        {widen === undefined ? "Código (solo si has puesto una dirección)" : "Código nuevo"}
         <input
           value={code}
           onChange={(event) => setCode(event.target.value)}
           autoComplete="off"
           spellCheck={false}
+          required={widen !== undefined}
         />
       </label>
-      <label className="ade-pairing-check">
-        <input
-          type="checkbox"
-          checked={terminal}
-          onChange={(event) => setTerminal(event.target.checked)}
-        />
-        Permitir terminal (un shell en la máquina)
-      </label>
+      {widen === undefined ? (
+        <label className="ade-pairing-check">
+          <input
+            type="checkbox"
+            checked={terminal}
+            onChange={(event) => setTerminal(event.target.checked)}
+          />
+          Permitir terminal (un shell en la máquina)
+        </label>
+      ) : null}
       {error !== null && (
         <p className="ade-pairing-error" role="alert">
           {error}
         </p>
       )}
       <button type="submit" className="ade-button" disabled={busy}>
-        {busy ? "Emparejando…" : "Emparejar"}
+        {busy ? "Emparejando…" : widen === undefined ? "Emparejar" : "Ampliar permiso"}
       </button>
     </form>
   );

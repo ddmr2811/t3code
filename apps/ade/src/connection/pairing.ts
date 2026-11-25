@@ -58,6 +58,14 @@ export interface PairingInput {
   readonly pairingUrl?: string;
   readonly host?: string;
   readonly pairingCode?: string;
+  /**
+   * Pairing an already paired machine again to add `usage:read`: the session can't widen itself
+   * (renewal refuses `scope`), so only a new link works, and it must not drop what was held.
+   */
+  readonly widen?: {
+    readonly environmentId: EnvironmentId;
+    readonly required: ReadonlyArray<AuthEnvironmentScope>;
+  };
 }
 
 /** Why pairing failed, in Spanish and safe to show: it never carries the link or a token. */
@@ -112,6 +120,9 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));
+  if (input.widen !== undefined && descriptor.environmentId !== input.widen.environmentId) {
+    return yield* failed(`Esa dirección ya no es la de esta máquina: es ${descriptor.label}.`);
+  }
   const incompatible = orchestrationProtocolCompatibilityError(descriptor);
   if (incompatible !== null) return yield* incompatible;
   if (descriptor.capabilities.accessTokenRenewal !== true) {
@@ -159,6 +170,12 @@ const pair = Effect.fn("ade.pairing.pair")(function* (input: PairingInput) {
   }).pipe(Effect.mapError((error) => mapRemoteEnvironmentError(error)));
   if (access.token_type !== "DPoP") {
     return yield* failed(`${descriptor.label} no devolvió una sesión DPoP.`);
+  }
+  const granted = access.scope.split(" ");
+  if (input.widen?.required.some((scope) => !granted.includes(scope))) {
+    return yield* failed(
+      "El enlace no trae «Ver totales de uso» o le falta algún permiso que la máquina ya tenía. No se ha cambiado nada: crea otro enlace con los permisos de antes y esa casilla marcada.",
+    );
   }
 
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
