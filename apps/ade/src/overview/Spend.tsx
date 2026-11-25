@@ -111,7 +111,7 @@ function Ruler(props: { valueUsd: number; capUsd: number }) {
  * paired at its stored address for exactly what this session holds plus `usage:read`. The
  * pairing, address and permissions all come from the connection the session was last read over.
  */
-function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
+export function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
   const [open, setOpen] = useState(false);
   const result = useAtomValue(environmentSession.sessionStateAtom(props.environmentId));
   const prepared = Option.getOrNull(
@@ -163,7 +163,7 @@ function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
   );
 }
 
-export function SpendCard() {
+export function SpendCard(props: { onOpenGasto: () => void }) {
   const { window, usage } = useWeekUsage();
   const flat = useAtomValue(flatProvidersAtom);
   const spend = useMemo(
@@ -275,6 +275,13 @@ export function SpendCard() {
         />
         US$
       </label>
+      <button
+        type="button"
+        className="ade-button-quiet ade-summary-action"
+        onClick={props.onOpenGasto}
+      >
+        Ver gasto
+      </button>
     </section>
   );
 }

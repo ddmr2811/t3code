@@ -85,7 +85,7 @@ const isListPriceOnly = (bucket: UsageBucket) =>
 const hasReportedCost = (bucket: UsageBucket) =>
   bucket.costUsd > 0 && bucket.costSource === "providerReported";
 
-function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
+export function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   // A reported charge is paid even on a machine with a flat plan for that provider.
   if (flat && !hasReportedCost(bucket)) return "flat";
   if (bucket.costSource === "providerReported") return "real";
@@ -97,7 +97,7 @@ function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   return estimatedRecords > 0 ? "mixed" : "real";
 }
 
-const bucketTokens = (bucket: UsageBucket) =>
+export const bucketTokens = (bucket: UsageBucket) =>
   bucket.totals.uncachedInputTokens +
   bucket.totals.cachedInputTokens +
   bucket.totals.cacheCreationTokens +
