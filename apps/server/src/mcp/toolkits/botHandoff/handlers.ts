@@ -8,6 +8,7 @@ import * as ForkBots from "../../../fork/bots/ForkBots.ts";
 import * as ForkGaps from "../../../fork/gaps/ForkGaps.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
+import { refuseProposalOutsideLadder } from "./gapRules.ts";
 import { BotHandoffToolkit } from "./tools.ts";
 
 const toFailure = (error: ForkBotsError) =>
@@ -66,6 +67,7 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
           message: "Only the project's coordinator can propose a bot.",
         });
       }
+      yield* refuseProposalOutsideLadder(draft.runtimeMode);
       const proposal = yield* forkBots
         .propose(draft, { threadId: caller.id, projectId: caller.projectId, limits })
         .pipe(Effect.mapError(toFailure));
@@ -83,7 +85,11 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
         });
       }
       const { gap, next } = yield* forkGaps
-        .step(input, { threadId: caller.id, projectId: caller.projectId })
+        .step(input, {
+          threadId: caller.id,
+          projectId: caller.projectId,
+          runtimeMode: caller.runtimeMode,
+        })
         .pipe(Effect.mapError(toFailure));
       const installId = gap.steps.at(-1)?.install?.id;
       return { gapId: gap.id, ...(installId === undefined ? {} : { installId }), next };

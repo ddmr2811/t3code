@@ -1,12 +1,11 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ForkBotId } from "./forkBots.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: what a bot does when it lacks a tool, one rung at a time, in `<stateDir>/fork/gaps.json`. */
 export const FORK_GAPS_PROTOCOL_VERSION = 1;
 export const FORK_GAPS_MAX_FILE_BYTES = 512 * 1024;
-/** Gaps kept on disk; the oldest one without a pending install goes first. */
-export const FORK_GAPS_HISTORY = 40;
 /** Steps one gap may record before the ladder closes and the user decides. */
 export const FORK_GAP_MAX_ATTEMPTS = 8;
 /** New tokens (uncached input plus output) the bot's thread may spend on one gap. */
@@ -38,9 +37,17 @@ export const ForkGapInstallId = safeId;
 export type ForkGapInstallId = typeof ForkGapInstallId.Type;
 
 export const ForkGapName = singleLine(80);
-export const ForkGapNote = singleLine(120);
-/** Short enough for the board to hold a command and its way back in one entry. */
-export const ForkGapCommand = singleLine(160);
+/** Short enough for one board entry to hold every step of a gap and its install. */
+export const ForkGapNote = singleLine(60);
+/**
+ * One command: nothing that chains, pipes, substitutes or redirects, so one yes approves one
+ * install and the way back is a command too.
+ */
+export const ForkGapCommand = singleLine(120).check(
+  Schema.makeFilter((value: string) => !/[;&|`<>]|\$\(/.test(value), {
+    expected: "a single command without ; & | ` < > or $(",
+  }),
+);
 
 /** In order: use what exists, install, build it in a child thread, propose a new bot. */
 export const ForkGapRung = Schema.Literals(["reuse", "install", "build", "hire"]);
@@ -62,8 +69,10 @@ export type ForkGapInstallDraft = typeof ForkGapInstallDraft.Type;
 export const ForkGapInstall = Schema.Struct({
   ...ForkGapInstallDraft.fields,
   id: ForkGapInstallId,
-  /** Answered once; `rejected` also covers a request whose bot left the thread that asked. */
-  answer: Schema.Literals(["pending", "approved", "rejected"]),
+  /** The asking thread's mode then; a yes is delivered only while it is still that. */
+  runtimeMode: RuntimeMode,
+  /** Answered once. `cancelled`: the gap closed, or the bot or its thread changed since it asked. */
+  answer: Schema.Literals(["pending", "approved", "rejected", "cancelled"]),
   decidedAt: Schema.NullOr(IsoDateTime),
 });
 export type ForkGapInstall = typeof ForkGapInstall.Type;
@@ -106,7 +115,7 @@ export const ForkGapListInput = Schema.Struct({});
 export type ForkGapListInput = typeof ForkGapListInput.Type;
 
 export const ForkGapListResult = Schema.Struct({
-  /** Oldest first. */
+  /** Least recently changed first. */
   gaps: Schema.Array(ForkGap),
 });
 export type ForkGapListResult = typeof ForkGapListResult.Type;

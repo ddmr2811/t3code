@@ -1,10 +1,10 @@
 // Fork-only: the ladder a bot climbs when it lacks a tool, kept in `<stateDir>/fork/gaps.json`.
 // The server records each rung and the user's answer to an install. It never runs a command.
 import {
+  CommandId,
   FORK_GAP_MAX_ATTEMPTS,
   FORK_GAP_MAX_TOKENS,
   FORK_GAPS_DAY_MS,
-  FORK_GAPS_HISTORY,
   FORK_GAPS_MAX_FILE_BYTES,
   FORK_GAPS_PER_BOT_AND_DAY,
   FORK_GAPS_PROTOCOL_VERSION,
@@ -17,7 +17,9 @@ import {
   type ForkGapRung,
   type ForkGapStep,
   ForkGapStepInput,
+  MessageId,
   type ProjectId,
+  type RuntimeMode,
   type ThreadId,
   projectKeyFromName,
 } from "@t3tools/contracts";
@@ -31,6 +33,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { DispatchModeLimit } from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ForkBots from "../bots/ForkBots.ts";
@@ -41,6 +44,7 @@ import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 export interface GapSender {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
+  readonly runtimeMode: RuntimeMode;
 }
 
 export class ForkGaps extends Context.Service<
@@ -52,16 +56,18 @@ export class ForkGaps extends Context.Service<
       input: ForkGapStepInput,
       from: GapSender,
     ) => Effect.Effect<{ readonly gap: ForkGap; readonly next: string }, ForkBotsError>;
-    /** The user's one answer to one install request; it goes back to the bot's thread. */
+    /** The user's one answer to one install request; it goes back to the thread that asked. */
     readonly answerInstall: (
       input: ForkGapAnswerInstallInput,
     ) => Effect.Effect<ForkGap, ForkBotsError>;
+    /** The gap a thread is climbing now, which narrows what it may delegate and propose. */
+    readonly openGap: (threadId: ThreadId) => Effect.Effect<ForkGap | null, ForkBotsError>;
   }
 >()("t3/fork/gaps/ForkGaps") {}
 
 const StoredGaps = Schema.Struct({
   version: Schema.Literal(FORK_GAPS_PROTOCOL_VERSION),
-  /** Oldest first. */
+  /** Least recently changed first. */
   gaps: Schema.Array(ForkGap),
 });
 type StoredGaps = typeof StoredGaps.Type;
@@ -73,15 +79,20 @@ const decodeAnswerInput = Schema.decodeUnknownEffect(ForkGapAnswerInstallInput);
 const invalidInput = (message: string) => new ForkBotsError({ reason: "invalidInput", message });
 const limitExceeded = (message: string) => new ForkBotsError({ reason: "limitExceeded", message });
 
-const RUNGS: ReadonlyArray<ForkGapRung> = ["reuse", "install", "build", "hire"];
+/** Solved gaps go, oldest first, once the file passes this; it leaves room under the file limit. */
+const GAPS_BUDGET_BYTES = FORK_GAPS_MAX_FILE_BYTES - 64 * 1024;
+/** UTF-8 bytes as the store saves them, indented. */
+const savedBytes = (stored: StoredGaps) =>
+  new TextEncoder().encode(`${JSON.stringify(stored, null, 2)}\n`).byteLength;
+
 const RUNG_TEXT: Record<ForkGapRung, string> = {
-  reuse: "1 Reutilizar",
-  install: "2 Instalar",
-  build: "3 Construir",
-  hire: "4 Contratar un bot",
+  reuse: "Reutilizar",
+  install: "Instalar",
+  build: "Construir",
+  hire: "Contratar un bot",
 };
 const RESULT_TEXT: Record<ForkGapStep["result"], string> = {
-  trying: "en curso",
+  trying: "empieza",
   worked: "funcionó",
   failed: "falló",
 };
@@ -89,26 +100,61 @@ const ANSWER_TEXT: Record<ForkGapInstall["answer"], string> = {
   pending: "espera tu sí",
   approved: "aprobada",
   rejected: "rechazada",
+  cancelled: "cancelada",
 };
 const SCOPE_TEXT: Record<ForkGapInstall["scope"], string> = {
-  project: "dentro del proyecto",
+  project: "en el proyecto",
   system: "en el sistema",
+};
+/** A rung opens only after this one failed. Install may be skipped: it needs a way back. */
+const OPENS_AFTER: Record<ForkGapRung, ForkGapRung | null> = {
+  reuse: null,
+  install: "reuse",
+  build: "reuse",
+  hire: "build",
 };
 
 const pendingInstall = (gap: ForkGap) =>
   gap.steps.find((step) => step.install?.answer === "pending")?.install;
 
-/** One line per rung reached, in ladder order; the install line keeps its way back. */
+/** Why this step is out of order, or null. A result needs its own `trying` first. */
+function outOfOrder(gap: ForkGap, input: ForkGapStepInput): string | null {
+  const last = gap.steps.findLast((step) => step.rung === input.rung);
+  if (input.result !== "trying") {
+    if (last?.result !== "trying") return `Record ${input.rung}/trying before its result.`;
+    if (last.install?.answer === "pending") return "Wait for the user's answer to the install.";
+    if (
+      input.result === "worked" &&
+      last.install !== undefined &&
+      last.install.answer !== "approved"
+    ) {
+      return "An install the user did not approve cannot have worked.";
+    }
+    return null;
+  }
+  if (last?.result === "trying") return `Record how ${input.rung} ended before trying it again.`;
+  const before = OPENS_AFTER[input.rung];
+  if (
+    before !== null &&
+    !gap.steps.some((step) => step.rung === before && step.result === "failed")
+  ) {
+    return `The ${input.rung} rung opens only after ${before} was tried and failed.`;
+  }
+  if (input.rung === "install" && gap.steps.some((step) => step.install !== undefined)) {
+    return "A gap asks for one install. Go on to the build rung.";
+  }
+  return null;
+}
+
+/** Every step in order, so the board shows how the bot got here; an install keeps its way back. */
 function boardSummary(gap: ForkGap): string {
-  const lines = RUNGS.flatMap((rung) => {
-    const last = gap.steps.findLast((step) => step.rung === rung);
-    if (last === undefined) return [];
-    const asked = gap.steps.findLast((step) => step.install !== undefined)?.install;
+  const lines = gap.steps.map((step, index) => {
+    const asked = step.install;
     const request =
-      rung === "install" && asked !== undefined
-        ? ` (${SCOPE_TEXT[asked.scope]}, ${ANSWER_TEXT[asked.answer]}): ${asked.command} · Vuelta atrás: ${asked.rollback}`
-        : "";
-    return [`${RUNG_TEXT[rung]}${request} · ${RESULT_TEXT[last.result]}: ${last.note}`];
+      asked === undefined
+        ? ""
+        : ` · ${SCOPE_TEXT[asked.scope]}, ${ANSWER_TEXT[asked.answer]} · ${asked.command} · Vuelta atrás: ${asked.rollback}`;
+    return `${index + 1} ${RUNG_TEXT[step.rung]}, ${RESULT_TEXT[step.result]}: ${step.note}${request}`;
   });
   return lines.join("\n").slice(0, 1000);
 }
@@ -127,16 +173,16 @@ function nextText(step: ForkGapStep, attemptsLeft: number): string {
         "Busca un bot (bot_handoff), una herramienta MCP o una skill que ya lo haga, y apunta si funcionó o falló.",
       install: "Apunta si la instalación funcionó o falló.",
       build:
-        "Delega en un hilo hijo con delegate_task, en un worktree nuevo (isolation: worktree) y con runtimeMode approval-required, nunca full-access ni por encima del tuyo. Debe dejar el script o la herramienta con su prueba; no lo uses hasta que el usuario lo revise.",
+        "Delega con delegate_task: mientras este hueco esté abierto, el hijo va siempre en un worktree nuevo y con approval-required. Debe dejar el script o la herramienta con su prueba; no lo uses hasta que el usuario lo revise.",
       hire: "Propón el bot con bot_propose si coordinas el proyecto; si no, pásaselo al coordinador con bot_handoff.",
     };
     return `${how[step.rung]} ${left}`;
   }
   const after: Record<ForkGapRung, string> = {
     reuse:
-      "Siguiente peldaño, instalar: llama otra vez con rung install, result trying e install (scope, command, rollback). Si no hay vuelta atrás clara, no lo pidas y pasa a build.",
-    install: "Siguiente peldaño, construir: llama otra vez con rung build y result trying.",
-    build: "Último peldaño, contratar un bot: llama otra vez con rung hire y result trying.",
+      "Siguiente peldaño, instalar: rung install, result trying e install (scope, command, rollback), un solo comando cada uno. Sin vuelta atrás clara no lo pidas: pasa a rung build, result trying.",
+    install: "Siguiente peldaño, construir: rung build, result trying.",
+    build: "Último peldaño, contratar un bot: rung hire, result trying.",
     hire: "No quedan peldaños. Para y dile al usuario qué falta.",
   };
   return `${after[step.rung]} ${left}`;
@@ -176,6 +222,10 @@ export const make = Effect.gen(function* () {
   const coordination = yield* ForkCoordination.ForkCoordination;
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagement.ThreadManagementService;
+
+  const nowIso = Effect.map(Clock.currentTimeMillis, (now) =>
+    DateTime.formatIso(DateTime.makeUnsafe(now)),
+  );
 
   /**
    * New tokens (input not read from cache, plus output) of the thread's turns that finished since
@@ -238,28 +288,37 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Holding the lock. Past the history, the oldest gaps without a pending install go. */
-  const save = Effect.fn("ForkGaps.save")(function* (stored: StoredGaps, gap: ForkGap) {
-    const all = [...stored.gaps.filter((candidate) => candidate.id !== gap.id), gap];
-    let extra = all.length - FORK_GAPS_HISTORY;
-    const kept = all.filter((candidate) => {
-      if (extra <= 0 || candidate.id === gap.id || pendingInstall(candidate) !== undefined) {
-        return true;
+  /**
+   * Holding the lock: the gap and its board entry change together, in order. Only solved gaps
+   * are ever dropped; an open or exhausted one keeps its limits for as long as the file exists.
+   */
+  const save = Effect.fn("ForkGaps.save")(function* (
+    stored: StoredGaps,
+    gap: ForkGap,
+    bot: ForkBot | undefined,
+  ) {
+    let gaps = [...stored.gaps.filter((candidate) => candidate.id !== gap.id), gap];
+    const dropped: Array<ForkGap> = [];
+    while (savedBytes({ version: FORK_GAPS_PROTOCOL_VERSION, gaps }) > GAPS_BUDGET_BYTES) {
+      const oldest = gaps.find((candidate) => candidate.status === "solved" && candidate !== gap);
+      if (oldest === undefined) {
+        return yield* limitExceeded(
+          "The gap file is full of open and closed gaps; the user must clear old ones first.",
+        );
       }
-      extra -= 1;
-      return false;
-    });
-    yield* store.write({ version: FORK_GAPS_PROTOCOL_VERSION, gaps: kept });
-    for (const dropped of all.filter((candidate) => !kept.includes(candidate))) {
-      yield* coordination.remove({ id: dropped.id }).pipe(Effect.ignore);
+      dropped.push(oldest);
+      gaps = gaps.filter((candidate) => candidate !== oldest);
     }
+    yield* store.write({ version: FORK_GAPS_PROTOCOL_VERSION, gaps });
+    for (const old of dropped) yield* coordination.remove({ id: old.id }).pipe(Effect.ignore);
+    yield* trace(gap, bot);
   });
 
   const step = Effect.fn("ForkGaps.step")(function* (input: ForkGapStepInput, from: GapSender) {
     const parsed = yield* decodeStepInput(input).pipe(
       Effect.mapError(() =>
         invalidInput(
-          "Invalid gap step. Each text is one short line, and an install needs scope, command and rollback: without a way back it is not proposed.",
+          "Invalid gap step. Each text is one short line. An install needs scope, command and rollback, each a single command with no ; & | ` < > or $(: without a way back it is not proposed.",
         ),
       ),
     );
@@ -277,6 +336,13 @@ export const make = Effect.gen(function* () {
       return yield* invalidInput(
         "`install` goes with rung install and result trying, and only with them.",
       );
+    }
+    // The provider then asks the user again for the exact command when the bot runs it.
+    if (parsed.install?.scope === "system" && from.runtimeMode !== "approval-required") {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: `A system install is asked only from a thread in approval-required; this one runs in ${from.runtimeMode}. Tell the user what is missing.`,
+      });
     }
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
@@ -316,17 +382,22 @@ export const make = Effect.gen(function* () {
           gap.steps.length >= FORK_GAP_MAX_ATTEMPTS ||
           (yield* tokensSpent(gap)) > FORK_GAP_MAX_TOKENS
         ) {
-          const exhausted: ForkGap = { ...gap, status: "exhausted", updatedAt: now };
-          yield* save(stored, exhausted);
-          yield* trace(exhausted, bot);
+          // A closed gap approves nothing: its pending install goes with it.
+          const exhausted: ForkGap = {
+            ...gap,
+            status: "exhausted",
+            steps: gap.steps.map((done) =>
+              done.install?.answer === "pending"
+                ? { ...done, install: { ...done.install, answer: "cancelled", decidedAt: now } }
+                : done,
+            ),
+            updatedAt: now,
+          };
+          yield* save(stored, exhausted, bot);
           return yield* limitExceeded(closed);
         }
-        if (
-          parsed.rung === "hire" &&
-          !gap.steps.some((done) => done.rung === "build" && done.result === "failed")
-        ) {
-          return yield* invalidInput("A bot is proposed only after the build rung failed.");
-        }
+        const problem = outOfOrder(gap, parsed);
+        if (problem !== null) return yield* invalidInput(problem);
         if (asksInstall && own.some((candidate) => pendingInstall(candidate) !== undefined)) {
           return yield* limitExceeded(
             "An install of yours already waits for the user. They are approved one by one: wait for the answer.",
@@ -342,6 +413,7 @@ export const make = Effect.gen(function* () {
                 install: {
                   ...parsed.install,
                   id: `install:${SecureRandom.uuidV4Unsafe()}`,
+                  runtimeMode: from.runtimeMode,
                   answer: "pending" as const,
                   decidedAt: null,
                 },
@@ -354,24 +426,32 @@ export const make = Effect.gen(function* () {
           status: parsed.result === "worked" ? "solved" : "open",
           updatedAt: now,
         };
-        yield* save(stored, next);
-        yield* trace(next, bot);
+        yield* save(stored, next, bot);
         return { gap: next, next: nextText(recorded, FORK_GAP_MAX_ATTEMPTS - next.steps.length) };
       }),
     );
   });
 
-  /** Whether the bot is still in the live thread that asked; an approval goes nowhere else. */
+  /**
+   * Whether the answer may still go to the thread that asked: the gap is open, the bot still
+   * lives in that thread and project, and the thread kept the mode it asked in. Editing a bot's
+   * project, model or permissions moves it off its thread, so that is covered too.
+   */
   const stillAsking = Effect.fn("ForkGaps.stillAsking")(function* (
     gap: ForkGap,
+    install: ForkGapInstall,
     bot: ForkBot | undefined,
   ) {
-    if (bot === undefined || bot.archived || bot.threadId !== gap.threadId) return false;
+    if (gap.status !== "open" || bot === undefined || bot.archived) return false;
+    if (bot.threadId !== gap.threadId || bot.projectId !== gap.projectId) return false;
     const outcome = yield* threads.getThreadRecords(gap.threadId, []).pipe(Effect.result);
+    if (outcome._tag === "Failure") return false;
+    const thread = outcome.success.thread;
     return (
-      outcome._tag === "Success" &&
-      outcome.success.thread.archivedAt === null &&
-      outcome.success.thread.deletedAt === null
+      thread.archivedAt === null &&
+      thread.deletedAt === null &&
+      thread.projectId === gap.projectId &&
+      thread.runtimeMode === install.runtimeMode
     );
   });
 
@@ -382,8 +462,8 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => invalidInput("Invalid install answer.")),
     );
     const { bots } = yield* forkBots.list({});
-    // Checking it is pending and saving the answer under one lock: a second answer is refused.
-    const decided = yield* lock.withPermits(1)(
+    // One lock from the check to the board: a second answer, or a step in between, waits.
+    return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const stored = yield* store.read();
         const gap = stored.gaps.find((candidate) =>
@@ -400,46 +480,77 @@ export const make = Effect.gen(function* () {
           return yield* invalidInput("This install was already answered.");
         }
         const bot = bots.find((candidate) => candidate.id === gap.botId);
-        const reachable = yield* stillAsking(gap, bot);
-        const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
-        const install: ForkGapInstall = {
-          ...asked,
-          answer: parsed.answer === "approve" && reachable ? "approved" : "rejected",
-          decidedAt: now,
-        };
-        const next: ForkGap = {
+        const reachable = yield* stillAsking(gap, asked, bot);
+        const withAnswer = (
+          answer: ForkGapInstall["answer"],
+          decidedAt: ForkGapInstall["decidedAt"],
+        ): ForkGap => ({
           ...gap,
           steps: gap.steps.map((done) =>
-            done.install?.id === parsed.id ? { ...done, install } : done,
+            done.install?.id === parsed.id
+              ? { ...done, install: { ...asked, answer, decidedAt } }
+              : done,
           ),
-          updatedAt: now,
-        };
-        yield* save(stored, next);
-        return { gap: next, install, bot, reachable };
+        });
+        const now = yield* nowIso;
+        if (!reachable) {
+          const answer = parsed.answer === "approve" ? "cancelled" : "rejected";
+          const closed = withAnswer(answer, now);
+          yield* save(stored, closed, bot);
+          return parsed.answer === "reject"
+            ? closed
+            : yield* new ForkBotsError({
+                reason: "conflict",
+                message:
+                  "Cancelada: el hueco se cerró, o el bot o su hilo cambiaron desde que lo pidió. No se aprobó nada.",
+              });
+        }
+        const decided = withAnswer(parsed.answer === "approve" ? "approved" : "rejected", now);
+        const install = decided.steps.find((done) => done.install?.id === parsed.id)!.install!;
+        yield* save(stored, decided, bot);
+        // Straight to the thread that asked, never to wherever the bot is now. The orchestrator
+        // rechecks the mode under its own lock, in case it rose after the check above.
+        const messageId = MessageId.make(`fork-gap-answer:${SecureRandom.uuidV4Unsafe()}`);
+        const sent = yield* threads
+          .sendToThread({
+            projectId: gap.projectId,
+            commandId: CommandId.make(messageId),
+            threadId: gap.threadId,
+            messageId,
+            text: answerText(decided, install),
+            attachments: [],
+            mode: "queue",
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(
+            Effect.provideService(DispatchModeLimit, {
+              runtimeMode: asked.runtimeMode,
+              interactionMode: "default",
+            }),
+            Effect.result,
+          );
+        if (sent._tag === "Failure") {
+          // The answer is not spent on a message that never left: it waits again.
+          yield* save(stored, withAnswer("pending", null), bot);
+          return yield* new ForkBotsError({
+            reason: "dispatchFailed",
+            message:
+              "No se pudo entregar tu respuesta al hilo del bot; la petición sigue pendiente. Vuelve a intentarlo.",
+          });
+        }
+        return decided;
       }),
     );
-    yield* trace(decided.gap, decided.bot);
-    if (decided.bot === undefined || !decided.reachable) {
-      return parsed.answer === "reject"
-        ? decided.gap
-        : yield* new ForkBotsError({
-            reason: "conflict",
-            message:
-              "The bot is no longer in the thread that asked, so nothing was approved and the request is closed.",
-          });
-    }
-    yield* forkBots
-      .sendMessage({ id: decided.bot.id, text: answerText(decided.gap, decided.install) })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new ForkBotsError({
-              reason: "dispatchFailed",
-              message: `The answer is saved, but the bot could not be told (${error.message}). Tell it in its chat.`,
-            }),
-        ),
-      );
-    return decided.gap;
+  });
+
+  const openGap = Effect.fn("ForkGaps.openGap")(function* (threadId: ThreadId) {
+    const stored = yield* lock.withPermits(1)(store.read());
+    return (
+      stored.gaps.findLast(
+        (candidate) => candidate.status === "open" && candidate.threadId === threadId,
+      ) ?? null
+    );
   });
 
   return ForkGaps.of({
@@ -448,6 +559,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.map((stored) => ({ gaps: stored.gaps }))),
     step,
     answerInstall,
+    openGap,
   });
 });
 

@@ -91,7 +91,7 @@ const BotGapStepTool = Tool.make("bot_gap_step", {
     ForkGaps.ForkGaps,
   ],
   description:
-    "When you lack a tool or capability, climb this ladder and call this for every step, so it is written on the project board: reuse (a bot, MCP tool or skill that exists), install, build (a child thread in a new worktree), hire (propose a bot, only after build failed). Follow the returned `next`. An install is never run on your own: send `install` with the exact command and how to undo it, end your turn, and run it yourself only after the user's yes arrives in this thread, once, unchanged. No clear way to undo it means do not ask. Each gap has a limit of steps and tokens; when it closes, stop and tell the user.",
+    "When you lack a tool or capability, climb this ladder and call this for every step, so it is written on the project board: reuse (a bot, MCP tool or skill that exists), install, build (a child thread in a new worktree), hire (propose a bot, only after build failed). Follow the returned `next`. An install is never run on your own: send `install` with the exact command and how to undo it, end your turn, and run it yourself only after the user's yes arrives in this thread, once, unchanged. Command and undo are one command each, with no ; & | or redirection; one install per gap; a system install only from approval-required. No clear way to undo it means do not ask. Each gap has a limit of steps and tokens; when it closes, stop and tell the user.",
   parameters: Schema.Struct({
     gap: ForkGapName.annotate({ description: "What is missing; the same text on every step." }),
     rung: ForkGapRung,
