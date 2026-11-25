@@ -496,7 +496,8 @@ function InstallNotice(
         Tu «sí» vale una vez, para este comando, en esta máquina y en el hilo que lo pidió.{" "}
         {install.runtimeMode === "approval-required"
           ? "El bot te pedirá permiso otra vez al ejecutarlo."
-          : `El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[install.runtimeMode]}».`}
+          : `El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[install.runtimeMode]}».`}{" "}
+        No subas el modo del hilo hasta que el bot termine.
       </p>
     </NoticeFrame>
   );
