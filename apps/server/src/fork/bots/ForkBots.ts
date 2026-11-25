@@ -138,7 +138,7 @@ export interface BotProposalDraft {
 const decodeProposal = Schema.decodeUnknownEffect(ForkBotProposal);
 /** UTF-8 bytes as the bot file saves them, indented. Decoded data always serialises. */
 const savedBytes = (value: unknown) =>
-  new TextEncoder().encode(JSON.stringify(value, null, 2)).byteLength;
+  new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`).byteLength;
 const decodeAnswerProposalInput = Schema.decodeUnknownEffect(ForkBotAnswerProposalInput);
 const decodeListInput = Schema.decodeUnknownEffect(ForkBotListInput);
 const decodeUpsertInput = Schema.decodeUnknownEffect(ForkBotUpsertInput);
@@ -1026,7 +1026,9 @@ const make = Effect.gen(function* () {
           });
         }
         const proposals = [...directory.proposals, proposal];
-        if (savedBytes({ proposals, vetoes: directory.vetoes }) > FORK_BOTS_PROPOSALS_MAX_BYTES) {
+        // Only pending ones count: refusals and answered ones are already few per project.
+        const pending = proposals.filter((candidate) => candidate.status === "pending");
+        if (savedBytes({ proposals: pending }) > FORK_BOTS_PROPOSALS_MAX_BYTES) {
           return yield* limitExceeded(
             "Bot proposals have no room left; the user must answer the pending ones first.",
           );

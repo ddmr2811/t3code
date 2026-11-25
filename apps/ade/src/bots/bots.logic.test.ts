@@ -11,6 +11,7 @@ import {
   NIGHTLY_CONSOLIDATION_PROMPT,
   botState,
   coordinatorRoutineInput,
+  isCustomNightly,
   isNightlyTask,
   nightlyPromptUpdate,
   parseMention,
@@ -195,6 +196,9 @@ describe("bots.logic", () => {
     } as unknown as ScheduledTask;
     expect(isNightlyTask(saved)).toBe(true);
     expect(isNightlyTask({ ...saved, prompt: "Resume la noche" })).toBe(false);
+    // The user rewrote its prompt: neither updated nor created again beside it.
+    expect(isCustomNightly({ ...saved, prompt: "Resume la noche" })).toBe(true);
+    expect(isCustomNightly(saved)).toBe(false);
     expect(nightlyPromptUpdate(saved)).toMatchObject({
       id: "task-nightly",
       prompt: NIGHTLY_CONSOLIDATION_PROMPT,

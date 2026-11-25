@@ -164,6 +164,11 @@ export function isNightlyTask(task: Pick<ScheduledTask, "prompt">): boolean {
   return task.prompt === NIGHTLY_CONSOLIDATION_PROMPT || task.prompt === NIGHTLY_PROMPT_BEFORE_F8;
 }
 
+/** Titled as the nightly task but with a prompt the user wrote: the ADE leaves it alone. */
+export function isCustomNightly(task: Pick<ScheduledTask, "title" | "prompt">): boolean {
+  return task.title.startsWith("Consolidación nocturna · ") && !isNightlyTask(task);
+}
+
 /** Brings an older nightly task to the current prompt; schedule, pause and the rest stay. */
 export function nightlyPromptUpdate(task: ScheduledTask): ScheduledTaskUpsertInput {
   return {

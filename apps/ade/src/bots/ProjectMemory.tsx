@@ -24,6 +24,7 @@ import { cn } from "../ui/utils.ts";
 import {
   type CoordinatorRoutine,
   NIGHTLY_CONSOLIDATION_PROMPT,
+  isCustomNightly,
   isNightlyTask,
   nightlyPromptUpdate,
   coordinatorRoutineInput,
@@ -323,6 +324,8 @@ function CoordinatorRoutines(props: {
       : [];
   const nightly = tasks.find(isNightlyTask);
   const nightlyOutdated = nightly !== undefined && nightly.prompt !== NIGHTLY_CONSOLIDATION_PROMPT;
+  // Creating another would run two nightly passes in one thread.
+  const customNightly = nightly === undefined && tasks.some(isCustomNightly);
   const disabled = busy || !loaded || !canSchedule || threadId === null;
 
   const create = async (routine: CoordinatorRoutine) => {
@@ -426,13 +429,15 @@ function CoordinatorRoutines(props: {
             type="button"
             className="ade-button-quiet m-0!"
             onClick={() => void create({ kind: "nightly" })}
-            disabled={disabled || (nightly !== undefined && !nightlyOutdated)}
+            disabled={disabled || customNightly || (nightly !== undefined && !nightlyOutdated)}
           >
-            {nightly === undefined
-              ? "Consolidación nocturna"
-              : nightlyOutdated
-                ? "Actualizar consolidación nocturna"
-                : "Consolidación nocturna activa"}
+            {customNightly
+              ? "Nocturna personalizada: edítala en Ajustes"
+              : nightly === undefined
+                ? "Consolidación nocturna"
+                : nightlyOutdated
+                  ? "Actualizar consolidación nocturna"
+                  : "Consolidación nocturna activa"}
           </button>
         </div>
       ) : (

@@ -907,19 +907,34 @@ describe("ForkBots", () => {
           expect(stored.vetoes).toHaveLength(FORK_BOTS_VETOES_PER_PROJECT);
           expect(stored.proposals).toHaveLength(1);
 
-          // Other projects' pending proposals fill the budget, with the bot file still far from full.
-          stored.proposals = Array.from({ length: 40 }, (_, index) => ({
+          const other = (index: number, status: "pending" | "rejected") => ({
             ...longest(100 + index),
+            ...(status === "pending" ? {} : { instructions: "" }),
             id: `proposal:other-${index}`,
             projectId: `proj-other-${index}`,
             proposedBy: coordinator.id,
             runtimeMode: "approval-required",
             modelSelection: { instanceId: codex, model: "gpt-5.4" },
-            status: "pending",
+            status,
             botId: null,
             createdAt: "1969-01-01T00:00:00.000Z",
-            decidedAt: null,
+            decidedAt: status === "pending" ? null : "1969-01-01T00:00:00.000Z",
+          });
+
+          // 50 other projects with all their refusals and an answered proposal, none pending: over
+          // the budget in bytes, yet proposing still works, as only pending proposals count.
+          stored.proposals = Array.from({ length: 50 }, (_, index) => other(index, "rejected"));
+          stored.vetoes = Array.from({ length: 50 * FORK_BOTS_VETOES_PER_PROJECT }, (_, index) => ({
+            projectId: `proj-other-${index % 50}`,
+            handle: `${index}`.padEnd(32, "x"),
+            name: wide(80),
           }));
+          yield* fs.writeFileString(botsFile, JSON.stringify(stored, null, 2));
+          yield* service.propose(longest(98), from);
+
+          // Other projects' pending proposals fill the budget, with the bot file still far from full.
+          stored.proposals = Array.from({ length: 40 }, (_, index) => other(index, "pending"));
+          stored.vetoes = [];
           yield* fs.writeFileString(botsFile, JSON.stringify(stored, null, 2));
           const full = yield* service.propose(longest(99), from).pipe(Effect.flip);
           expect(full).toMatchObject({
