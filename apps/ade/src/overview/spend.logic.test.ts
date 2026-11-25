@@ -141,6 +141,12 @@ describe("spendSummary with what the server cannot split", () => {
     ]);
     const flat = new Map([["env-1" as EnvironmentId, new Set(["opencode" as const])]]);
     expect(spendSummary([usage], flat).today.realUsd).toBe(3);
+    // A $0 reported turn grouped with a list-price one is still the subscription, not a charge.
+    const zeroReported = machine([
+      bucket("claude", "sonnet", "2026-11-25", 3, { providerReportedRecords: 1 }),
+    ]);
+    const claudeFlat = new Map([["env-1" as EnvironmentId, new Set(["claude" as const])]]);
+    expect(spendSummary([zeroReported], claudeFlat).today.realUsd).toBe(0);
   });
 
   it("keeps a reported charge that came with no tokens", () => {

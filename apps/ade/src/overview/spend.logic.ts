@@ -62,9 +62,9 @@ const KIND_ORDER: Record<SpendKind, number> = {
 const isListPriceOnly = (bucket: UsageBucket) =>
   bucket.costSource === "modelPriced" && bucket.providerReportedRecords === 0;
 
+// Only a wholly reported group proves a charge: a mixed one may hold a $0 reported turn.
 const hasReportedCost = (bucket: UsageBucket) =>
-  bucket.costUsd > 0 &&
-  (bucket.costSource === "providerReported" || (bucket.providerReportedRecords ?? 0) > 0);
+  bucket.costUsd > 0 && bucket.costSource === "providerReported";
 
 function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   // A reported charge is paid even on a machine with a flat plan for that provider.
