@@ -84,22 +84,20 @@ it.effect("refuses a thread that is not a bot's own, whatever bot it names", () 
   }).pipe(Effect.provide(handlersFor(null, [])), Effect.scoped),
 );
 
-const propose = (gapSteps: GapSteps | null, runtimeMode?: "full-access") => {
+const propose = (gapSteps: GapSteps | null) => {
   const proposed: Array<string> = [];
   return Effect.gen(function* () {
     const toolkit = yield* BotHandoffToolkit;
-    const result = yield* toolkit
-      .handle("bot_propose", { ...proposal, ...(runtimeMode === undefined ? {} : { runtimeMode }) })
-      .pipe(
-        Stream.unwrap,
-        Stream.runCollect,
-        Effect.map((parts) => parts.at(-1)?.result),
-      );
+    const result = yield* toolkit.handle("bot_propose", proposal).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.map((parts) => parts.at(-1)?.result),
+    );
     return { result, proposed };
   }).pipe(Effect.provide(handlersFor(gapSteps, proposed)), Effect.scoped);
 };
 
-it.effect("a gap reaches a bot proposal only from its hire rung, and never in full access", () =>
+it.effect("a thread climbing a gap proposes a bot only while its hire rung is in progress", () =>
   Effect.gen(function* () {
     const building = yield* propose([{ rung: "build", result: "trying" }]);
     expect(building.result).toMatchObject({ code: "capability_denied" });
@@ -110,6 +108,7 @@ it.effect("a gap reaches a bot proposal only from its hire rung, and never in fu
     ];
     expect((yield* propose(hiring)).proposed).toEqual(["editor"]);
     expect((yield* propose(null)).proposed).toEqual(["editor"]);
-    expect((yield* propose(hiring, "full-access")).proposed).toEqual([]);
+    const gaveUp = [...hiring, { rung: "hire", result: "failed" }];
+    expect((yield* propose(gaveUp)).proposed).toEqual([]);
   }),
 );

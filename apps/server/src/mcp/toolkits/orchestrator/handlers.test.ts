@@ -28,7 +28,7 @@ interface Seen {
   }>;
 }
 
-/** The handlers as `from` calls them. Ana's thread is climbing a gap; nobody else is. */
+/** The handlers as `from` calls them. Ana is on the build rung of a gap, Beto on its reuse rung. */
 const handlersFor = (from: ThreadId, { sent, delegated }: Seen) =>
   McpToolAccess.HandlersLayer.layer(OrchestratorHandlers.layer).pipe(
     Layer.provideMerge(
@@ -54,7 +54,14 @@ const handlersFor = (from: ThreadId, { sent, delegated }: Seen) =>
         }),
         Layer.mock(ForkGaps.ForkGaps)({
           openGap: (id) =>
-            Effect.succeed(id === ana ? ({ name: "vídeo", steps: [] } as never) : null),
+            Effect.succeed(
+              id === plain
+                ? null
+                : ({
+                    name: "vídeo",
+                    steps: [{ rung: id === ana ? "build" : "reuse", result: "trying" }],
+                  } as never),
+            ),
         }),
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
           delegateTask: (_scope, input) =>
@@ -92,26 +99,36 @@ const send = (from: ThreadId, to: ThreadId) => {
   }).pipe(Effect.provide(handlersFor(from, seen)), Effect.scoped);
 };
 
-const delegate = (from: ThreadId) => {
+const delegate = (from: ThreadId, target?: { environmentId: EnvironmentId }) => {
   const seen: Seen = { sent: [], delegated: [] };
   return Effect.gen(function* () {
     const toolkit = yield* OrchestratorToolkit;
     yield* toolkit
-      .handle("delegate_task", { task: "hazlo", isolation: "shared", runtimeMode: "full-access" })
+      .handle("delegate_task", {
+        task: "hazlo",
+        isolation: "shared",
+        runtimeMode: "full-access",
+        ...(target === undefined ? {} : { target }),
+      })
       // The stand-in service returns no task, so only what reached it matters.
       .pipe(Stream.unwrap, Stream.runCollect, Effect.exit);
     return seen.delegated;
   }).pipe(Effect.provide(handlersFor(from, seen)), Effect.scoped);
 };
 
-it.effect("a thread climbing a gap builds only in a new worktree that asks for everything", () =>
+it.effect("a thread on a gap's build rung builds here, in a new worktree that asks", () =>
   Effect.gen(function* () {
     expect(yield* delegate(ana)).toMatchObject([
       { isolation: "worktree", runtimeMode: "approval-required" },
     ]);
-    expect(yield* delegate(plain)).toMatchObject([
-      { isolation: "shared", runtimeMode: "full-access" },
-    ]);
+    const remote = { environmentId: EnvironmentId.make("environment:other") };
+    expect(yield* delegate(ana, remote)).toEqual([]);
+    // Other rungs, and threads with no gap, delegate as they always did.
+    for (const from of [beto, plain]) {
+      expect(yield* delegate(from, remote)).toMatchObject([
+        { isolation: "shared", runtimeMode: "full-access" },
+      ]);
+    }
   }),
 );
 

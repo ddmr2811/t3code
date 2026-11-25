@@ -6,6 +6,7 @@ import {
   FORK_GAPS_MAX_FILE_BYTES,
   type ForkGapStepInput,
   ProjectId,
+  ProviderInstanceId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -25,9 +26,12 @@ import * as ForkGaps from "./ForkGaps.ts";
 const project = ProjectId.make("proj-a");
 const anaThread = ThreadId.make("thread-ana");
 const betoThread = ThreadId.make("thread-beto");
+const caroThread = ThreadId.make("thread-caro");
 const asking = "approval-required" as const;
-const ana = { threadId: anaThread, projectId: project, runtimeMode: asking };
-const beto = { threadId: betoThread, projectId: project, runtimeMode: asking };
+const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+const ana = { threadId: anaThread, projectId: project, runtimeMode: asking, modelSelection };
+const beto = { ...ana, threadId: betoThread };
+const caro = { ...ana, threadId: caroThread };
 
 const tried = (
   rung: ForkGapStepInput["rung"],
@@ -52,12 +56,18 @@ const withGaps = <A, E>(
     readonly bots: Array<{ id: string; name: string; threadId: ThreadId; archived: boolean }>;
     /** Every message a thread received, as [threadId, text]. */
     readonly sent: Array<readonly [ThreadId, string]>;
+    /** The id of every message the orchestrator committed, also when its reply was then lost. */
+    readonly committed: Array<string>;
+    /** Threads with a turn running now. */
+    readonly busy: Set<ThreadId>;
+    /** Each thread's model now, which a failover may change after the bot asked. */
+    readonly threadModels: Map<ThreadId, string>;
     /** New tokens each of the thread's finished turns reports. */
     readonly turnTokens: Array<number>;
     /** Each thread's mode now, which its user may raise after the bot asked. */
     readonly threadModes: Map<ThreadId, RuntimeMode>;
-    /** While set, a message to a thread fails, as when the provider is down. */
-    readonly outage: { down: boolean };
+    /** `down`: a message fails before it is committed. `lostReply`: it fails after. */
+    readonly outage: { mode: "none" | "down" | "lostReply" };
     readonly gapsFile: string;
     readonly fs: FileSystem.FileSystem;
   }) => Effect.Effect<A, E>,
@@ -65,11 +75,15 @@ const withGaps = <A, E>(
   const bots = [
     { id: "bot:ana", name: "Ana", threadId: anaThread, archived: false },
     { id: "bot:beto", name: "Beto", threadId: betoThread, archived: false },
+    { id: "bot:caro", name: "Caro", threadId: caroThread, archived: false },
   ];
+  const committed: Array<string> = [];
+  const busy = new Set<ThreadId>();
+  const threadModels = new Map<ThreadId, string>();
   const sent: Array<readonly [ThreadId, string]> = [];
   const turnTokens: Array<number> = [];
   const threadModes = new Map<ThreadId, RuntimeMode>();
-  const outage = { down: false };
+  const outage: { mode: "none" | "down" | "lostReply" } = { mode: "none" };
   const mocks = Layer.mergeAll(
     Layer.mock(ForkBots.ForkBots)({
       list: () =>
@@ -84,27 +98,36 @@ const withGaps = <A, E>(
       getById: () => Effect.succeedSome({ id: project, title: "Proyecto" } as never),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadRecords: ((threadId: ThreadId) =>
+      getThreadShell: ((threadId: ThreadId) =>
         Effect.succeed({
-          thread: {
-            projectId: project,
-            runtimeMode: threadModes.get(threadId) ?? asking,
-            archivedAt: null,
-            deletedAt: null,
+          projectId: project,
+          runtimeMode: threadModes.get(threadId) ?? asking,
+          modelSelection: {
+            ...modelSelection,
+            model: threadModels.get(threadId) ?? modelSelection.model,
           },
+          activeRunId: busy.has(threadId) ? "run:now" : null,
+          archivedAt: null,
+          deletedAt: null,
+        } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadShell"],
+      getThreadRecords: (() =>
+        Effect.succeed({
           providerTurns: turnTokens.map((outputTokens) => ({
             // Later than any gap: the test clock starts at the epoch.
             completedAt: DateTime.makeUnsafe("2026-11-25T00:00:00.000Z"),
             turnTokenUsage: { inputTokens: 0, outputTokens },
           })),
         } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
-      sendToThread: ((input: { threadId: ThreadId; text: string }) =>
-        outage.down
-          ? Effect.fail({ _tag: "ProviderDown" } as never)
-          : Effect.sync(() => {
-              sent.push([input.threadId, input.text]);
-              return { delivery: "queued" } as never;
-            })) as ThreadManagement.ThreadManagementServiceShape["sendToThread"],
+      sendToThread: ((input: { threadId: ThreadId; text: string; messageId: string }) =>
+        Effect.suspend(() => {
+          if (outage.mode === "down") return Effect.fail({ _tag: "ProviderDown" } as never);
+          // The orchestrator keeps one message per id, as its command receipts do.
+          if (!committed.includes(input.messageId)) sent.push([input.threadId, input.text]);
+          committed.push(input.messageId);
+          return outage.mode === "lostReply"
+            ? Effect.fail({ _tag: "ProjectionReadFailed" } as never)
+            : Effect.succeed({ delivery: "started" } as never);
+        })) as ThreadManagement.ThreadManagementServiceShape["sendToThread"],
     }),
   );
   return Effect.gen(function* () {
@@ -115,6 +138,9 @@ const withGaps = <A, E>(
       board: yield* ForkCoordination.ForkCoordination,
       bots,
       sent,
+      committed,
+      busy,
+      threadModels,
       turnTokens,
       threadModes,
       outage,
@@ -241,32 +267,53 @@ it.effect("a yes is used once, for its own command, in the thread that asked", (
   ),
 );
 
-it.effect("a yes is cancelled when the bot left its thread or the thread's mode changed", () =>
-  withGaps(({ gaps, bots, sent, threadModes }) =>
+it.effect("a yes is cancelled when the bot left its thread, or its mode or model changed", () =>
+  withGaps(({ gaps, bots, sent, threadModes, threadModels }) =>
     Effect.gen(function* () {
       const left = yield* askInstall(gaps, ana);
       const raised = yield* askInstall(gaps, beto);
+      const failedOver = yield* askInstall(gaps, caro);
       // Editing a bot's project, model or permissions gives it a new thread.
       bots[0]!.threadId = ThreadId.make("thread-ana-new");
       threadModes.set(betoThread, "full-access");
-      for (const id of [left, raised]) {
+      threadModels.set(caroThread, "gpt-5.5");
+      for (const id of [left, raised, failedOver]) {
         expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("conflict");
       }
       expect(sent).toEqual([]);
       const answers = (yield* gaps.list).gaps.map((gap) => gap.steps.at(-1)?.install?.answer);
-      expect(answers).toEqual(["cancelled", "cancelled"]);
+      expect(answers).toEqual(["cancelled", "cancelled", "cancelled"]);
     }),
   ),
 );
 
-it.effect("a yes that could not be delivered is not spent", () =>
+it.effect("a yes that could not be delivered is not spent, and a retry delivers it once", () =>
   withGaps(({ gaps, sent, outage }) =>
     Effect.gen(function* () {
       const id = yield* askInstall(gaps, ana);
-      outage.down = true;
-      expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("dispatchFailed");
+      for (const mode of ["down", "lostReply"] as const) {
+        outage.mode = mode;
+        expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe(
+          "dispatchFailed",
+        );
+        expect((yield* gaps.list).gaps[0]?.steps.at(-1)?.install?.answer).toBe("pending");
+      }
+      outage.mode = "none";
+      yield* gaps.answerInstall({ id, answer: "approve" });
+      expect(sent).toHaveLength(1);
+    }),
+  ),
+);
+
+it.effect("a yes waits for the bot's turn to end, so it never sits in a queue", () =>
+  withGaps(({ gaps, sent, busy }) =>
+    Effect.gen(function* () {
+      const id = yield* askInstall(gaps, ana);
+      busy.add(anaThread);
+      expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("conflict");
+      expect(sent).toEqual([]);
       expect((yield* gaps.list).gaps[0]?.steps.at(-1)?.install?.answer).toBe("pending");
-      outage.down = false;
+      busy.delete(anaThread);
       yield* gaps.answerInstall({ id, answer: "approve" });
       expect(sent).toHaveLength(1);
     }),
@@ -290,16 +337,17 @@ it.effect("closes a gap at its attempt limit and keeps it closed", () =>
   ),
 );
 
-it.effect("a gap closed by its token limit approves nothing that was still waiting", () =>
+it.effect("a yes for a gap that spent its tokens meanwhile closes it and approves nothing", () =>
   withGaps(({ gaps, turnTokens, sent }) =>
     Effect.gen(function* () {
       const id = yield* askInstall(gaps, ana);
+      // The turn that asked ended over the limit; the bot recorded nothing since.
       turnTokens.push(FORK_GAP_MAX_TOKENS, 1);
-      expect(yield* reasonOf(gaps.step(tried("build", "trying"), ana))).toBe("limitExceeded");
+      expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("conflict");
+      expect(sent).toEqual([]);
       const [gap] = (yield* gaps.list).gaps;
       expect(gap?.status).toBe("exhausted");
-      expect(yield* reasonOf(gaps.answerInstall({ id, answer: "approve" }))).toBe("invalidInput");
-      expect(sent).toEqual([]);
+      expect(gap?.steps.at(-1)?.install?.answer).toBe("cancelled");
     }),
   ),
 );
@@ -319,6 +367,14 @@ it.effect("climbs in order, and the board keeps every attempt", () =>
       expect(yield* refused("hire", "trying")).toBe("invalidInput");
       yield* gaps.step(tried("build", "failed", "el hijo no pudo"), ana);
       const hired = yield* gaps.step(tried("hire", "trying", "se propone"), ana);
+      // Nothing moves while an install waits for its answer, not even giving it up for the next rung.
+      yield* askInstall(gaps, beto);
+      for (const [rung, result] of [
+        ["install", "failed"],
+        ["build", "trying"],
+      ] as const) {
+        expect(yield* reasonOf(gaps.step(tried(rung, result), beto))).toBe("invalidInput");
+      }
       const entry = (yield* board.list({})).entries.find((found) => found.id === hired.gap.id);
       for (const note of ["primer intento", "no hay skill", "hijo lanzado", "el hijo no pudo"]) {
         expect(entry?.completedSummary).toContain(note);
@@ -327,34 +383,43 @@ it.effect("climbs in order, and the board keeps every attempt", () =>
   ),
 );
 
-it.effect("makes room by dropping solved gaps only, so a closed gap stays closed", () =>
+it.effect("makes room only with gaps solved before today, so no limit is lost with them", () =>
   withGaps(({ gaps, gapsFile, fs }) =>
     Effect.gen(function* () {
-      const at = "2026-11-01T00:00:00.000Z";
-      const old = (id: string, status: "solved" | "exhausted", name: string) => ({
+      // The test clock starts at the epoch: these are from before today, and from today.
+      const before = "1969-12-01T00:00:00.000Z";
+      const today = "1970-01-01T00:00:00.000Z";
+      const old = (id: string, status: "solved" | "exhausted", at: string) => ({
         id,
         botId: "bot:ana",
         projectId: project,
         threadId: anaThread,
-        name,
+        name: id,
         status,
         steps: [{ rung: "reuse", result: "worked", note: "x".repeat(60), at }],
         createdAt: at,
         updatedAt: at,
       });
-      // Just under the file limit: the oldest is exhausted, every other one solved.
-      const stored = [old("gap:closed", "exhausted", "convertir vídeo")];
+      const stored = [
+        old("gap:closed", "exhausted", before),
+        old("gap:today-1", "solved", today),
+        old("gap:today-2", "solved", today),
+        old("gap:today-3", "solved", today),
+      ];
       const bytes = () => JSON.stringify({ version: 1, gaps: stored }, null, 2).length;
       while (bytes() < FORK_GAPS_MAX_FILE_BYTES - 8 * 1024) {
-        stored.push(old(`gap:solved-${stored.length}`, "solved", `resuelto ${stored.length}`));
+        stored.push(old(`gap:solved-${stored.length}`, "solved", before));
       }
       yield* fs.makeDirectory(gapsFile.replace(/gaps\.json$/, ""), { recursive: true });
       yield* fs.writeFileString(gapsFile, JSON.stringify({ version: 1, gaps: stored }, null, 2));
 
       yield* gaps.step({ ...tried("reuse", "trying"), gap: "otra cosa" }, beto);
-      const kept = (yield* gaps.list).gaps;
+      const kept = (yield* gaps.list).gaps.map((gap) => gap.id);
       expect(kept.length).toBeLessThan(stored.length);
-      expect(kept.some((gap) => gap.id === "gap:closed")).toBe(true);
+      expect(kept).toEqual(
+        expect.arrayContaining(["gap:closed", "gap:today-1", "gap:today-2", "gap:today-3"]),
+      );
+      // Ana already opened three gaps today, whatever was dropped to make room.
       expect(yield* reasonOf(gaps.step(tried("reuse", "trying"), ana))).toBe("limitExceeded");
     }),
   ),

@@ -67,7 +67,7 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
           message: "Only the project's coordinator can propose a bot.",
         });
       }
-      yield* refuseProposalOutsideLadder(draft.runtimeMode);
+      yield* refuseProposalOutsideLadder();
       const proposal = yield* forkBots
         .propose(draft, { threadId: caller.id, projectId: caller.projectId, limits })
         .pipe(Effect.mapError(toFailure));
@@ -89,6 +89,7 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
           threadId: caller.id,
           projectId: caller.projectId,
           runtimeMode: caller.runtimeMode,
+          modelSelection: caller.modelSelection,
         })
         .pipe(Effect.mapError(toFailure));
       const installId = gap.steps.at(-1)?.install?.id;

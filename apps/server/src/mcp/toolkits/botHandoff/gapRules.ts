@@ -1,20 +1,16 @@
-import {
-  OrchestratorMcpFailure,
-  type OrchestratorMcpDelegateTaskInput,
-  type RuntimeMode,
-} from "@t3tools/contracts";
+import { OrchestratorMcpFailure, type OrchestratorMcpDelegateTaskInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as ForkGaps from "../../../fork/gaps/ForkGaps.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-/** The gap the calling thread is climbing, if any. A store that cannot be read refuses the call. */
-const callerGap = Effect.fnUntraced(function* () {
+/** The last step of the gap the calling thread climbs, if any. An unreadable store refuses. */
+const callerGapStep = Effect.fnUntraced(function* () {
   const forkGaps = yield* Effect.serviceOption(ForkGaps.ForkGaps);
   const caller = (yield* McpInvocationContext.McpInvocationContext).thread?.threadId;
   if (Option.isNone(forkGaps) || caller === undefined) return null;
-  return yield* forkGaps.value
+  const gap = yield* forkGaps.value
     .openGap(caller)
     .pipe(
       Effect.mapError(
@@ -22,31 +18,35 @@ const callerGap = Effect.fnUntraced(function* () {
           new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
       ),
     );
+  return gap === null ? null : { gap: gap.name, last: gap.steps.at(-1) };
 });
 
-/** Fork: while a thread climbs a gap, what it builds runs in a new worktree and asks for everything. */
+/**
+ * Fork: while a thread is on the build rung of a gap, what it delegates runs here, in a new
+ * worktree, and asks for everything. Any other delegation is left as it is.
+ */
 export const delegateWithinGap = Effect.fnUntraced(function* (
   input: OrchestratorMcpDelegateTaskInput,
 ) {
-  if ((yield* callerGap()) === null) return input;
+  const step = (yield* callerGapStep())?.last;
+  if (step?.rung !== "build" || step.result !== "trying") return input;
+  if (input.target?.environmentId !== undefined) {
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message:
+        "Estás construyendo lo que falta de un hueco: eso se delega en esta máquina, no en otra. Apunta antes cómo acabó el peldaño build.",
+    });
+  }
   return { ...input, isolation: "worktree" as const, runtimeMode: "approval-required" as const };
 });
 
-/** Fork: a proposed bot never gets full access, and a gap reaches it only through its hire rung. */
-export const refuseProposalOutsideLadder = Effect.fnUntraced(function* (
-  runtimeMode: RuntimeMode | undefined,
-) {
-  if (runtimeMode === "full-access") {
-    return yield* new OrchestratorMcpFailure({
-      code: "runtime_mode_escalation_denied",
-      message: "Un bot propuesto nunca va en full-access.",
-    });
-  }
-  const gap = yield* callerGap();
-  if (gap !== null && !gap.steps.some((step) => step.rung === "hire" && step.result === "trying")) {
+/** Fork: a thread climbing a gap proposes a bot only while its hire rung is the one in progress. */
+export const refuseProposalOutsideLadder = Effect.fnUntraced(function* () {
+  const step = yield* callerGapStep();
+  if (step !== null && (step.last?.rung !== "hire" || step.last.result !== "trying")) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: `Tienes abierto el hueco «${gap.name}»: un bot se propone solo desde su peldaño hire, después de que construir falle.`,
+      message: `Tienes abierto el hueco «${step.gap}»: un bot se propone solo con su peldaño hire en curso, después de que construir falle.`,
     });
   }
 });

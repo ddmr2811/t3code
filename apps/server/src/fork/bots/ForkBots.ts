@@ -949,6 +949,12 @@ const make = Effect.gen(function* () {
     });
     const coordinator = yield* proposerOf(yield* storeLock.withPermits(1)(fileStore.read()));
     const runtimeMode = draft.runtimeMode ?? "approval-required";
+    if (runtimeMode === "full-access") {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: "A proposed bot never runs in full-access.",
+      });
+    }
     if (
       isRuntimeModeAbove(runtimeMode, coordinator.runtimeMode) ||
       (from.limits !== undefined && isRuntimeModeAbove(runtimeMode, from.limits.runtimeMode))
@@ -1135,6 +1141,14 @@ const make = Effect.gen(function* () {
           yield* threadCeiling(coordinator),
         ]) {
           if (isRuntimeModeAbove(runtimeMode, ceiling)) runtimeMode = ceiling;
+        }
+        // Also for a proposal saved before this rule: only the user gives a bot full access.
+        if (runtimeMode === "full-access") {
+          return yield* new ForkBotsError({
+            reason: "permissionDenied",
+            message:
+              "A proposed bot never runs in full-access. Say no to it; you can create the bot yourself.",
+          });
         }
         const id = `bot:${SecureRandom.uuidV4Unsafe()}`;
         const accepted: ForkBotProposal = { ...proposal, status: "accepted", botId: id, decidedAt };

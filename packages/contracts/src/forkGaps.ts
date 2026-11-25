@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ForkBotId } from "./forkBots.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: what a bot does when it lacks a tool, one rung at a time, in `<stateDir>/fork/gaps.json`. */
@@ -69,8 +70,10 @@ export type ForkGapInstallDraft = typeof ForkGapInstallDraft.Type;
 export const ForkGapInstall = Schema.Struct({
   ...ForkGapInstallDraft.fields,
   id: ForkGapInstallId,
-  /** The asking thread's mode then; a yes is delivered only while it is still that. */
+  /** The asking thread's mode, provider and model then; a yes is delivered only while they hold. */
   runtimeMode: RuntimeMode,
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
   /** Answered once. `cancelled`: the gap closed, or the bot or its thread changed since it asked. */
   answer: Schema.Literals(["pending", "approved", "rejected", "cancelled"]),
   decidedAt: Schema.NullOr(IsoDateTime),
