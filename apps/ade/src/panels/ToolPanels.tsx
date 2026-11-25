@@ -176,7 +176,9 @@ function Activity() {
           <li key={key}>
             <button type="button" className="ade-activity-row" onClick={() => setSelected(key)}>
               <time dateTime={thread.updatedAt}>{clockTime(thread.updatedAt)}</time>
-              <ThreadStateBadge kind={resolveThreadStatusKind(thread)} />
+              <span className="ade-thread-mark">
+                <ThreadStateBadge kind={resolveThreadStatusKind(thread)} />
+              </span>
               <span className="ade-activity-title">{thread.title}</span>
               <span className="ade-activity-project">
                 <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />

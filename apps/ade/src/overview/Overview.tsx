@@ -318,7 +318,9 @@ const SessionRow = memo(function SessionRow(props: {
         className="ade-session"
         onClick={() => props.onOpen(sessionKey(props.thread))}
       >
-        <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} />
+        <span className="ade-thread-mark">
+          <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} />
+        </span>
         <span className="ade-session-title">{props.thread.title}</span>
         <SessionMeta thread={props.thread} />
       </button>
