@@ -55,6 +55,8 @@ const GITHUB_TOOLS = Object.keys(GROUP_OF);
 
 export interface Classified {
   readonly group: Group;
+  /** Changes nothing in the app, so a thread in plan mode may still run it. */
+  readonly reads: boolean;
   /** Goes to the user's inbox even when the bot's group is `allow`. */
   readonly alwaysAsk: boolean;
 }
@@ -67,7 +69,11 @@ export function classifyGithub(action: string, args: Args): Classified | undefin
   const closes =
     (action === "issue_write" || action === "update_pull_request") && args.state === "closed";
   const effective = closes ? "merge-delete" : group;
-  return { group: effective, alwaysAsk: effective === "merge-delete" || PUSHES.has(action) };
+  return {
+    group: effective,
+    reads: effective === "read",
+    alwaysAsk: effective === "merge-delete" || PUSHES.has(action),
+  };
 }
 
 const isProtected = (branch: unknown) =>

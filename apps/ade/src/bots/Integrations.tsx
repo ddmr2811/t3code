@@ -57,8 +57,9 @@ export function IntegrationLevels(props: {
             ))}
           </div>
           <p className="ade-bot-meta">
-            Fusionar, borrar, cerrar y subir archivos te lo pregunta siempre. Nunca escribe en main
-            ni en dev. El bot no ve el token.
+            Fusionar, borrar, cerrar y subir archivos te lo pregunta siempre. «Sin preguntar» solo
+            vale para escribir si el hilo del bot va en auto o acceso total y no en modo plan; si
+            no, también pregunta. Nunca escribe en main ni en dev. El bot no ve el token.
           </p>
         </fieldset>
       ))}

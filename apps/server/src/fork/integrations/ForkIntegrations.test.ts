@@ -2,19 +2,46 @@
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 
-import { NodeServices } from "@effect/platform-node";
+import { NodeHttpServer, NodeServices } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { type ForkBot, type ForkBotIntegrations, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  FORK_INTEGRATIONS_REQUEST_HISTORY,
+  EnvironmentId,
+  type ForkBot,
+  type ForkBotIntegrations,
+  ProjectId,
+  type ProviderInteractionMode,
+  ProviderInstanceId,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import { liveThreadShell } from "../../mcp/McpToolAccess.testkit.ts";
+import * as IntegrationsHandlers from "../../mcp/toolkits/integrations/handlers.ts";
+import { IntegrationsToolkit } from "../../mcp/toolkits/integrations/tools.ts";
+import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkBots from "../bots/ForkBots.ts";
+import * as ForkCoordination from "../coordination/ForkCoordination.ts";
+import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkIntegrations from "./ForkIntegrations.ts";
 
 // The official github-mcp-server release binary. Without it these tests cannot run: they are
@@ -79,52 +106,110 @@ const fakeGithub = Effect.acquireRelease(
     }),
 );
 
-const botThread = ThreadId.make("thread:bot");
+const codex = ProviderInstanceId.make("codex");
+const projectA = ProjectId.make("proj-a");
+const projectB = ProjectId.make("proj-b");
+const fullAccess = { runtimeMode: "full-access", interactionMode: "default" } as const;
+const baseBot = {
+  handle: "ana",
+  name: "Ana",
+  role: "Revisa",
+  instructions: "Sé breve.",
+  projectId: projectA,
+  modelSelection: { instanceId: codex, model: "gpt-5.4" },
+};
 
-const bot = (integrations: ForkBotIntegrations, patch: Partial<ForkBot> = {}) =>
-  ({
-    id: "bot:ana",
-    handle: "ana",
-    threadId: botThread,
-    archived: false,
-    integrations,
-    ...patch,
-  }) as ForkBot;
+interface Harness {
+  readonly service: ForkIntegrations.ForkIntegrations["Service"];
+  /** The real bot directory: a test edits the bot through it, as the ADE does. */
+  readonly forkBots: ForkBots.ForkBots["Service"];
+  readonly github: { readonly seen: Array<Seen> };
+  /** A bot with these permissions and a live thread of its own. */
+  readonly makeBot: (
+    handle: string,
+    integrations: ForkBotIntegrations,
+  ) => Effect.Effect<ForkBot & { readonly threadId: ThreadId }>;
+  /** The bot `withIntegrations` was asked for. */
+  readonly bot: ForkBot & { readonly threadId: ThreadId };
+  /** Every message queued into a thread after its first one, as the orchestrator received it. */
+  readonly told: Array<{ readonly threadId: ThreadId; readonly text: string }>;
+  /** Every thread launched, with the message that opened it. */
+  readonly launched: Array<{ readonly threadId: ThreadId; readonly text: string }>;
+  /** The modes each thread runs in now; its user may change them. */
+  readonly threadModes: Map<
+    ThreadId,
+    { runtimeMode: RuntimeMode; interactionMode: ProviderInteractionMode }
+  >;
+  readonly logs: Array<string>;
+  readonly stateFiles: Effect.Effect<string>;
+}
 
-const withIntegrations = <A, E>(
+/**
+ * The real integrations service, bot directory, secret store and github-mcp-server. Only the
+ * orchestrator behind the bots is stood in for: threads it launches and messages it queues.
+ */
+const withIntegrations = <A, E, R>(
   integrations: ForkBotIntegrations,
-  use: (harness: {
-    readonly service: ForkIntegrations.ForkIntegrations["Service"];
-    readonly github: { readonly seen: Array<Seen> };
-    /** What the bot's thread was told, as the server queued it. */
-    readonly told: Array<string>;
-    readonly logs: Array<string>;
-    readonly stateFiles: Effect.Effect<string>;
-    /** The bot as the directory holds it; a test changes it to change its permissions. */
-    readonly bots: Array<ForkBot>;
-  }) => Effect.Effect<A, E>,
+  use: (harness: Harness) => Effect.Effect<A, E, R>,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const github = yield* fakeGithub;
-      const told: Array<string> = [];
+      const told: Harness["told"] = [];
+      const launched: Harness["launched"] = [];
       const logs: Array<string> = [];
-      const bots = [bot(integrations)];
+      const threadModes: Harness["threadModes"] = new Map();
+      const threadProjects = new Map<ThreadId, ProjectId>();
+      const shellOf = (threadId: ThreadId) => ({
+        ...liveThreadShell(threadId, threadModes.get(threadId)),
+        projectId: threadProjects.get(threadId) ?? projectA,
+      });
+      const orchestrator = Layer.mergeAll(
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (projectId) => Effect.succeedSome({ id: projectId, title: "P" } as never),
+        }),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: (input) =>
+            Effect.sync(() => {
+              const threadId = ThreadId.make(`thread-bot-${launched.length + 1}`);
+              launched.push({ threadId, text: input.initialMessage?.text ?? "" });
+              threadProjects.set(threadId, input.projectId);
+              threadModes.set(threadId, {
+                runtimeMode: input.runtimeMode,
+                interactionMode: input.interactionMode ?? "default",
+              });
+              return { threadId } as never;
+            }),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.succeed(threadProjects.has(threadId) ? shellOf(threadId) : null),
+          sendToThread: ((input: { threadId: ThreadId; text: string }) =>
+            Effect.sync(() => {
+              told.push({ threadId: input.threadId, text: input.text });
+              return { delivery: "queued" } as never;
+            })) as ThreadManagement.ThreadManagementServiceShape["sendToThread"],
+        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          listInstances: Effect.succeed([{ instanceId: codex }] as never),
+        }),
+        // An empty catalog is one still loading, which the bot directory accepts.
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ServerSettingsService.ServerSettingsService)({
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        }),
+        Layer.mock(ScheduledTasks.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] } as never),
+        }),
+      );
       const layer = ForkIntegrations.layerWith({
         githubCommand: binary ?? "",
         githubHost: github.host,
       }).pipe(
         Layer.provide(ServerSecretStore.layer),
-        Layer.provide(
-          Layer.mock(ForkBots.ForkBots)({
-            list: () => Effect.succeed({ bots, handoffs: [], proposals: [], updatedAt: null }),
-            sendMessage: (input) =>
-              Effect.sync(() => {
-                told.push(input.text);
-                return { bot: bots[0]!, threadId: botThread, queued: true };
-              }),
-          }),
-        ),
+        Layer.provideMerge(ForkBots.layer),
+        Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
+        Layer.provideMerge(orchestrator),
         Layer.provideMerge(
           ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-fork-integrations-" }),
         ),
@@ -137,11 +222,23 @@ const withIntegrations = <A, E>(
       );
       return yield* Effect.gen(function* () {
         const service = yield* ForkIntegrations.ForkIntegrations;
+        const forkBots = yield* ForkBots.ForkBots;
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* service.connect({ app: "github", token: TOKEN });
         github.seen.length = 0;
+        const makeBot: Harness["makeBot"] = (handle, granted) =>
+          Effect.gen(function* () {
+            const created = yield* forkBots.upsert({
+              ...baseBot,
+              handle,
+              runtimeMode: "full-access",
+              integrations: granted,
+            });
+            const { bot, threadId } = yield* forkBots.sendMessage({ id: created.id, text: "hola" });
+            return { ...bot, threadId };
+          }).pipe(Effect.orDie);
         // Everything the server wrote outside its secret store.
         const stateFiles = fs.readDirectory(path.join(config.stateDir, "fork")).pipe(
           Effect.flatMap(
@@ -150,7 +247,18 @@ const withIntegrations = <A, E>(
           Effect.map((files) => files.join("\n")),
           Effect.orDie,
         );
-        return yield* use({ service, github, told, logs, stateFiles, bots });
+        return yield* use({
+          service,
+          forkBots,
+          github,
+          makeBot,
+          bot: yield* makeBot("ana", integrations),
+          told,
+          launched,
+          threadModes,
+          logs,
+          stateFiles,
+        });
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -166,9 +274,9 @@ const writes = (seen: ReadonlyArray<Seen>) =>
 
 describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegrations", () => {
   it.live("runs an allowed read, and the token reaches GitHub's process and nothing else", () =>
-    withIntegrations({ github: { read: "allow" } }, ({ service, github, logs, stateFiles }) =>
+    withIntegrations({ github: { read: "allow" } }, ({ service, bot, github, logs, stateFiles }) =>
       Effect.gen(function* () {
-        const result = yield* service.call(botThread, {
+        const result = yield* service.call(bot.threadId, fullAccess, {
           app: "github",
           action: "get_me",
           arguments: {},
@@ -205,34 +313,141 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
   );
 
   it.live("refuses what the bot's card does not grant, without calling GitHub", () =>
-    withIntegrations({ github: { read: "allow" } }, ({ service, github }) =>
+    withIntegrations({ github: { read: "allow" } }, ({ service, bot, github }) =>
       Effect.gen(function* () {
         // A group left out of the card, and a real github-mcp-server tool nobody classified.
         for (const action of ["add_issue_comment", "create_repository"]) {
-          const result = yield* service.call(botThread, { ...comment, action });
+          const result = yield* service.call(bot.threadId, fullAccess, { ...comment, action });
           expect(result.status).toBe("denied");
         }
         const stranger = yield* service
-          .call(ThreadId.make("thread:not-a-bot"), comment)
+          .call(ThreadId.make("thread:not-a-bot"), fullAccess, comment)
           .pipe(Effect.flip);
         expect(stranger.reason).toBe("permissionDenied");
         expect(github.seen.filter((request) => request.method !== "HEAD")).toEqual([]);
         expect((yield* service.list).requests).toEqual([]);
 
         // Search offers only what the card grants.
-        const found = yield* service.search(botThread, "issue comment pull request merge");
+        const found = yield* service.search(bot.threadId, "issue comment pull request merge");
         expect(found.length).toBeGreaterThan(0);
         expect(found.every((action) => action.group === "read")).toBe(true);
       }),
     ),
   );
 
+  // Through /mcp with the credential the server issues a provider, so the thread's modes are
+  // the ones the real handler reads, not ones this test hands the service.
+  it.live(
+    "a thread in plan mode, or one that asks before shell changes, writes nothing unasked",
+    () =>
+      withIntegrations({ github: { read: "allow", comment: "allow" } }, (harness) =>
+        Effect.gen(function* () {
+          const { bot, github, service, threadModes } = harness;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
+          const issued = yield* registry.issue({
+            threadId: bot.threadId,
+            providerInstanceId: codex,
+          });
+          yield* HttpRouter.serve(
+            McpHttpServer.layerMcpTransport(
+              McpHttpServer.toolkitRegistration(IntegrationsToolkit, IntegrationsHandlers.layer),
+            ).pipe(Layer.provide(ServerSettingsService.layerTest())),
+            { disableListenLog: true, disableLogger: true },
+          ).pipe(Layer.build);
+          const httpClient = yield* HttpClient.HttpClient;
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: issued.config.authorizationHeader,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"bot","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const call = (input: object) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 2,
+                    method: "tools/call",
+                    params: { name: "integration_call", arguments: input },
+                  }),
+                  "application/json",
+                ),
+              })
+              .pipe(
+                Effect.flatMap((response) => response.text),
+                Effect.map((text) => {
+                  const line = text
+                    .split("\n")
+                    .find(
+                      (candidate) => candidate.startsWith("data: ") || candidate.startsWith("{"),
+                    );
+                  const message = JSON.parse((line ?? "{}").replace(/^data: /u, "")) as {
+                    result?: { structuredContent?: { status?: string } };
+                  };
+                  return message.result?.structuredContent?.status;
+                }),
+              );
+          const body = (text: string) => ({
+            ...comment,
+            arguments: { ...comment.arguments, body: text },
+          });
+
+          // The card says «allow», and the thread's own modes still decide.
+          threadModes.set(bot.threadId, { runtimeMode: "full-access", interactionMode: "plan" });
+          expect(yield* call(body("desde plan"))).toBe("pending");
+          threadModes.set(bot.threadId, {
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+          });
+          expect(yield* call(body("pidiendo aprobación"))).toBe("pending");
+          expect(writes(github.seen)).toEqual([]);
+          expect((yield* service.list).requests.map((request) => request.status)).toEqual([
+            "pending",
+            "pending",
+          ]);
+          // Reading changes nothing, so plan mode does not hold it back.
+          threadModes.set(bot.threadId, { runtimeMode: "full-access", interactionMode: "plan" });
+          expect(yield* call({ app: "github", action: "get_me", arguments: {} })).toBe("done");
+
+          // Where the thread may change the outside world unasked, «allow» is honoured.
+          threadModes.set(bot.threadId, fullAccess);
+          expect(yield* call(body("sin preguntar"))).toBe("done");
+          expect(writes(github.seen).map((request) => JSON.parse(request.body))).toEqual([
+            { body: "sin preguntar" },
+          ]);
+        }).pipe(
+          Effect.provide(
+            McpSessionRegistry.layer.pipe(
+              Layer.provide(
+                Layer.mock(ServerEnvironment.ServerEnvironment)({
+                  getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:integrations")),
+                }),
+              ),
+              Layer.provideMerge(NodeHttpServer.layerTest),
+              Layer.provideMerge(Layer.merge(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.live("asks the user, then the server runs an approved request once with its arguments", () =>
-    withIntegrations({ github: { comment: "ask" } }, ({ service, github, told }) =>
+    withIntegrations({ github: { comment: "ask" } }, ({ service, bot, github, told }) =>
       Effect.gen(function* () {
-        expect((yield* service.call(botThread, comment)).status).toBe("pending");
+        expect((yield* service.call(bot.threadId, fullAccess, comment)).status).toBe("pending");
         // Asking again while it waits adds no second card.
-        expect((yield* service.call(botThread, comment)).status).toBe("pending");
+        expect((yield* service.call(bot.threadId, fullAccess, comment)).status).toBe("pending");
         const [request, ...others] = (yield* service.list).requests;
         expect(others).toEqual([]);
         expect(JSON.parse(request!.arguments)).toEqual(comment.arguments);
@@ -248,16 +463,23 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
           ["POST", expect.stringContaining("/repos/acme/app/issues/7/comments")],
         ]);
         expect(JSON.parse(writes(github.seen)[0]!.body)).toEqual({ body: "hola" });
-        expect(told).toHaveLength(1);
+        expect(told.map((message) => message.threadId)).toEqual([bot.threadId]);
       }),
     ),
   );
 
   it.live("a yes does not run a request whose permission was removed meanwhile", () =>
-    withIntegrations({ github: { comment: "ask" } }, ({ service, github, bots }) =>
+    withIntegrations({ github: { comment: "ask" } }, ({ service, forkBots, bot, github }) =>
       Effect.gen(function* () {
-        yield* service.call(botThread, comment);
-        bots[0] = bot({});
+        yield* service.call(bot.threadId, fullAccess, comment);
+        // Permissions are read live, so changing them keeps the bot in its thread.
+        const edited = yield* forkBots.upsert({
+          ...baseBot,
+          id: bot.id,
+          runtimeMode: "full-access",
+          integrations: {},
+        });
+        expect(edited.threadId).toBe(bot.threadId);
         const [request] = (yield* service.list).requests;
         const answered = yield* service.answer({ id: request!.id, answer: "approve" });
         expect(answered.status).toBe("failed");
@@ -266,17 +488,73 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
     ),
   );
 
-  it.live("a no is final: nothing runs and the same request is refused without a new card", () =>
-    withIntegrations({ github: { comment: "ask" } }, ({ service, github, told }) =>
+  it.live("a bot moved to another project gets its old request neither run nor answered", () =>
+    withIntegrations({ github: { comment: "ask" } }, (harness) =>
       Effect.gen(function* () {
-        yield* service.call(botThread, comment);
+        const { service, forkBots, bot, github, told, launched } = harness;
+        yield* service.call(bot.threadId, fullAccess, comment);
+        // The user moves the bot: it keeps its permissions and leaves the thread it asked from.
+        const moved = yield* forkBots.upsert({
+          ...baseBot,
+          id: bot.id,
+          runtimeMode: "full-access",
+          projectId: projectB,
+          integrations: { github: { comment: "ask" } },
+        });
+        expect(moved.threadId).toBeNull();
+        const opened = launched.length;
+
+        const [request] = (yield* service.list).requests;
+        const answered = yield* service.answer({ id: request!.id, answer: "approve" });
+        expect(answered.status).toBe("failed");
+        expect(writes(github.seen)).toEqual([]);
+        // Nothing about it reaches the bot's new project: no thread opened there, none told.
+        expect(launched).toHaveLength(opened);
+        expect(told).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("a no is final: nothing runs and the same request is refused without a new card", () =>
+    withIntegrations({ github: { comment: "ask" } }, ({ service, bot, github, told }) =>
+      Effect.gen(function* () {
+        yield* service.call(bot.threadId, fullAccess, comment);
         const [request] = (yield* service.list).requests;
         yield* service.answer({ id: request!.id, answer: "deny" });
         expect(told).toHaveLength(1);
 
-        expect((yield* service.call(botThread, comment)).status).toBe("denied");
+        expect((yield* service.call(bot.threadId, fullAccess, comment)).status).toBe("denied");
         expect((yield* service.list).requests.map((entry) => entry.status)).toEqual(["denied"]);
         expect(writes(github.seen)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("a no still refuses its repeat after other bots fill the request history", () =>
+    withIntegrations({ github: { comment: "ask" } }, ({ service, makeBot, bot }) =>
+      Effect.gen(function* () {
+        yield* service.call(bot.threadId, fullAccess, comment);
+        const [refused] = (yield* service.list).requests;
+        yield* service.answer({ id: refused!.id, answer: "deny" });
+
+        // More answered requests than the history keeps, all from another bot.
+        const busy = yield* makeBot("otra", { github: { read: "ask" } });
+        for (let issue = 0; issue <= FORK_INTEGRATIONS_REQUEST_HISTORY; issue++) {
+          yield* service.call(busy.threadId, fullAccess, {
+            app: "github",
+            action: "issue_read",
+            arguments: { owner: "acme", repo: "app", issue_number: issue, method: "get" },
+          });
+          const pending = (yield* service.list).requests.find(
+            (request) => request.status === "pending",
+          );
+          yield* service.answer({ id: pending!.id, answer: "approve" });
+        }
+
+        expect((yield* service.call(bot.threadId, fullAccess, comment)).status).toBe("denied");
+        expect(
+          (yield* service.list).requests.filter((request) => request.status === "pending"),
+        ).toEqual([]);
       }),
     ),
   );
@@ -284,15 +562,15 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
   it.live("never writes main, and merging elsewhere still waits for the user", () =>
     withIntegrations(
       { github: { "branch-pr": "allow", "merge-delete": "allow" } },
-      ({ service, github }) =>
+      ({ service, bot, github }) =>
         Effect.gen(function* () {
-          const push = yield* service.call(botThread, {
+          const push = yield* service.call(bot.threadId, fullAccess, {
             app: "github",
             action: "push_files",
             arguments: { owner: "acme", repo: "app", branch: "main", message: "m", files: [] },
           });
           const merge = (pullNumber: number) =>
-            service.call(botThread, {
+            service.call(bot.threadId, fullAccess, {
               app: "github",
               action: "merge_pull_request",
               arguments: { owner: "acme", repo: "app", pullNumber },

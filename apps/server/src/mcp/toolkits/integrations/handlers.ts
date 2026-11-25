@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as ForkIntegrations from "../../../fork/integrations/ForkIntegrations.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { loadCaller } from "../../threadAccess.ts";
 import { IntegrationsToolkit } from "./tools.ts";
 
 const toFailure = (error: ForkIntegrationsError) =>
@@ -46,7 +47,11 @@ export const layer = McpToolAccess.toLayer(IntegrationsToolkit, {
   integration_call: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const integrations = yield* ForkIntegrations.ForkIntegrations;
-      return yield* integrations.call(yield* callerThread, input).pipe(Effect.mapError(toFailure));
+      // The thread's modes as they are now, which a client or a policy ceiling may have lowered.
+      const { limits } = yield* loadCaller();
+      return yield* integrations
+        .call(yield* callerThread, limits, input)
+        .pipe(Effect.mapError(toFailure));
     }),
   ),
 });

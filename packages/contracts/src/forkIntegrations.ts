@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Fork: outside apps a bot may act on through the server, which alone holds their credentials. */
 export const FORK_INTEGRATIONS_PROTOCOL_VERSION = 1;
@@ -75,6 +75,9 @@ export type ForkIntegrationRequestId = typeof ForkIntegrationRequestId.Type;
 export const ForkIntegrationRequest = Schema.Struct({
   id: ForkIntegrationRequestId,
   botId: Schema.String.check(Schema.isMaxLength(128)),
+  /** Where the bot asked from. A bot that has since left either one gets no run and no answer. */
+  projectId: ProjectId,
+  threadId: ThreadId,
   app: ForkIntegrationApp,
   action: Schema.String.check(Schema.isMaxLength(100)),
   group: Schema.String.check(Schema.isMaxLength(40)),

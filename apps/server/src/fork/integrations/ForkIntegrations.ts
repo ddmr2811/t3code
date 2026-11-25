@@ -2,6 +2,7 @@
 // Tool results and arguments are foreign JSON, which no schema of ours describes.
 // @effect-diagnostics globalJsonInEffect:off
 import {
+  CommandId,
   FORK_INTEGRATIONS_DENIAL_MS,
   FORK_INTEGRATIONS_DETAIL_MAX_LENGTH,
   FORK_INTEGRATIONS_MAX_FILE_BYTES,
@@ -17,6 +18,7 @@ import {
   ForkIntegrationRequest,
   ForkIntegrationsError,
   type ForkIntegrationStatus,
+  MessageId,
   type ThreadId,
   integrationLevel,
 } from "@t3tools/contracts";
@@ -34,6 +36,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import {
+  actsOutsideWithoutApproval,
+  type DispatchModes,
+} from "../../orchestration-v2/DispatchModeLimit.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ForkBots from "../bots/ForkBots.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 import {
@@ -55,7 +62,7 @@ interface AppDefinition {
   readonly classify: (
     action: string,
     args: Args,
-  ) => { readonly group: string; readonly alwaysAsk: boolean } | undefined;
+  ) => { readonly group: string; readonly reads: boolean; readonly alwaysAsk: boolean } | undefined;
   /** A read whose parsed answer `refuse` needs for this action. */
   readonly lookup: (action: string, args: Args) => { action: string; args: Args } | undefined;
   /** Why the action may never run, approved or not. */
@@ -105,8 +112,10 @@ export class ForkIntegrations extends Context.Service<
       threadId: ThreadId,
       query: string,
     ) => Effect.Effect<ReadonlyArray<IntegrationAction>, ForkIntegrationsError>;
+    /** `limits` are the calling thread's modes: a write runs unasked only where they allow it. */
     readonly call: (
       threadId: ThreadId,
+      limits: DispatchModes,
       input: {
         readonly app: ForkIntegrationApp;
         readonly action: string;
@@ -185,6 +194,11 @@ function scoreAction(tool: CatalogTool, terms: ReadonlyArray<string>) {
   return total;
 }
 
+/** Whether a «No» is recent enough to still refuse the same request. */
+const denies = (request: ForkIntegrationRequest, now: number) =>
+  request.status === "denied" &&
+  now - Date.parse(request.decidedAt ?? request.createdAt) < FORK_INTEGRATIONS_DENIAL_MS;
+
 const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrationsOptions) {
   const apps: Readonly<Record<ForkIntegrationApp, AppDefinition>> = {
     github: {
@@ -199,6 +213,7 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
   };
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const forkBots = yield* ForkBots.ForkBots;
+  const threads = yield* ThreadManagement.ThreadManagementService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const store = yield* makeForkJsonFileStore({
     fileName: "integrations.json",
@@ -229,10 +244,17 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     storeLock.withPermits(1)(
       Effect.gen(function* () {
         const [next, result] = yield* change(yield* store.read());
+        const now = yield* Clock.currentTimeMillis;
         let extra = next.requests.length - FORK_INTEGRATIONS_REQUEST_HISTORY;
-        // Trimming drops the oldest answered ones; a request still waiting is never lost.
+        // Trimming drops the oldest answered ones. A request still waiting is never lost, nor
+        // a «No» that still refuses its repeat.
         const requests = next.requests.filter((request) => {
-          if (extra <= 0 || request.status === "pending" || request.status === "running") {
+          if (
+            extra <= 0 ||
+            request.status === "pending" ||
+            request.status === "running" ||
+            denies(request, now)
+          ) {
             return true;
           }
           extra -= 1;
@@ -359,25 +381,36 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     return bot;
   });
 
-  /** The result reaches the bot as a new message in its queue; a lost one is only logged. */
-  const tell = (request: ForkIntegrationRequest, lines: ReadonlyArray<string>) =>
-    forkBots
-      .sendMessage({
-        id: request.botId,
+  /**
+   * The answer goes to the thread that asked, queued like any message, never to wherever the
+   * bot is now. A lost one is only logged: the request already holds the outcome.
+   */
+  const tell = (request: ForkIntegrationRequest, lines: ReadonlyArray<string>) => {
+    const messageId = MessageId.make(`fork-integration-answer:${SecureRandom.uuidV4Unsafe()}`);
+    return threads
+      .sendToThread({
+        projectId: request.projectId,
+        commandId: CommandId.make(messageId),
+        threadId: request.threadId,
+        messageId,
         text: [
           `--- RESPUESTA A integration_call · ${request.id} · ${request.app}/${request.action} ---`,
           ...lines,
           "--- FIN DE LA RESPUESTA ---",
         ].join("\n"),
+        attachments: [],
+        mode: "queue",
+        createdBy: "user",
+        creationSource: "web",
       })
       .pipe(
-        Effect.catch((error) =>
+        Effect.catch(() =>
           Effect.logWarning("fork integrations could not tell the bot the answer", {
             requestId: request.id,
-            reason: error.reason,
           }),
         ),
       );
+  };
 
   const list: ForkIntegrations["Service"]["list"] = storeLock
     .withPermits(1)(store.read())
@@ -481,7 +514,7 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     "The user said no to this exact action. This denial is final: do not call it again, do not try another way to get the same effect, and tell the user what you could not do.";
 
   const call: ForkIntegrations["Service"]["call"] = Effect.fn("ForkIntegrations.call")(
-    function* (threadId, input) {
+    function* (threadId, limits, input) {
       const bot = yield* botOfThread(threadId);
       const { app, action } = input;
       const classified = apps[app].classify(action, input.arguments);
@@ -495,7 +528,13 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
           text: `@${bot.handle} is not allowed to use ${app}/${action}. Only the user can change that, in the bot's card.`,
         };
       }
-      if (level === "allow" && !classified.alwaysAsk) {
+      // The card and the thread both have to allow it: a thread in plan mode, or one that would
+      // ask before the same change in a shell, sends every write to the user instead.
+      const unasked =
+        level === "allow" &&
+        !classified.alwaysAsk &&
+        (classified.reads || actsOutsideWithoutApproval(limits));
+      if (unasked) {
         const outcome = yield* run(app, action, input.arguments);
         if ("refused" in outcome) return { status: "denied", text: outcome.refused };
         return { status: outcome.failed ? "failed" : "done", text: outcome.text };
@@ -520,13 +559,7 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
       return yield* update((stored) =>
         Effect.gen(function* () {
           const mine = stored.requests.filter(same);
-          const refused = mine.some(
-            (request) =>
-              request.status === "denied" &&
-              now - Date.parse(request.decidedAt ?? request.createdAt) <
-                FORK_INTEGRATIONS_DENIAL_MS,
-          );
-          if (refused) return [stored, denied] as const;
+          if (mine.some((request) => denies(request, now))) return [stored, denied] as const;
           const pending = mine.find((request) => request.status === "pending");
           if (pending !== undefined) return [stored, waiting(pending.id)] as const;
           const open = stored.requests.filter(
@@ -541,6 +574,8 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
           const request = yield* decodeRequest({
             id: `integration:${SecureRandom.uuidV4Unsafe()}`,
             botId: bot.id,
+            projectId: bot.projectId,
+            threadId,
             app,
             action,
             group: classified.group,
@@ -574,25 +609,34 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
       ] as const);
     });
 
-  /** The permission as it is now, not as it was when the bot asked. */
-  const stillAllowed = Effect.fn("ForkIntegrations.stillAllowed")(function* (
+  /**
+   * The bot as it is now, if it still is where it asked from. One moved to another thread or
+   * project asked in a context it has left: its request neither runs nor is answered there.
+   */
+  const askerOf = Effect.fn("ForkIntegrations.askerOf")(function* (
     request: ForkIntegrationRequest,
   ) {
     const { bots } = yield* forkBots
       .list({})
       .pipe(Effect.mapError((error) => fail("unavailable", error.message)));
     const bot: ForkBot | undefined = bots.find((candidate) => candidate.id === request.botId);
+    return bot?.threadId === request.threadId && bot.projectId === request.projectId
+      ? bot
+      : undefined;
+  });
+
+  /** The permission as it is now, not as it was when the bot asked. */
+  const stillAllowed = (bot: ForkBot, request: ForkIntegrationRequest) => {
     const classified = apps[request.app].classify(
       request.action,
       JSON.parse(request.arguments) as Args,
     );
     return (
-      bot !== undefined &&
       !bot.archived &&
       classified !== undefined &&
       integrationLevel(bot.integrations, request.app, classified.group) !== "deny"
     );
-  });
+  };
 
   const answer = Effect.fn("ForkIntegrations.answer")(function* (
     input: ForkIntegrationAnswerInput,
@@ -626,6 +670,15 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
         ] as const;
       }),
     );
+    const asker = yield* askerOf(decided).pipe(Effect.orElseSucceed(() => undefined));
+    if (asker === undefined) {
+      if (decided.status === "denied") return decided;
+      const cancelled = yield* finish(decided.id, {
+        status: "failed",
+        detail: "Cancelada: el bot ya no está en el hilo o el proyecto desde el que la pidió.",
+      });
+      return cancelled ?? decided;
+    }
     if (decided.status === "denied") {
       yield* tell(decided, [
         "El usuario ha dicho que NO. Es definitivo: no vuelvas a pedir esta acción ni busques otra forma de conseguir lo mismo.",
@@ -634,7 +687,7 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     }
     const args = JSON.parse(decided.arguments) as Args;
     const outcome = yield* Effect.gen(function* () {
-      if (!(yield* stillAllowed(decided))) {
+      if (!stillAllowed(asker, decided)) {
         return { failed: true, text: "El bot ya no tiene permiso para esta acción." };
       }
       const ran = yield* run(decided.app, decided.action, args);
