@@ -20,7 +20,7 @@ import {
   lacksMethod,
   nightlyPromptUpdate,
   parseMention,
-  pickBotProject,
+  botDestination,
   SENTENCE_RUNTIME_MODES,
   validateBotDraft,
 } from "./bots.logic.ts";
@@ -235,52 +235,57 @@ describe("lacksMethod", () => {
   });
 });
 
-describe("pickBotProject", () => {
+describe("botDestination", () => {
   const pc = EnvironmentId.make("pc");
   const nexo = EnvironmentId.make("nexo");
-  const cx53 = EnvironmentId.make("cx53");
-  const project = (environmentId: EnvironmentId, id: string, title: string) => ({
-    environmentId,
-    projectId: ProjectId.make(id),
-    title,
-  });
-  const projects = [
-    project(pc, "web", "t3code-fork"),
-    project(nexo, "hubra", "Hubra"),
-    project(nexo, "hubra-web", "hubra-web"),
-    project(pc, "hub", "Hub"),
-  ];
-  const open = { environmentId: pc, projectId: ProjectId.make("web") };
+  const project = (id: string, title: string) => ({ id: ProjectId.make(id), title });
+  const pcMachine = { environmentId: pc, projects: [project("web", "t3code-fork")] };
+  const nexoMachine = {
+    environmentId: nexo,
+    projects: [project("hubra", "Hubra"), project("tests", "Tests")],
+  };
 
   it.each([
-    ["un bot que revise mis PR de Hubra cada mañana", "hubra"],
-    ["revisa los PR de HUBRA-WEB", "hubra-web"],
-    ["vigila los tests de hubrá", "hubra"],
-    // «Hub» is a word of the sentence only when it stands alone.
-    ["un bot para hubris", "web"],
-  ])("«%s» goes to %s", (sentence, expected) => {
-    expect(pickBotProject(sentence, projects, open).map((choice) => choice.projectId)).toEqual([
-      expected,
-    ]);
+    // Codex r3: PC still loading, Nexo loaded: the sentence used to leave for Nexo unasked.
+    [
+      "a machine still loads",
+      "un bot que resuma errores",
+      [{ ...pcMachine, projects: [] }, nexoMachine],
+    ],
+    // A word that names a project on one machine used to choose that machine.
+    [
+      "a word names a project on one machine",
+      "un bot que resuma los tests",
+      [pcMachine, nexoMachine],
+    ],
+    // A new attempt brings no pick, whatever was picked before or is open.
+    ["a new attempt brings no pick", "PR de Hubra", [pcMachine, nexoMachine]],
+  ] as const)("asks with several machines when %s", (_case, text, machines) => {
+    expect(botDestination(text, machines, null)).toEqual({ kind: "ask" });
   });
 
-  it("takes the named project's machine, not the open one's", () => {
-    expect(pickBotProject("PR de Hubra", projects, open)[0]?.environmentId).toBe(nexo);
+  it("sends only the pick made for this send, and waits if its machine lost its projects", () => {
+    const pick = { environmentId: nexo, projectId: ProjectId.make("hubra") };
+    expect(botDestination("x", [pcMachine, nexoMachine], pick)).toEqual({
+      kind: "send",
+      target: pick,
+    });
+    expect(botDestination("x", [pcMachine, { ...nexoMachine, projects: [] }], pick)).toEqual({
+      kind: "wait",
+    });
   });
 
-  it("asks which machine whenever the named project is on several, whatever is open", () => {
-    const twice = [...projects, project(cx53, "hubra-53", "Hubra")];
-    const openOnNexo = { environmentId: nexo, projectId: ProjectId.make("hubra-web") };
-    expect(
-      pickBotProject("PR de Hubra", twice, openOnNexo).map((choice) => choice.environmentId),
-    ).toEqual([nexo, cx53]);
-  });
-
-  it("asks which machine when nothing is named and no thread is open", () => {
-    expect(pickBotProject("un bot que resuma", projects, null)).toEqual([
-      { environmentId: pc, projectId: "web" },
-      { environmentId: nexo, projectId: "hubra" },
-    ]);
+  it("uses the single machine's named project, else its first, and waits while it loads", () => {
+    const only = [nexoMachine];
+    expect(botDestination("revisa los tests", only, null)).toEqual({
+      kind: "send",
+      target: { environmentId: nexo, projectId: "tests" },
+    });
+    expect(botDestination("resume errores", only, null)).toEqual({
+      kind: "send",
+      target: { environmentId: nexo, projectId: "hubra" },
+    });
+    expect(botDestination("x", [{ ...nexoMachine, projects: [] }], null)).toEqual({ kind: "wait" });
   });
 });
 

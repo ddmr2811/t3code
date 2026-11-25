@@ -306,6 +306,12 @@ export interface BotProjectChoice {
   readonly projectId: ProjectId;
 }
 
+export interface BotMachine {
+  readonly environmentId: EnvironmentId;
+  /** Empty while its projects load. */
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+}
+
 const words = (text: string) =>
   ` ${text
     .normalize("NFD")
@@ -314,30 +320,43 @@ const words = (text: string) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim()} `;
 
-/**
- * Where a sentence's bot goes: the project it names, as whole words and on any paired machine,
- * the longest name winning («hubra web» over «hubra»); otherwise `open`, the project of the thread
- * the user has open. More than one result means asking which machine before the sentence leaves.
- */
-export function pickBotProject(
+/** Within one machine: the project the sentence names as whole words, longest first, else its first. */
+export function suggestBotProject(
   text: string,
-  projects: ReadonlyArray<BotProjectChoice & { readonly title: string }>,
-  open: BotProjectChoice | null,
-): ReadonlyArray<BotProjectChoice> {
+  projects: BotMachine["projects"],
+): ProjectId | null {
   const sentence = words(text);
-  const named = projects.filter(
-    (project) => words(project.title).trim() !== "" && sentence.includes(words(project.title)),
-  );
-  const longest = Math.max(0, ...named.map((project) => words(project.title).length));
-  const best = named
-    .filter((project) => words(project.title).length === longest)
-    .map(({ environmentId, projectId }) => ({ environmentId, projectId }));
-  if (best.length > 0 || open !== null) return best.length > 0 ? best : [open!];
-  // Nothing named and no thread open: one choice per machine, so several machines mean asking.
-  return projects
+  const named = projects
     .filter(
-      (project, index) =>
-        projects.findIndex((other) => other.environmentId === project.environmentId) === index,
+      (project) => words(project.title).trim() !== "" && sentence.includes(words(project.title)),
     )
-    .map(({ environmentId, projectId }) => ({ environmentId, projectId }));
+    .toSorted((left, right) => words(right.title).length - words(left.title).length)[0];
+  return (named ?? projects[0])?.id ?? null;
+}
+
+/**
+ * Where a sentence goes. With several machines the user always picks machine and project for
+ * this very send: nothing in the sentence, the open thread or Bots' machine picks it. With one,
+ * its suggested project. A machine with no projects loaded waits and never sends.
+ */
+export function botDestination(
+  text: string,
+  machines: ReadonlyArray<BotMachine>,
+  picked: BotProjectChoice | null,
+):
+  | { readonly kind: "send"; readonly target: BotProjectChoice }
+  | { readonly kind: "ask" }
+  | { readonly kind: "wait" } {
+  if (picked !== null) {
+    const machine = machines.find((candidate) => candidate.environmentId === picked.environmentId);
+    return machine?.projects.some((project) => project.id === picked.projectId)
+      ? { kind: "send", target: picked }
+      : { kind: "wait" };
+  }
+  if (machines.length !== 1) return machines.length > 1 ? { kind: "ask" } : { kind: "wait" };
+  const only = machines[0]!;
+  const projectId = suggestBotProject(text, only.projects);
+  return projectId === null
+    ? { kind: "wait" }
+    : { kind: "send", target: { environmentId: only.environmentId, projectId } };
 }

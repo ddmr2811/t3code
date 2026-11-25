@@ -15,6 +15,7 @@ import {
   type EnvironmentId,
   type ForkBot,
   type ForkBotDraft,
+  type ProjectId,
   type ForkBotHandoff,
   type ForkBotHandoffStatus,
   type ThreadId,
@@ -33,8 +34,10 @@ import {
   botState,
   type BotDraft,
   parseMention,
+  type BotMachine,
   type BotProjectChoice,
-  pickBotProject,
+  botDestination,
+  suggestBotProject,
   recentHandoffs,
   RUNTIME_MODES,
   SENTENCE_RUNTIME_MODES,
@@ -120,7 +123,8 @@ export function BotsView() {
       {selectedEnv === null ? null : (
         <QuickCreate
           fallbackEnv={selectedEnv}
-          machineLabel={enabledEnvs.length > 1 ? machineLabel : null}
+          machines={enabledEnvs}
+          machineLabel={machineLabel}
           onCreated={setSelectedEnv}
         />
       )}
@@ -788,13 +792,12 @@ const FALLBACK_TEXT: Record<NonNullable<ForkBotDraft["fallbackReason"]>, string>
 /** One sentence in, a proposed bot out; «Crear» saves it as proposed, «Ajustar» opens the form. */
 function QuickCreate(props: {
   fallbackEnv: EnvironmentId;
-  machineLabel: ((id: EnvironmentId) => string) | null;
+  machines: ReadonlyArray<EnvironmentId>;
+  machineLabel: (id: EnvironmentId) => string;
   onCreated: (environmentId: EnvironmentId) => void;
 }) {
   const registry = useContext(RegistryContext);
   const allProjects = useAtomValue(allEnvironmentProjectsAtom);
-  const allThreads = useAtomValue(listedThreadsAtom);
-  const selectedKey = useAtomValue(selectedThreadKeyAtom);
   const [text, setText] = useState("");
   const [proposal, setProposal] = useState<{
     readonly environmentId: EnvironmentId;
@@ -810,44 +813,42 @@ function QuickCreate(props: {
   const canCreate = useAtomValue(forkBotsUpsertCommand.permissionAtom(target));
   const config = useAtomValue(serverEnvironment.configValueAtom(target));
 
-  const openThread = allThreads.find(
-    (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === selectedKey,
-  );
-  const choices = pickBotProject(
-    text,
-    [...allProjects].flatMap(([environmentId, projects]) =>
-      [...projects.values()].map((project) => ({
-        environmentId,
-        projectId: project.id,
-        title: project.title,
-      })),
-    ),
-    // The thread open for real, never the machine Bots happens to show.
-    openThread?.projectId != null
-      ? { environmentId: openThread.environmentId, projectId: openThread.projectId }
-      : null,
-  );
+  const machines: ReadonlyArray<BotMachine> = props.machines.map((environmentId) => ({
+    environmentId,
+    projects: [...(allProjects.get(environmentId)?.values() ?? [])],
+  }));
+  const [asking, setAsking] = useState(false);
+  const [pickKey, setPickKey] = useState("");
+  // Where the last sentence went, so «Rellenar a mano» opens there after a failure.
+  const [sent, setSent] = useState<BotProjectChoice | null>(null);
 
   const reset = () => {
     setAsking(false);
-    setPicked(null);
+    setSent(null);
     setProposal(null);
     setText("");
     setError(null);
   };
 
-  const [asking, setAsking] = useState(false);
-  // The machine and project the user settled, kept so «Rellenar a mano» opens there too.
-  const [picked, setPicked] = useState<BotProjectChoice | null>(null);
-  const choice = picked ?? (choices.length === 1 ? choices[0]! : null);
-
-  const propose = async (where: BotProjectChoice | null = choice) => {
+  /** `pick` is the selector's answer for this send only; a new «Proponer» asks again. */
+  const propose = async (pick: BotProjectChoice | null) => {
     const sentence = text.trim();
     if (sentence === "" || busy) return;
-    if (choices.length === 0) return setError("Primero añade un proyecto en alguna máquina.");
-    // The sentence leaves this device only once its machine is settled.
-    if (where === null) return setAsking(true);
-    setPicked(where);
+    const destination = botDestination(sentence, machines, pick);
+    if (destination.kind === "ask") {
+      setPickKey("");
+      setError(null);
+      return setAsking(true);
+    }
+    if (destination.kind === "wait") {
+      return setError(
+        machines.every((machine) => machine.projects.length === 0)
+          ? "Aún no hay proyectos cargados en ninguna máquina."
+          : "Los proyectos de esa máquina aún se están cargando. Prueba en un momento.",
+      );
+    }
+    const where = destination.target;
+    setSent(where);
     setAsking(false);
     setBusy(true);
     setError(null);
@@ -928,7 +929,7 @@ function QuickCreate(props: {
         className="ade-bot-quick-row"
         onSubmit={(event) => {
           event.preventDefault();
-          void propose();
+          void propose(null);
         }}
       >
         <label className="ade-sr-only" htmlFor="ade-bot-quick-text">
@@ -940,12 +941,11 @@ function QuickCreate(props: {
           onChange={(event) => {
             setText(event.target.value);
             setAsking(false);
-            setPicked(null);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              void propose();
+              void propose(null);
             }
           }}
           placeholder="Un bot que revise mis PR de Hubra cada mañana"
@@ -959,38 +959,78 @@ function QuickCreate(props: {
       </form>
 
       {asking ? (
-        <div className="ade-bot-quick-error" role="group" aria-label="¿En qué máquina?">
-          <p className="ade-bot-meta">¿En qué máquina?</p>
-          {choices.map((option) => (
-            <button
-              key={`${option.environmentId}:${option.projectId}`}
-              type="button"
-              className="ade-button-quiet"
-              onClick={() => void propose(option)}
-            >
-              {props.machineLabel?.(option.environmentId) ?? option.environmentId} ·{" "}
-              {allProjects.get(option.environmentId)?.get(option.projectId)?.title}
-            </button>
-          ))}
+        <div className="ade-bot-quick-error" role="group" aria-label="¿En qué máquina y proyecto?">
+          <label className="ade-bot-meta" htmlFor="ade-bot-quick-where">
+            ¿En qué máquina y proyecto?
+          </label>
+          <select
+            id="ade-bot-quick-where"
+            className="ade-bot-quick-where"
+            value={pickKey}
+            onChange={(event) => setPickKey(event.target.value)}
+          >
+            <option value="">Elige…</option>
+            {machines.map((machine) => {
+              const suggested = suggestBotProject(text, machine.projects);
+              return (
+                <optgroup
+                  key={machine.environmentId}
+                  label={props.machineLabel(machine.environmentId)}
+                >
+                  {machine.projects.length === 0 ? (
+                    <option disabled>Cargando proyectos…</option>
+                  ) : (
+                    machine.projects
+                      .toSorted(
+                        (left, right) =>
+                          Number(right.id === suggested) - Number(left.id === suggested),
+                      )
+                      .map((project) => (
+                        <option
+                          key={project.id}
+                          value={`${machine.environmentId}${MODEL_SEPARATOR}${project.id}`}
+                        >
+                          {project.title}
+                        </option>
+                      ))
+                  )}
+                </optgroup>
+              );
+            })}
+          </select>
+          <button
+            type="button"
+            className="ade-button"
+            disabled={pickKey === "" || busy}
+            onClick={() => {
+              const [environmentId = "", projectId = ""] = pickKey.split(MODEL_SEPARATOR);
+              void propose({
+                environmentId: environmentId as EnvironmentId,
+                projectId: projectId as ProjectId,
+              });
+            }}
+          >
+            Proponer aquí
+          </button>
         </div>
       ) : null}
 
       {error === null ? null : (
         <div className="ade-bot-quick-error" role="alert">
           <p className="ade-error">{error}</p>
-          {choice === null || text.trim() === "" ? null : (
+          {sent === null || text.trim() === "" ? null : (
             <button
               type="button"
               className="ade-button-quiet"
               onClick={() =>
                 setAdjusting({
-                  environmentId: choice.environmentId,
+                  environmentId: sent.environmentId,
                   initial: {
                     handle: "",
                     name: "",
                     role: "",
                     instructions: text.trim(),
-                    projectId: choice.projectId,
+                    projectId: sent.projectId,
                     runtimeMode: "approval-required",
                     instanceId: "",
                     model: "",
@@ -1020,9 +1060,7 @@ function QuickCreate(props: {
             <dt>Proyecto</dt>
             <dd>
               {projectTitle}
-              {props.machineLabel === null
-                ? ""
-                : ` · ${props.machineLabel(proposal.environmentId)}`}
+              {props.machines.length > 1 ? ` · ${props.machineLabel(proposal.environmentId)}` : ""}
             </dd>
             <dt>Modelo</dt>
             <dd>
