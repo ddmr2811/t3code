@@ -13,6 +13,7 @@ import {
 } from "../sidebar/Sidebar.tsx";
 import { projectAccentColor, projectMonogram } from "../sidebar/sidebar.logic.ts";
 import { environmentProjects, threadEnvironment } from "../state.ts";
+import { Overnight } from "./Overnight.tsx";
 import { greetingForHour, homeProjects, workingThreadCount } from "./home.logic.ts";
 
 const homeProjectsAtom = Atom.make((get) => {
@@ -86,6 +87,7 @@ export function Home() {
             )}
           </p>
         </header>
+        <Overnight needsYouCount={needsYouCount} />
 
         {selected === null ? (
           <p className="ade-home-empty" role="status">

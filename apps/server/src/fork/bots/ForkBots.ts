@@ -8,7 +8,11 @@ import {
   FORK_BOTS_HANDOFF_PREVIEW_LENGTH,
   FORK_BOTS_MAX_COUNT,
   FORK_BOTS_MAX_FILE_BYTES,
+  FORK_BOTS_PROPOSAL_HISTORY,
+  FORK_BOTS_PROPOSAL_INTERVAL_MS,
   type ForkBot,
+  ForkBotAnswerProposalInput,
+  ForkBotProposal,
   ForkBotDismissHandoffInput,
   type ForkBotHandoff,
   ForkBotHandoffInput,
@@ -88,6 +92,15 @@ export class ForkBots extends Context.Service<
     readonly dismissHandoff: (
       input: ForkBotDismissHandoffInput,
     ) => Effect.Effect<ForkBotHandoff, ForkBotsError>;
+    /** A coordinator's thread suggests a bot; the user decides with `answerProposal`. */
+    readonly propose: (
+      draft: BotProposalDraft,
+      from: { readonly threadId: ThreadId; readonly limits: DispatchModes | undefined },
+    ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
+    /** Only an accepted proposal creates a bot, through the same checks as `upsert`. */
+    readonly answerProposal: (
+      input: ForkBotAnswerProposalInput,
+    ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Whether a thread is a bot's current one; answered from memory. */
     readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
   }
@@ -101,6 +114,21 @@ export type HandoffSender =
   | { readonly kind: "user" }
   | { readonly kind: "agent"; readonly limits: DispatchModes };
 
+export interface BotProposalDraft {
+  readonly handle: string;
+  readonly name: string;
+  readonly role: string;
+  readonly instructions: string;
+  readonly routine: string;
+  readonly reason: string;
+  /** Defaults to approval-required; never above the coordinator's. */
+  readonly runtimeMode?: RuntimeMode | undefined;
+  /** A model of the coordinator's provider; defaults to the coordinator's own. */
+  readonly model?: string | undefined;
+}
+
+const decodeProposal = Schema.decodeUnknownEffect(ForkBotProposal);
+const decodeAnswerProposalInput = Schema.decodeUnknownEffect(ForkBotAnswerProposalInput);
 const decodeListInput = Schema.decodeUnknownEffect(ForkBotListInput);
 const decodeUpsertInput = Schema.decodeUnknownEffect(ForkBotUpsertInput);
 const decodeSetArchivedInput = Schema.decodeUnknownEffect(ForkBotSetArchivedInput);
@@ -111,6 +139,7 @@ const decodeDismissHandoffInput = Schema.decodeUnknownEffect(ForkBotDismissHando
 
 const invalidInput = (message: string) => new ForkBotsError({ reason: "invalidInput", message });
 const notFound = (message: string) => new ForkBotsError({ reason: "notFound", message });
+const limitExceeded = (message: string) => new ForkBotsError({ reason: "limitExceeded", message });
 const unavailable = (message: string) => new ForkBotsError({ reason: "unavailable", message });
 const dispatchFailed = (message: string) =>
   new ForkBotsError({ reason: "dispatchFailed", message });
@@ -881,8 +910,176 @@ const make = Effect.gen(function* () {
     return record;
   });
 
+  const propose = Effect.fn("ForkBots.propose")(function* (
+    draft: BotProposalDraft,
+    from: { readonly threadId: ThreadId; readonly limits: DispatchModes | undefined },
+  ) {
+    const coordinator = (yield* storeLock.withPermits(1)(fileStore.read())).bots.find(
+      (bot) => bot.threadId === from.threadId,
+    );
+    if (coordinator === undefined || !coordinator.coordinator || coordinator.archived) {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: "Only the project's coordinator can propose a bot.",
+      });
+    }
+    const runtimeMode = draft.runtimeMode ?? "approval-required";
+    if (
+      isRuntimeModeAbove(runtimeMode, coordinator.runtimeMode) ||
+      (from.limits !== undefined && isRuntimeModeAbove(runtimeMode, from.limits.runtimeMode))
+    ) {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: `A proposed bot cannot run in ${runtimeMode}, above its coordinator.`,
+      });
+    }
+    const modelSelection = {
+      instanceId: coordinator.modelSelection.instanceId,
+      model: draft.model ?? coordinator.modelSelection.model,
+    };
+    yield* validateConfiguration({
+      projectId: coordinator.projectId,
+      runtimeMode,
+      instanceId: modelSelection.instanceId,
+      model: modelSelection.model,
+    });
+    const nowMs = yield* Clock.currentTimeMillis;
+    const proposal = yield* decodeProposal({
+      id: `proposal:${SecureRandom.uuidV4Unsafe()}`,
+      projectId: coordinator.projectId,
+      proposedBy: coordinator.id,
+      handle: draft.handle,
+      name: draft.name,
+      role: draft.role,
+      instructions: draft.instructions,
+      routine: draft.routine,
+      reason: draft.reason,
+      runtimeMode,
+      modelSelection,
+      status: "pending",
+      botId: null,
+      createdAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+      decidedAt: null,
+    }).pipe(Effect.mapError(() => invalidInput("Invalid bot proposal.")));
+    return yield* storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const project = directory.proposals.filter(
+          (candidate) => candidate.projectId === proposal.projectId,
+        );
+        if (project.some((candidate) => candidate.status === "pending")) {
+          return yield* limitExceeded("A bot proposal is already waiting for the user.");
+        }
+        if (
+          project.some(
+            (candidate) => nowMs - Date.parse(candidate.createdAt) < FORK_BOTS_PROPOSAL_INTERVAL_MS,
+          )
+        ) {
+          return yield* limitExceeded("This project already had a bot proposal this week.");
+        }
+        const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+        if (
+          project.some(
+            (candidate) =>
+              candidate.status === "rejected" &&
+              (same(candidate.handle, proposal.handle) || same(candidate.name, proposal.name)),
+          )
+        ) {
+          return yield* new ForkBotsError({
+            reason: "conflict",
+            message: `The user already said no to @${proposal.handle} or ${proposal.name}.`,
+          });
+        }
+        if (directory.bots.some((bot) => same(bot.handle, proposal.handle))) {
+          return yield* new ForkBotsError({
+            reason: "conflict",
+            message: "Another bot already uses this handle.",
+          });
+        }
+        yield* fileStore.write({
+          ...directory,
+          proposals: [...directory.proposals, proposal].slice(-FORK_BOTS_PROPOSAL_HISTORY),
+          updatedAt: proposal.createdAt,
+        });
+        return proposal;
+      }),
+    );
+  });
+
+  const decideProposal = (proposal: ForkBotProposal) =>
+    storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const current = directory.proposals.find((candidate) => candidate.id === proposal.id);
+        if (current?.status !== "pending") {
+          return yield* invalidInput("This proposal was answered.");
+        }
+        yield* fileStore.write({
+          ...directory,
+          proposals: directory.proposals.map((candidate) =>
+            candidate.id === proposal.id ? proposal : candidate,
+          ),
+          updatedAt: proposal.decidedAt,
+        });
+        return proposal;
+      }),
+    );
+
+  const answerProposal = Effect.fn("ForkBots.answerProposal")(function* (
+    input: ForkBotAnswerProposalInput,
+  ) {
+    const parsed = yield* decodeAnswerProposalInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid proposal answer.")),
+    );
+    const directory = yield* storeLock.withPermits(1)(fileStore.read());
+    const proposal = directory.proposals.find((candidate) => candidate.id === parsed.id);
+    if (proposal === undefined) return yield* notFound("Bot proposal was not found.");
+    if (proposal.status !== "pending") return yield* invalidInput("This proposal was answered.");
+    const decidedAt = yield* nowIso;
+    if (parsed.answer === "reject") {
+      const rejected = yield* decideProposal({ ...proposal, status: "rejected", decidedAt });
+      // The store already refuses the same bot; the note lets the coordinator skip similar ones.
+      yield* memory
+        .upsert(
+          {
+            projectId: proposal.projectId,
+            text: `El usuario dijo que no al bot propuesto «${proposal.name}» (@${proposal.handle}, ${proposal.role}). No vuelvas a proponer ese bot ni uno parecido.`,
+            inclusion: "searchable",
+          },
+          "user",
+        )
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("fork bots could not remember a rejected proposal", {
+              proposalId: proposal.id,
+              reason: error.reason,
+            }),
+          ),
+        );
+      return rejected;
+    }
+    // The coordinator may have lost permissions since it proposed; the bot never gets more.
+    const coordinator = directory.bots.find((bot) => bot.id === proposal.proposedBy);
+    const ceiling = coordinator?.runtimeMode ?? "approval-required";
+    const bot = yield* upsert({
+      handle: proposal.handle,
+      name: proposal.name,
+      role: proposal.role,
+      instructions: proposal.instructions,
+      projectId: proposal.projectId,
+      runtimeMode: isRuntimeModeAbove(proposal.runtimeMode, ceiling)
+        ? ceiling
+        : proposal.runtimeMode,
+      modelSelection: proposal.modelSelection,
+      coordinator: false,
+    });
+    return yield* decideProposal({ ...proposal, status: "accepted", botId: bot.id, decidedAt });
+  });
+
   return ForkBots.of({
     list,
+    propose,
+    answerProposal,
     upsert,
     setArchived,
     remove,

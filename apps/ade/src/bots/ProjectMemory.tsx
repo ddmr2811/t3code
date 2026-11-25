@@ -24,6 +24,7 @@ import { cn } from "../ui/utils.ts";
 import {
   type CoordinatorRoutine,
   NIGHTLY_CONSOLIDATION_PROMPT,
+  isNightlyTask,
   coordinatorRoutineInput,
 } from "./bots.logic.ts";
 import {
@@ -319,7 +320,8 @@ function CoordinatorRoutines(props: {
     loaded && threadId !== null
       ? tasksResult.value.tasks.filter((task) => task.threadId === threadId)
       : [];
-  const hasNightly = tasks.some((task) => task.prompt === NIGHTLY_CONSOLIDATION_PROMPT);
+  const nightly = tasks.find(isNightlyTask);
+  const nightlyOutdated = nightly !== undefined && nightly.prompt !== NIGHTLY_CONSOLIDATION_PROMPT;
   const disabled = busy || !loaded || !canSchedule || threadId === null;
 
   const create = async (routine: CoordinatorRoutine) => {
@@ -371,7 +373,7 @@ function CoordinatorRoutines(props: {
       <p className={HINT}>
         {threadId === null
           ? "Escríbele primero al coordinador: las rutinas continúan su hilo."
-          : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados y propone qué bajar de esenciales."}
+          : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados, propone qué bajar de esenciales y, si repites un encargo, un bot nuevo."}
       </p>
       {tasksResult._tag === "Failure" ? (
         <p className="ade-error" role="alert">
@@ -416,10 +418,14 @@ function CoordinatorRoutines(props: {
           <button
             type="button"
             className="ade-button-quiet m-0!"
-            onClick={() => void create({ kind: "nightly" })}
-            disabled={disabled || hasNightly}
+            onClick={() => void create({ kind: "nightly", id: nightly?.id })}
+            disabled={disabled || (nightly !== undefined && !nightlyOutdated)}
           >
-            {hasNightly ? "Consolidación nocturna activa" : "Consolidación nocturna"}
+            {nightly === undefined
+              ? "Consolidación nocturna"
+              : nightlyOutdated
+                ? "Actualizar consolidación nocturna"
+                : "Consolidación nocturna activa"}
           </button>
         </div>
       ) : (

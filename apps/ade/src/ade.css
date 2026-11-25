@@ -1558,6 +1558,23 @@ body {
   font-size: 13px;
 }
 
+.ade-proposal-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.ade-proposal-facts dt {
+  color: var(--ade-text-muted);
+}
+
+.ade-proposal-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .ade-request-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2380,6 +2397,31 @@ body {
   line-height: 1.04;
   letter-spacing: -0.045em;
   text-shadow: 0 2px 24px rgb(0 0 0 / 0.55);
+}
+
+.ade-overnight {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.ade-overnight h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ade-overnight ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 21px;
+  color: var(--ade-text-muted);
 }
 
 .ade-home-stats {

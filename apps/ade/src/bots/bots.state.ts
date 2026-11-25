@@ -8,6 +8,7 @@ import {
   type EnvironmentId,
   type ForkBot,
   type ForkBotHandoff,
+  type ForkBotProposal,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -57,6 +58,11 @@ export const forkBotsDismissHandoffCommand = createEnvironmentRpcCommand(connect
   tag: WS_METHODS.forkBotsDismissHandoff,
 });
 
+export const forkBotsAnswerProposalCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-bots:answer-proposal",
+  tag: WS_METHODS.forkBotsAnswerProposal,
+});
+
 export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "ade:fork-memory:list",
   tag: WS_METHODS.forkMemoryList,
@@ -82,6 +88,7 @@ export const allBotsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const byEnv = new Map<EnvironmentId, ReadonlyArray<ForkBot>>();
   const handoffsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotHandoff>>();
+  const proposalsByEnv = new Map<EnvironmentId, ReadonlyArray<ForkBotProposal>>();
   const errors: BotLoadError[] = [];
 
   for (const environmentId of enabledEnvironmentIds(catalog)) {
@@ -96,8 +103,9 @@ export const allBotsAtom = Atom.make((get) => {
     if (result._tag === "Success") {
       byEnv.set(environmentId, result.value.bots);
       handoffsByEnv.set(environmentId, result.value.handoffs);
+      proposalsByEnv.set(environmentId, result.value.proposals);
     }
   }
 
-  return { byEnv, handoffsByEnv, errors };
+  return { byEnv, handoffsByEnv, proposalsByEnv, errors };
 }).pipe(Atom.withLabel("ade-all-bots"));

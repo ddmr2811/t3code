@@ -55,4 +55,20 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
       };
     }),
   ),
+  bot_propose: McpToolAccess.actsAsCaller((draft) =>
+    Effect.gen(function* () {
+      const forkBots = yield* ForkBots.ForkBots;
+      const { caller, limits } = yield* loadCaller();
+      if (caller === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Only the project's coordinator can propose a bot.",
+        });
+      }
+      const proposal = yield* forkBots
+        .propose(draft, { threadId: caller.id, limits })
+        .pipe(Effect.mapError(toFailure));
+      return { id: proposal.id };
+    }),
+  ),
 });

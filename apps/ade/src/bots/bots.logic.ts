@@ -153,7 +153,15 @@ export const NIGHTLY_CONSOLIDATION_PROMPT = [
   "2. Fusiona duplicados entre notas de agentes en una sola con project_memory_save y `replaces`, sin perder información. Las notas del usuario y las esenciales no se pueden sustituir: si sobran o se repiten, propónlo.",
   "3. Si una nota de agente quedó obsoleta porque otra la sustituye, añádela a `replaces`.",
   "4. Termina proponiendo, con su id, qué notas esenciales bajarías a buscables y cuáles borrarías, para que el usuario decida.",
+  "5. Repasa las peticiones del usuario de los últimos 30 días en este hilo y en la memoria. Si pidió al menos 3 veces algo parecido que ningún bot cubre, propón un bot con bot_propose (nombre, rol, instrucciones, rutina y el porqué con fechas). Antes, busca «dijo que no» con project_memory_search y no propongas nada parecido a lo rechazado. Si no hay un caso claro, no propongas nada.",
 ].join("\n");
+
+const NIGHTLY_TITLE = "Consolidación nocturna";
+
+/** The coordinator's nightly task, also one saved with an older prompt so it can be updated. */
+export function isNightlyTask(task: Pick<ScheduledTask, "title">): boolean {
+  return task.title.startsWith(`${NIGHTLY_TITLE} · `);
+}
 
 export type CoordinatorRoutine =
   | {
@@ -163,7 +171,7 @@ export type CoordinatorRoutine =
       readonly timeOfDay: string;
     }
   | { readonly kind: "webhook"; readonly title: string; readonly prompt: string }
-  | { readonly kind: "nightly" };
+  | { readonly kind: "nightly"; readonly id?: ScheduledTask["id"] | undefined };
 
 /** Routines continue the coordinator's own thread, so they run as it, with its memory tools. */
 export function coordinatorRoutineInput(
@@ -174,7 +182,8 @@ export function coordinatorRoutineInput(
   const content =
     routine.kind === "nightly"
       ? {
-          title: `Consolidación nocturna · ${bot.name}`,
+          ...(routine.id === undefined ? {} : { id: routine.id }),
+          title: `${NIGHTLY_TITLE} · ${bot.name}`,
           prompt: NIGHTLY_CONSOLIDATION_PROMPT,
           schedule: { type: "fixed_time", timeOfDay: "03:00" } as const,
         }

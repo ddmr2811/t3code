@@ -23,6 +23,11 @@ export const FORK_BOTS_HANDOFF_MAX_HOPS = 4;
 /** Handoffs kept on disk; an id older than the last ones is no longer recognised as a repeat. */
 export const FORK_BOTS_HANDOFF_HISTORY = 100;
 export const FORK_BOTS_HANDOFF_PREVIEW_LENGTH = 200;
+/** Proposals kept on disk; a rejected one in it stops the same bot being proposed again. */
+export const FORK_BOTS_PROPOSAL_HISTORY = 100;
+const FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH = 500;
+/** A coordinator proposes at most one bot per project within this window. */
+export const FORK_BOTS_PROPOSAL_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const SINGLE_LINE_CONTROL_PATTERN = /[\u0000-\u001f\u007f]/;
 const MULTILINE_CONTROL_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
@@ -117,6 +122,42 @@ export const ForkBotHandoff = Schema.Struct({
 });
 export type ForkBotHandoff = typeof ForkBotHandoff.Type;
 
+export const ForkBotProposalId = ForkBotHandoffId;
+export type ForkBotProposalId = typeof ForkBotProposalId.Type;
+
+export const ForkBotProposalNote = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH),
+  noMultilineControl,
+);
+
+/** A bot the project's coordinator suggests; nothing is created until the user accepts it. */
+export const ForkBotProposal = Schema.Struct({
+  id: ForkBotProposalId,
+  projectId: ProjectId,
+  proposedBy: ForkBotId,
+  handle: ForkBotHandle,
+  name: ForkBotName,
+  role: ForkBotRole,
+  instructions: ForkBotInstructions,
+  /** Described, not scheduled: the user adds it from the bot once it exists. */
+  routine: ForkBotProposalNote,
+  /** The repeated requests that led to it. */
+  reason: ForkBotProposalNote,
+  runtimeMode: RuntimeMode,
+  modelSelection: ForkFailoverTarget,
+  status: Schema.Literals(["pending", "accepted", "rejected"]),
+  botId: Schema.NullOr(ForkBotId),
+  createdAt: IsoDateTime,
+  decidedAt: Schema.NullOr(IsoDateTime),
+});
+export type ForkBotProposal = typeof ForkBotProposal.Type;
+
+export const ForkBotAnswerProposalInput = Schema.Struct({
+  id: ForkBotProposalId,
+  answer: Schema.Literals(["accept", "reject"]),
+});
+export type ForkBotAnswerProposalInput = typeof ForkBotAnswerProposalInput.Type;
+
 export const ForkBotListInput = Schema.Struct({});
 export type ForkBotListInput = typeof ForkBotListInput.Type;
 
@@ -124,6 +165,10 @@ export const ForkBotListResult = Schema.Struct({
   bots: Schema.Array(ForkBot).check(Schema.isMaxLength(FORK_BOTS_MAX_COUNT)),
   /** Oldest first. */
   handoffs: Schema.Array(ForkBotHandoff).check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY)),
+  /** Oldest first. A server without proposals sends none. */
+  proposals: Schema.Array(ForkBotProposal)
+    .check(Schema.isMaxLength(FORK_BOTS_PROPOSAL_HISTORY))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   updatedAt: Schema.NullOr(IsoDateTime),
 });
 export type ForkBotListResult = typeof ForkBotListResult.Type;

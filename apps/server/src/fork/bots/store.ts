@@ -1,9 +1,11 @@
 import {
   FORK_BOTS_HANDOFF_HISTORY,
   FORK_BOTS_MAX_COUNT,
+  FORK_BOTS_PROPOSAL_HISTORY,
   FORK_BOTS_PROTOCOL_VERSION,
   ForkBot,
   ForkBotHandoff,
+  ForkBotProposal,
   type ForkBotListResult,
   IsoDateTime,
 } from "@t3tools/contracts";
@@ -33,6 +35,10 @@ export const StoredBotDirectory = Schema.Struct({
   handoffs: Schema.Array(ForkBotHandoff)
     .check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Oldest first. */
+  proposals: Schema.Array(ForkBotProposal)
+    .check(Schema.isMaxLength(FORK_BOTS_PROPOSAL_HISTORY))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;
 
@@ -41,6 +47,7 @@ export const EMPTY_BOT_DIRECTORY: StoredBotDirectory = {
   updatedAt: null,
   bots: [],
   handoffs: [],
+  proposals: [],
 };
 
 export const decodeStoredBotDirectory = Schema.decodeUnknownEffect(
@@ -53,6 +60,7 @@ export function listBots(directory: StoredBotDirectory): ForkBotListResult {
       (left, right) => left.name.localeCompare(right.name, "es") || left.id.localeCompare(right.id),
     ),
     handoffs: directory.handoffs,
+    proposals: directory.proposals,
     updatedAt: directory.updatedAt,
   };
 }
