@@ -13,6 +13,7 @@ import {
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
@@ -101,6 +102,17 @@ export const filesAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     const session = AsyncResult.getOrElse(result, () => null);
     return session === null ? null : sessionGrantsScope(session, AuthFilesystemReadScope);
   }).pipe(Atom.withLabel(`ade-files-access:${environmentId}`)),
+);
+
+/** Whether this ADE's session may read a machine's usage; false on a pairing older than F7. */
+export const diagnosticsAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const result = get(environmentSession.sessionStateAtom(environmentId));
+    // A failed revalidation proves neither way; it must not ask to pair again.
+    if (result._tag === "Failure") return null;
+    const session = AsyncResult.getOrElse(result, () => null);
+    return session === null ? null : sessionGrantsScope(session, AuthDiagnosticsReadScope);
+  }).pipe(Atom.withLabel(`ade-diagnostics-access:${environmentId}`)),
 );
 
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();

@@ -10,7 +10,6 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, PROVIDER_DISPLAY_NAMES, WS_METHODS } from "@t3tools/contracts";
-import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { memo } from "react";
@@ -33,8 +32,9 @@ import {
   ThreadStateBadge,
 } from "../sidebar/Sidebar.tsx";
 import type { ThreadState } from "../sidebar/sidebar.logic.ts";
-import { serverEnvironment } from "../state.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
+import { SpendCard } from "./Spend.tsx";
+import { limitAccountsAtom } from "./spend.state.ts";
 
 export type View = "inicio" | "resumen" | "proyectos" | "tablero" | "respaldo" | "bots";
 
@@ -90,17 +90,6 @@ const sessionGroupsAtom = Atom.make((get) => groupSessions(get(listedThreadsAtom
 const pullRequestsAtom = Atom.make((get) => openPullRequests(get(listedThreadsAtom))).pipe(
   Atom.withLabel("ade-open-pull-requests"),
 );
-const limitAccountsAtom = Atom.make((get) => {
-  const catalog = get(environmentCatalog.catalogValueAtom);
-  return collectLimitAccounts(
-    new Map(
-      [...catalog.entries].map(([environmentId, entry]) => [
-        environmentId,
-        { entry, serverConfig: get(serverEnvironment.configValueAtom(environmentId)) },
-      ]),
-    ),
-  );
-}).pipe(Atom.withLabel("ade-limit-accounts"));
 
 // Fork servers stream their load about every second while a card listens, and stop after.
 const hostLoad = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
@@ -479,6 +468,7 @@ function Summary() {
         <CoordinationSummaryCard />
         <FailoverSummaryCard />
         <UsageCard />
+        <SpendCard />
         <PullRequestsCard />
       </div>
       <ExtensionPanel />

@@ -39,6 +39,7 @@ import { BotAvatar } from "./BotAvatar.tsx";
 import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
+import { BotSpend } from "../overview/Spend.tsx";
 import {
   allBotsAtom,
   forkBotsHandoffCommand,
@@ -357,6 +358,17 @@ function MachineBots(props: {
                     <span className="ade-bot-meta">
                       {bot.modelSelection.instanceId} · {bot.modelSelection.model}
                     </span>
+                    {/* Only a thread the card already follows, or the one you picked, is read. */}
+                    {bot.threadId !== null &&
+                    (bot.id === selectedBotId ||
+                      state.status === "working" ||
+                      state.status === "needs-you") ? (
+                      <BotSpend
+                        environmentId={environmentId}
+                        threadId={bot.threadId}
+                        model={bot.modelSelection.model}
+                      />
+                    ) : null}
                   </span>
                   <span className="ade-bot-status" data-status={state.status}>
                     {state.label}

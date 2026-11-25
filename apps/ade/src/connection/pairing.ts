@@ -18,6 +18,7 @@ import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
@@ -40,15 +41,15 @@ import { failureText } from "./status.ts";
 import { storedRegistration } from "./storage.ts";
 import { machinesChanged } from "./tabs.ts";
 
-// Read threads; answer approvals and questions and send turns. Both of the latter are
-// orchestration commands, and `orchestration:operate` is the only scope that dispatches them.
-// Also the extension sidecars, which only a link that carries `fork:gateway` grants, and the
-// images and videos a reply names by path, which the machine serves only to `filesystem:read`.
+// Read threads and operate them (approvals, questions, turns); extension sidecars
+// (`fork:gateway`); files a reply names by path (`filesystem:read`); and the usage summary
+// behind the Gasto card (`diagnostics:read`).
 export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthForkGatewayScope,
   AuthFilesystemReadScope,
+  AuthDiagnosticsReadScope,
 ];
 
 export interface PairingInput {
