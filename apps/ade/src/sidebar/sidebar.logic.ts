@@ -6,12 +6,18 @@ import {
 } from "@t3tools/client-runtime/state/thread-status";
 import { type EnvironmentId, isListedThreadLineage, type ProjectId } from "@t3tools/contracts";
 
+// Shared with apps/web's fork: the same rule decides who "needs you" on both surfaces.
+import { threadNeedsYou } from "../../../web/src/fork/decisions/decisions.logic.ts";
+
 export type ThreadState = "needs-you" | "working" | "error" | "done";
 
-type StateInput = ThreadStatusInput;
+type StateInput = ThreadStatusInput & Parameters<typeof threadNeedsYou>[0];
 
 /** The thread's mark in T3's words, bucketed for the ADE's counters and groups. */
 export function threadState(thread: StateInput): ThreadState {
+  // What the decisions panel counts, and a parent whose subagent asks, read as waiting on you
+  // first, even while the thread's own work runs in the background.
+  if (threadNeedsYou(thread) || thread.pendingSubagentRequest != null) return "needs-you";
   switch (resolveThreadStatusKind(thread)) {
     case "approval":
     case "input":

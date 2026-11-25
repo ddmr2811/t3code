@@ -28,6 +28,8 @@ const runtime = (status: "running" | "idle" | "failed") =>
 
 type StateInput = Parameters<typeof threadState>[0];
 const stateInput = (overrides: Partial<StateInput> = {}): StateInput => ({
+  archivedAt: null,
+  deletedAt: null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingGuestMessageCount: 0,
@@ -64,6 +66,16 @@ describe("threadState", () => {
         pendingBackgroundTasks: [{ taskId: "task-1", kind: "subagent", description: "Revisar" }],
       }),
       "working",
+    ],
+    // As the decisions panel counts it, though its background work also holds the thread.
+    [
+      "a ready plan with background work",
+      stateInput({
+        interactionMode: "plan",
+        hasActionableProposedPlan: true,
+        pendingBackgroundTasks: [{ taskId: "task-1", kind: "subagent", description: "Revisar" }],
+      }),
+      "needs-you",
     ],
     [
       "a failure not yet opened",

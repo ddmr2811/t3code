@@ -31,6 +31,8 @@ const botThread = (
   lastVisitedAt = "2026-11-23T09:00:00.000Z",
   overrides: Partial<BotThread> = {},
 ): BotThread => ({
+  archivedAt: null,
+  deletedAt: null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingGuestMessageCount: 0,
