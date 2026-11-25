@@ -3002,6 +3002,7 @@ button.ade-subagent:hover .ade-subagent-open {
   display: grid;
   min-height: 0;
   overflow: hidden;
+  container-type: size;
 }
 
 /* The art stays on the visible box; only this column scrolls. */
@@ -3016,10 +3017,6 @@ button.ade-subagent:hover .ade-subagent-open {
 /* Solo con el fondo Luna: con «Liso» o una imagen propia el Inicio queda como lo eligió el usuario.
    La foto ya viene tramada (el script está en el commit que añadió home-art.png); aquí solo se
    pinta en puntos del acento. Foto: Ansel Adams, «The Tetons – Snake River», NARA 519904, dominio público. */
-.ade-home {
-  container-type: size;
-}
-
 .ade-home-art {
   --cell: max(4px, 100cqw / 721, 100cqh / 401);
   display: none;
@@ -3185,9 +3182,11 @@ button.ade-subagent:hover .ade-subagent-open {
 }
 
 .ade-composer-home .ade-composer-where {
-  padding: 0 8px;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(10 11 14 / 0.75);
   color: #d6d6db;
-  text-shadow: 0 1px 10px rgb(0 0 0 / 0.9);
 }
 
 .ade-home-projects {
