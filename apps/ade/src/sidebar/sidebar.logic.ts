@@ -11,7 +11,9 @@ import { threadNeedsYou } from "../../../web/src/fork/decisions/decisions.logic.
 
 export type ThreadState = "needs-you" | "working" | "error" | "done";
 
-type StateInput = ThreadStatusInput & Parameters<typeof threadNeedsYou>[0];
+type StateInput = ThreadStatusInput &
+  Parameters<typeof threadNeedsYou>[0] &
+  Partial<Pick<EnvironmentThreadShell, "settledAt">>;
 
 /** The thread's mark in T3's words, bucketed for the ADE's counters and groups. */
 export function threadState(thread: StateInput): ThreadState {
@@ -29,8 +31,9 @@ export function threadState(thread: StateInput): ThreadState {
     case "connecting":
     case "waiting":
       return "working";
+    // Settling a failed thread is how the user dismisses it.
     case "failed":
-      return "error";
+      return thread.settledAt == null ? "error" : "done";
     default:
       return "done";
   }

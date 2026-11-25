@@ -91,6 +91,15 @@ describe("threadState", () => {
       }),
       "done",
     ],
+    [
+      "a failure the user settled without opening",
+      stateInput({
+        latestRun: run("failed"),
+        runtime: runtime("failed") as StateInput["runtime"],
+        settledAt: "2026-11-23T11:00:00.000Z",
+      }),
+      "done",
+    ],
     ["a finished turn", stateInput(), "done"],
   ])("%s → %s", (_name, input, expected) => {
     expect(threadState(input)).toBe(expected);

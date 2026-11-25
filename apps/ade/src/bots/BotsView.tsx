@@ -790,6 +790,32 @@ const FALLBACK_TEXT: Record<NonNullable<ForkBotDraft["fallbackReason"]>, string>
   invalidReply: "Propuesta sin IA: el modelo devolvió un borrador que no sirve.",
 };
 
+/** A machine paired without permission to draft (read-only) is not offered as a destination. */
+function MachineProjectOptions(props: { machine: BotMachine; label: string; text: string }) {
+  const { machine } = props;
+  const canDraft = useAtomValue(forkBotsDraftCommand.permissionAtom(machine.environmentId));
+  if (canDraft !== true) return null;
+  const suggested = suggestBotProject(props.text, machine.projects);
+  return (
+    <optgroup label={props.label}>
+      {machine.projects.length === 0 ? (
+        <option disabled>Cargando proyectos…</option>
+      ) : (
+        machine.projects
+          .toSorted((left, right) => Number(right.id === suggested) - Number(left.id === suggested))
+          .map((project) => (
+            <option
+              key={project.id}
+              value={`${machine.environmentId}${MODEL_SEPARATOR}${project.id}`}
+            >
+              {project.title}
+            </option>
+          ))
+      )}
+    </optgroup>
+  );
+}
+
 /** One sentence in, a proposed bot out; «Crear» saves it as proposed, «Ajustar» opens the form. */
 function QuickCreate(props: {
   fallbackEnv: EnvironmentId;
@@ -974,33 +1000,14 @@ function QuickCreate(props: {
             onChange={(event) => setPickKey(event.target.value)}
           >
             <option value="">Elige…</option>
-            {machines.map((machine) => {
-              const suggested = suggestBotProject(text, machine.projects);
-              return (
-                <optgroup
-                  key={machine.environmentId}
-                  label={props.machineLabel(machine.environmentId)}
-                >
-                  {machine.projects.length === 0 ? (
-                    <option disabled>Cargando proyectos…</option>
-                  ) : (
-                    machine.projects
-                      .toSorted(
-                        (left, right) =>
-                          Number(right.id === suggested) - Number(left.id === suggested),
-                      )
-                      .map((project) => (
-                        <option
-                          key={project.id}
-                          value={`${machine.environmentId}${MODEL_SEPARATOR}${project.id}`}
-                        >
-                          {project.title}
-                        </option>
-                      ))
-                  )}
-                </optgroup>
-              );
-            })}
+            {machines.map((machine) => (
+              <MachineProjectOptions
+                key={machine.environmentId}
+                machine={machine}
+                label={props.machineLabel(machine.environmentId)}
+                text={text}
+              />
+            ))}
           </select>
           <button
             type="button"

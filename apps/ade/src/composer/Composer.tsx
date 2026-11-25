@@ -215,7 +215,10 @@ export async function runCommand<W extends { readonly environmentId: Environment
   const error = squashAtomCommandFailure(result);
   const detail = isAuthorizationError(error)
     ? `la máquina pide el permiso ${error.requiredScope}, que esta sesión no tiene`
-    : errorDisplayMessage(error);
+    : // An older server answers a method it lacks with this defect.
+      error instanceof Error && error.message.startsWith("Unknown request tag: ")
+      ? "esta máquina tiene un servidor T3 anterior que aún no tiene esta función; elige otra o actualízala"
+      : errorDisplayMessage(error);
   return detail === null ? `${failure}.` : `${failure}: ${detail}`;
 }
 
