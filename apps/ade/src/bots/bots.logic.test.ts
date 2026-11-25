@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { botState, coordinatorRoutineInput, parseMention, validateBotDraft } from "./bots.logic.ts";
 
 type BotThread = NonNullable<Parameters<typeof botState>[1]>;
-type RunStatus = "running" | "completed" | "failed" | "interrupted";
+type RunStatus = "running" | "completed" | "failed" | "interrupted" | "cancelled";
 
 // The run ended at 10:05; visits before that have not seen it, visits after have.
 const botThread = (
@@ -28,7 +28,7 @@ const botThread = (
     assistantMessageId: null,
   },
   runtime: {
-    status: status === "completed" ? "idle" : status,
+    status: status === "completed" || status === "cancelled" ? "idle" : status,
     activeRunId: status === "running" ? RunId.make("run-1") : null,
   } as BotThread["runtime"],
   lastVisitedAt,
@@ -50,6 +50,7 @@ describe("botState", () => {
     ["a running turn", false, botThread("running"), false, "working"],
     ["a failure not yet opened", false, botThread("failed"), false, "error"],
     ["a turn cut and not yet opened", false, botThread("interrupted"), false, "error"],
+    ["a turn the user stopped, not yet opened", false, botThread("cancelled"), false, "error"],
     ["a cut turn the user already opened", false, botThread("interrupted", SEEN), false, "asleep"],
     ["a finished turn not yet opened", false, botThread("completed"), false, "done"],
     [

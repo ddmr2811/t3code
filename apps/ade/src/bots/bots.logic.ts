@@ -113,7 +113,9 @@ export function botState(
   if (state === "error") return { status: "error", label: "Error" };
   const run = thread.latestRun;
   const unseen = run !== null && endedAfter(run, thread.lastVisitedAt);
-  if (run?.status === "interrupted" && unseen) return { status: "error", label: "Cortado" };
+  if ((run?.status === "interrupted" || run?.status === "cancelled") && unseen) {
+    return { status: "error", label: "Cortado" };
+  }
   if (run?.status === "completed" && (unseen || routineScheduled)) {
     return { status: "done", label: "Hecho" };
   }
