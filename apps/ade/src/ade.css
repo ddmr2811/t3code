@@ -2364,6 +2364,24 @@ button.ade-subagent:hover .ade-subagent-open {
   white-space: nowrap;
 }
 
+/* Gasto: the model's name is never cut; the amount moves to its own line when both do not fit. */
+.ade-spend-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.ade-spend-rows .ade-summary-name {
+  flex: 0 1 auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ade-spend-rows .ade-summary-aside {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
 .ade-summary-aside {
   display: flex;
   align-items: center;

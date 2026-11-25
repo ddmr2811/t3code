@@ -41,14 +41,16 @@ export interface GastoRow {
 
 interface GastoTotals {
   readonly tokens: number;
-  /** Reported plus list-price money; subscriptions and unpriced tokens add nothing. */
+  /** Money billed per use (reported, or part reported), as the Gasto card counts it. */
   readonly costUsd: number;
-  /** The list-price part of `costUsd`, nothing billed. */
-  readonly estimatedUsd: number;
-  /** Groups part reported and part list price, as the Gasto card's «incluye est.». */
+  /** The part of `costUsd` from groups that also hold list-price estimates. */
   readonly mixedUsd: number;
-  /** Whether any priced line counts: without one the cost is unknown, not zero. */
-  readonly priced: boolean;
+  /** List price of tokens nobody billed; shown apart. */
+  readonly estimatedUsd: number;
+  /** Whether anything was billed per use: without it there is no amount to show. */
+  readonly paid: boolean;
+  /** Whether a subscription covers part of it. */
+  readonly flat: boolean;
   readonly requests: number;
 }
 
@@ -73,10 +75,11 @@ function totals(rows: ReadonlyArray<GastoRow>): GastoTotals {
   const sum = (pick: (row: GastoRow) => number) => rows.reduce((acc, row) => acc + pick(row), 0);
   return {
     tokens: sum((row) => row.tokens),
-    costUsd: sum((row) => row.costUsd),
-    estimatedUsd: sum((row) => (row.kind === "estimated" ? row.costUsd : 0)),
+    costUsd: sum((row) => (row.kind === "real" || row.kind === "mixed" ? row.costUsd : 0)),
     mixedUsd: sum((row) => (row.kind === "mixed" ? row.costUsd : 0)),
-    priced: rows.some((row) => isPriced(row.kind)),
+    estimatedUsd: sum((row) => (row.kind === "estimated" ? row.costUsd : 0)),
+    paid: rows.some((row) => row.kind === "real" || row.kind === "mixed"),
+    flat: rows.some((row) => row.kind === "flat"),
     requests: sum((row) => row.requests),
   };
 }

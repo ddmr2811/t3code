@@ -17,9 +17,12 @@ import { PairingForm } from "../Machines.tsx";
 import { environmentSession, environmentThreadDetails, serverEnvironment } from "../state.ts";
 import {
   botEstimate,
+  hasPaidUse,
+  modelLimitShare,
   ratesByModel,
   rulerTicks,
   type SpendLine,
+  type SpendPeriod,
   spendSummary,
   weekWindow,
   widenScopes,
@@ -32,6 +35,14 @@ const REFRESH_MS = 60_000;
 
 const usd = (value: number) => formatUsd(value, "es-ES");
 const percent = (share: number) => `${Math.round(share * 100)} %`;
+
+/** The money billed per use, or what stands for it when nothing was: «0,00 US$» reads as free. */
+export function paidFigure(period: SpendPeriod): string {
+  if (hasPaidUse(period)) return usd(period.realUsd);
+  return period.lines.some((line) => line.kind === "flat")
+    ? "Incluido en suscripciones"
+    : "Sin API de pago";
+}
 
 function readCap(): string {
   try {
@@ -222,10 +233,14 @@ export function SpendCard(props: { onOpenGasto: () => void }) {
     <section className="ade-summary-card">
       <h2 className="ade-label">Gasto</h2>
       <p className="ade-summary-figure" data-level={hasCap && week > cap ? "full" : undefined}>
-        {usd(week)}
-        {hasCap ? <span className="ade-spend-of"> de {usd(cap)}</span> : null}
+        {paidFigure(spend.week)}
+        {hasCap && hasPaidUse(spend.week) ? (
+          <span className="ade-spend-of"> de {usd(cap)}</span>
+        ) : null}
       </p>
-      <p className="ade-summary-caption">esta semana · hoy {usd(spend.today.realUsd)}</p>
+      <p className="ade-summary-caption">
+        esta semana{hasPaidUse(spend.today) ? ` · hoy ${usd(spend.today.realUsd)}` : ""}
+      </p>
       {spend.week.mixedUsd > 0 ? (
         <p className="ade-summary-caption">
           {usd(spend.week.mixedUsd)} de esa cifra{" "}
@@ -239,13 +254,16 @@ export function SpendCard(props: { onOpenGasto: () => void }) {
         </p>
       ) : null}
       {hasCap ? <Ruler valueUsd={week} capUsd={cap} /> : null}
-      <ul className="ade-summary-rows">
+      <ul className="ade-summary-rows ade-spend-rows">
         {spend.week.lines.slice(0, SHOWN_LINES).map((line) => (
           <li key={`${line.provider}:${line.model}:${line.kind}`}>
             <span className="ade-summary-name">{line.model}</span>
             <span className="ade-summary-aside" data-kind={line.kind}>
               {line.kind === "unpriced" ? line.provider : LINE_LABEL[line.kind]}
-              <LineAmount line={line} limitShare={flat.peaks.get(line.provider)} />
+              <LineAmount
+                line={line}
+                limitShare={modelLimitShare(flat.limits, line.provider, line.model)}
+              />
             </span>
           </li>
         ))}
@@ -260,20 +278,21 @@ export function SpendCard(props: { onOpenGasto: () => void }) {
       ) : null}
       {widen}
       <label className="ade-spend-cap">
-        Tope semanal
+        {hasCap ? "Tope semanal" : "Sin tope semanal"}
         <input
           type="number"
           min={0}
           step={1}
           inputMode="decimal"
-          placeholder="sin tope"
+          placeholder="US$"
+          aria-label="Tope semanal en US$"
           value={capText}
           onChange={(event) => {
             setCapText(event.target.value);
             writeCap(event.target.value);
           }}
         />
-        US$
+        {capText === "" ? null : "US$"}
       </label>
       <button
         type="button"

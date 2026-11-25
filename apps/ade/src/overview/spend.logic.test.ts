@@ -16,6 +16,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { binKey, gasto, trend } from "./gasto.logic.ts";
 import {
   botEstimate,
+  modelLimitShare,
   ratesByModel,
   rulerTicks,
   spendSummary,
@@ -313,13 +314,19 @@ describe("gasto", () => {
     ]);
     expect(week.current).toEqual({
       tokens: 2000,
-      costUsd: 7,
-      estimatedUsd: 4,
+      costUsd: 3,
       mixedUsd: 0,
-      priced: true,
+      estimatedUsd: 4,
+      paid: true,
+      flat: false,
       requests: 4,
     });
-    expect(week.previous).toMatchObject({ tokens: 1000, costUsd: 2, requests: 2 });
+    expect(week.previous).toMatchObject({
+      tokens: 1000,
+      estimatedUsd: 2,
+      paid: false,
+      requests: 2,
+    });
     expect(week.bins.map((bin) => [bin.key, bin.tokens])).toEqual([
       ["2026-11-19", 0],
       ["2026-11-20", 1000],
@@ -334,7 +341,7 @@ describe("gasto", () => {
   it("counts a subscription's tokens but not its list price", () => {
     const flat = new Map([["pc" as EnvironmentId, new Set(["claude" as const])]]);
     const week = gasto(usage, flat, "7d", "2026-11-25");
-    expect(week.current).toMatchObject({ tokens: 2000, costUsd: 3, estimatedUsd: 0 });
+    expect(week.current).toMatchObject({ tokens: 2000, costUsd: 3, estimatedUsd: 0, flat: true });
   });
 
   it("has no previous period for «Todo» and charts from the first day with usage", () => {
@@ -363,5 +370,31 @@ describe("gasto", () => {
     [null, 2, null],
   ] as const)("trend of %s against %s is %s", (current, previous, expected) => {
     expect(trend(current, previous)).toBe(expected);
+  });
+});
+
+describe("modelLimitShare", () => {
+  // As dev-cx53 reads them: OpenCode Go's windows name no model, they are the whole account's.
+  const limits = [
+    {
+      provider: "opencode" as const,
+      windows: [
+        { usedPercent: 4 },
+        { usedPercent: 42 },
+        { usedPercent: 10, modelIds: ["opencode/gemini-4-neon"] },
+      ],
+    },
+    { provider: "codex" as const, windows: [{ usedPercent: 71 }] },
+  ];
+
+  it.each([
+    // Kimi, Gemini and Grok all went through OpenCode: none inherits the account's 42 %.
+    ["opencode", "kimi-k3", undefined],
+    ["opencode", "grok-5", undefined],
+    ["opencode", "gemini-4-neon", 0.1],
+    ["codex", "gpt-6", undefined],
+    ["claude", "claude-opus-5-5", undefined],
+  ] as const)("%s %s uses %s of a limit", (provider, model, expected) => {
+    expect(modelLimitShare(limits, provider, model)).toBe(expected);
   });
 });

@@ -2,6 +2,7 @@ import {
   type AuthEnvironmentScope,
   AuthUsageReadScope,
   type EnvironmentId,
+  type ServerProviderUsageWindow,
   type SessionGrantInput,
   sessionGrantsScope,
   USAGE_CONTRACT_VERSION,
@@ -166,6 +167,35 @@ export function spendSummary(
     today: period(todayOnly, flatByEnvironment),
     week: period(environments, flatByEnvironment),
   };
+}
+
+/** Whether any of it was billed per use: a reported or part-reported group. */
+export const hasPaidUse = (period: SpendPeriod) =>
+  period.lines.some((line) => line.kind === "real" || line.kind === "mixed");
+
+export interface ProviderLimits {
+  readonly provider: UsageProviderKind;
+  readonly windows: ReadonlyArray<Pick<ServerProviderUsageWindow, "usedPercent" | "modelIds">>;
+}
+
+/**
+ * The fullest limit window (0–1) that names this model. A window naming no model is the whole
+ * account's (OpenCode Go covers several models), so it is no single model's share.
+ */
+export function modelLimitShare(
+  limits: ReadonlyArray<ProviderLimits>,
+  provider: UsageProviderKind,
+  model: string,
+): number | undefined {
+  let peak: number | undefined;
+  for (const account of limits) {
+    if (account.provider !== provider) continue;
+    for (const window of account.windows) {
+      if (!window.modelIds?.some((id) => id === model || id.endsWith(`/${model}`))) continue;
+      peak = Math.max(peak ?? 0, window.usedPercent / 100);
+    }
+  }
+  return peak;
 }
 
 /** Whether a machine's own summary says some transcripts could not be read: its total is short. */

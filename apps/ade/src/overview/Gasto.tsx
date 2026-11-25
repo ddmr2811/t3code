@@ -88,6 +88,8 @@ function Stat(props: {
   current: number | null;
   previous: number | null;
   format: (value: number) => string;
+  /** What the figure reads when it is unknown. */
+  missing?: string;
   /** «Todo»: no period before, only where the usage read starts. */
   since: string | null;
   notes?: ReadonlyArray<string>;
@@ -96,7 +98,7 @@ function Stat(props: {
     <section className="ade-gasto-stat">
       <h2 className="ade-label">{props.label}</h2>
       <p className="ade-gasto-figure">
-        {props.current === null ? "Sin datos" : props.format(props.current)}
+        {props.current === null ? (props.missing ?? "Sin datos") : props.format(props.current)}
       </p>
       {props.current === null ? null : props.since !== null ? (
         <span className="ade-gasto-trend">desde {day(props.since)}</span>
@@ -216,16 +218,17 @@ export function GastoView() {
             />
             <Stat
               label="Coste"
-              current={current.priced ? current.costUsd : null}
-              previous={previous?.priced ? previous.costUsd : null}
+              current={current.paid ? current.costUsd : null}
+              previous={previous?.paid ? previous.costUsd : null}
               format={usd}
+              missing={current.flat ? "Incluido en suscripciones" : "Sin API de pago"}
               since={since}
               notes={[
-                ...(current.estimatedUsd > 0
-                  ? [`incluye ${usd(current.estimatedUsd)} est. a tarifa`]
-                  : []),
                 ...(current.mixedUsd > 0
                   ? [`${usd(current.mixedUsd)} de esa cifra incluye est. a tarifa`]
+                  : []),
+                ...(current.estimatedUsd > 0
+                  ? [`+ ${usd(current.estimatedUsd)} est. a tarifa, sin factura`]
                   : []),
               ]}
             />
