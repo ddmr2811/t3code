@@ -18,12 +18,12 @@ import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
-  AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthTerminalOperateScope,
+  AuthUsageReadScope,
   type AuthEnvironmentScope,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -43,13 +43,13 @@ import { machinesChanged } from "./tabs.ts";
 
 // Read threads and operate them (approvals, questions, turns); extension sidecars
 // (`fork:gateway`); files a reply names by path (`filesystem:read`); and the usage summary
-// behind the Gasto card (`diagnostics:read`).
+// behind the Gasto card (`usage:read`, which opens nothing else).
 export const ADE_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthForkGatewayScope,
   AuthFilesystemReadScope,
-  AuthDiagnosticsReadScope,
+  AuthUsageReadScope,
 ];
 
 export interface PairingInput {

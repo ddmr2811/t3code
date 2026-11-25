@@ -17,6 +17,7 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
+  AuthUsageReadScope,
 } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -60,6 +61,13 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthDiagnosticsReadScope,
     title: msg("View diagnostics and usage"),
     description: msg("Read process diagnostics, resource history, and usage totals."),
+  },
+  {
+    scope: AuthUsageReadScope,
+    title: msg("View usage totals"),
+    description: msg(
+      "Read token and spend totals by day, provider, and model. No other diagnostics.",
+    ),
   },
   {
     scope: AuthTerminalReadScope,

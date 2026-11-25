@@ -18,6 +18,7 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthDiagnosticsReadScope,
+  AuthUsageReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -363,7 +364,12 @@ export const layer = (
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
-    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+    // Fork: `usage:read` reaches the usage summary and nothing else; diagnostics still does too.
+    const usageOnly =
+      rpc._tag === WS_METHODS.serverGetUsageSummary && scopes.includes(AuthUsageReadScope);
+    const requiredScope = usageOnly
+      ? undefined
+      : requiredScopes.find((scope) => !scopes.includes(scope));
     if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
     return onAuthorized === undefined
       ? effect

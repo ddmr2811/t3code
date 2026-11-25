@@ -5,7 +5,7 @@ import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/runtime.ts";
-import { diagnosticsAccessAtom, serverEnvironment } from "../state.ts";
+import { serverEnvironment, usageAccessAtom } from "../state.ts";
 
 export const limitAccountsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
@@ -53,7 +53,7 @@ export const flatProvidersAtom = Atom.make((get) => {
 
 export interface SpendUsage {
   readonly environments: ReadonlyArray<EnvironmentUsage>;
-  /** Machines paired before F7, without `diagnostics:read`: pairing again is the way out. */
+  /** Machines paired before F7, without `usage:read`: pairing again is the way out. */
   readonly needsPairing: ReadonlyArray<string>;
   /** Machines whose session check or usage read failed; their spend is missing from the total. */
   readonly failed: ReadonlyArray<string>;
@@ -74,7 +74,7 @@ export const spendUsageAtom = Atom.family((windowKey: string) =>
     let pending = false;
     for (const environmentId of enabledEnvironmentIds(catalog)) {
       const label = catalog.entries.get(environmentId)?.target.label ?? environmentId;
-      const access = get(diagnosticsAccessAtom(environmentId));
+      const access = get(usageAccessAtom(environmentId));
       if (access === false) needsPairing.push(label);
       if (access === "unknown") failed.push(label);
       if (access !== true) {

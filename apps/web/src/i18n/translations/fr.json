@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Ouvrir des aperçus dans le navigateur et héberger l’automatisation du navigateur.",
   "2d2eb19fbba4d272": "Voir les diagnostics et l’utilisation",
   "2a708b0c5ffe07fe": "Lire les diagnostics des processus, l’historique des ressources et les totaux d’utilisation.",
+  "482bfd25a8a74784": "Voir les totaux d’utilisation",
+  "e80df779810fe4c5": "Lire les totaux de jetons et de dépenses par jour, fournisseur et modèle. Aucun autre diagnostic.",
   "128c7167031e28d6": "Voir les terminaux",
   "4c63765d186debca": "Lire la sortie et le statut des terminaux existants.",
   "df85bf6f7aeac38f": "Utiliser les terminaux",

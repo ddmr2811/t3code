@@ -13,11 +13,11 @@ import {
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
 import {
-  AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   AuthForkGatewayScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
+  AuthUsageReadScope,
   type EnvironmentId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -105,14 +105,14 @@ export const filesAccessAtom = Atom.family((environmentId: EnvironmentId) =>
 );
 
 /** Whether this ADE's session may read a machine's usage; false on a pairing older than F7. */
-export const diagnosticsAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+export const usageAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
     const result = get(environmentSession.sessionStateAtom(environmentId));
     // A failed revalidation proves neither way: the card says it could not read, not to re-pair.
     if (result._tag === "Failure") return "unknown";
     const session = AsyncResult.getOrElse(result, () => null);
-    return session === null ? null : sessionGrantsScope(session, AuthDiagnosticsReadScope);
-  }).pipe(Atom.withLabel(`ade-diagnostics-access:${environmentId}`)),
+    return session === null ? null : sessionGrantsScope(session, AuthUsageReadScope);
+  }).pipe(Atom.withLabel(`ade-usage-access:${environmentId}`)),
 );
 
 let previousOperable: ReadonlySet<EnvironmentId> = new Set();
