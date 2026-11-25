@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ModelSelection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,6 +12,7 @@ import {
   acceptImages,
   defaultNewThreadSettings,
   effortBars,
+  type MenuProject,
   menuProviders,
   providerChoices,
   turnSettings,
@@ -171,10 +173,12 @@ describe("effortBars", () => {
 });
 
 describe("menuProviders", () => {
-  const claude = (slugs: ReadonlyArray<string>) => ({
+  const claude = (slugs: ReadonlyArray<string>, displayName?: string) => ({
     driver: ProviderDriverKind.make("claudeAgent"),
+    ...(displayName === undefined ? {} : { displayName }),
     models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
   });
+  const enabled = { driver: ProviderDriverKind.make("claudeAgent"), enabled: true };
   const providers = providerChoices(
     {
       providers: [
@@ -184,50 +188,82 @@ describe("menuProviders", () => {
           claude(["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2"]),
         ),
         provider("claudeAgent_claudehxcks", claude(["claude-opus-5-5", "claude-haiku-5-5"])),
+        // Recognised by the name shown, whatever its id.
+        provider("claudeAgent_work", claude(["claude-opus-5-5"], "ClaudeHxcks")),
       ],
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         providerInstances: {
-          [ProviderInstanceId.make("claudeAgent_claudehxcks")]: {
-            driver: ProviderDriverKind.make("claudeAgent"),
-            enabled: true,
-          },
+          [ProviderInstanceId.make("claudeAgent_claudehxcks")]: enabled,
+          [ProviderInstanceId.make("claudeAgent_work")]: enabled,
         },
       },
     },
     project,
   );
-  const shown = (
-    where: { title: string; workspaceRoot: string } | null,
-    selected = { instanceId: ProviderInstanceId.make("codex"), model: "m" },
-  ) =>
-    menuProviders(providers, where, selected).map(
+  const hxcksHaiku = {
+    instanceId: ProviderInstanceId.make("claudeAgent_claudehxcks"),
+    model: "claude-haiku-5-5",
+  };
+  const claudeSonnet = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-sonnet-5-5",
+  };
+  const elsewhere = { title: "T3 Code Fork", workspaceRoot: "/p/t3code-fork" };
+  const inHxcks = { title: "proyecto", workspaceRoot: "/home/dani/proyectos/hxcks" };
+  const shown = (where: MenuProject | null, kept: ReadonlyArray<ModelSelection> = []) =>
+    menuProviders(providers, where, kept).map(
       (choice) => `${choice.instanceId}: ${choice.models.map((model) => model.slug).join(" ")}`,
     );
 
-  it("offers Claude's Opus and Fable, and the Hxcks account only in the Hxcks project", () => {
-    expect(shown({ title: "T3 Code Fork", workspaceRoot: "/p/t3code-fork" })).toEqual([
-      "codex: m",
-      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
-    ]);
-    expect(shown({ title: "proyecto", workspaceRoot: "/home/dani/proyectos/hxcks" })).toEqual([
-      "codex: m",
-      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
-      "claudeAgent_claudehxcks: claude-opus-5-5",
-    ]);
+  it.each([
+    {
+      when: "outside Hxcks: Claude's Opus and Fable, no Hxcks account by id or by name",
+      where: elsewhere,
+      kept: [],
+      expected: ["codex: m", "claudeAgent: claude-opus-5-5 claude-fable-5-2"],
+    },
+    {
+      when: "in the Hxcks project: its account too",
+      where: inHxcks,
+      kept: [],
+      expected: [
+        "codex: m",
+        "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+        "claudeAgent_claudehxcks: claude-opus-5-5",
+        "claudeAgent_work: claude-opus-5-5",
+      ],
+    },
+    {
+      when: "the thread's hidden model and the draft's hidden pick both stay",
+      where: null,
+      kept: [claudeSonnet, hxcksHaiku],
+      expected: [
+        "codex: m",
+        "claudeAgent: claude-opus-5-5 claude-sonnet-5-5 claude-fable-5-2",
+        "claudeAgent_claudehxcks: claude-haiku-5-5",
+      ],
+    },
+  ])("$when", ({ where, kept, expected }) => {
+    expect(shown(where, kept)).toEqual(expected);
   });
 
-  it("keeps the model the thread already uses", () => {
-    expect(
-      shown(null, {
-        instanceId: ProviderInstanceId.make("claudeAgent_claudehxcks"),
-        model: "claude-haiku-5-5",
-      }),
-    ).toEqual([
-      "codex: m",
-      "claudeAgent: claude-opus-5-5 claude-fable-5-2",
-      "claudeAgent_claudehxcks: claude-haiku-5-5",
-    ]);
+  it("starts a new thread on a model the menu offers, not a hidden default", () => {
+    const settings = (defaultModelSelection: ModelSelection) =>
+      defaultNewThreadSettings(
+        { settings: { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection } },
+        project,
+        providers,
+        elsewhere,
+      )?.model;
+    expect(settings(claudeSonnet)).toEqual({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    });
+    expect(settings(hxcksHaiku)).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "m",
+    });
   });
 });
 
@@ -263,6 +299,7 @@ describe("defaultNewThreadSettings", () => {
       },
       project,
       providers,
+      null,
     );
     expect(withProjectDefaults).toEqual({
       model: { instanceId: codexId, model: "m" },
@@ -280,6 +317,7 @@ describe("defaultNewThreadSettings", () => {
       },
       project,
       providers,
+      null,
     );
     expect(clamped).toEqual({
       model: { instanceId: codexId, model: "m" },
@@ -291,7 +329,11 @@ describe("defaultNewThreadSettings", () => {
       { settings: DEFAULT_SERVER_SETTINGS },
       project,
       providers,
-      { defaultModelSelection: { instanceId: claudeId, model: "sonnet" } },
+      {
+        title: "Proyecto",
+        workspaceRoot: "/p/proyecto",
+        defaultModelSelection: { instanceId: claudeId, model: "sonnet" },
+      },
     );
     expect(legacyProjectDefault).toEqual({
       model: { instanceId: claudeId, model: "sonnet" },

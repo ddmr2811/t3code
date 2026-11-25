@@ -264,7 +264,6 @@ function Picker<T extends string>(props: {
         align="start"
         sideOffset={6}
         collisionPadding={12}
-        aria-label={props.label}
         className="ade-picker-menu"
       >
         {props.groups.map((group, index) => (
@@ -343,18 +342,20 @@ function SettingsPickers(props: {
             </>
           )
         }
-        groups={menuProviders(providers, props.project, settings.model).map((choice) => ({
-          label: choice.label,
-          choices: choice.models.map((model) => ({
-            value: modelKey(choice.instanceId, model.slug),
-            label: (
-              <>
-                <ProviderIcon provider={choice} />
-                {model.name}
-              </>
-            ),
-          })),
-        }))}
+        groups={menuProviders(providers, props.project, [settings.model, defaults.model]).map(
+          (choice) => ({
+            label: choice.label,
+            choices: choice.models.map((model) => ({
+              value: modelKey(choice.instanceId, model.slug),
+              label: (
+                <>
+                  <ProviderIcon provider={choice} />
+                  {model.name}
+                </>
+              ),
+            })),
+          }),
+        )}
         selected={modelKey(settings.model.instanceId, settings.model.model)}
         onSelect={(value) => {
           const [instanceId, slug] = JSON.parse(value) as [string, string];
