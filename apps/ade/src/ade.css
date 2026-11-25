@@ -1420,26 +1420,15 @@ button.ade-subagent:hover .ade-subagent-open {
   text-align: center;
 }
 
-.ade-picker summary,
-.ade-picker-menu label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ade-picker-menu label svg[width] {
-  margin-left: auto;
-}
-
 /* Settings that rarely change: no frame until hovered, like T3's footer chips. */
-.ade-picker.ade-picker-chip summary {
+.ade-picker.ade-picker-chip {
   padding: 4px 6px;
   border-color: transparent;
   font-size: 11.5px;
 }
 
-.ade-picker.ade-picker-chip summary:hover,
-.ade-picker.ade-picker-chip[open] summary {
+.ade-picker.ade-picker-chip:hover,
+.ade-picker.ade-picker-chip[data-open] {
   border-color: var(--ade-border);
 }
 
@@ -1450,67 +1439,67 @@ button.ade-subagent:hover .ade-subagent-open {
 }
 
 .ade-picker {
-  position: relative;
-}
-
-.ade-picker summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 10px;
   border: 1px solid var(--ade-border);
   border-radius: var(--ade-radius-sm);
+  background: none;
   color: var(--ade-text-muted);
   font: 12px var(--ade-font-mono);
-  list-style: none;
   cursor: pointer;
 }
 
-.ade-picker summary::-webkit-details-marker {
-  display: none;
-}
-
-.ade-picker summary::after {
-  content: " ▾";
+.ade-picker::after {
+  content: "▾";
   color: var(--ade-text-tertiary);
 }
 
-.ade-picker[open] summary,
-.ade-picker summary:hover {
+.ade-picker[data-open],
+.ade-picker:hover {
   color: var(--ade-text);
 }
 
-.ade-composer-form fieldset:disabled .ade-picker summary {
+.ade-picker:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 1px;
+}
+
+.ade-picker:disabled {
   pointer-events: none;
   opacity: 0.6;
 }
 
+/* Opaque: a menu over the conversation must not let it show through. */
 .ade-picker-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 2;
   display: grid;
   gap: 8px;
   min-width: 220px;
-  max-height: 50vh;
+  max-width: calc(100vw - 24px);
+  max-height: min(50vh, var(--available-height));
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--ade-border);
   border-radius: var(--ade-radius-md);
-  background: var(--ade-surface);
+  background: #101217;
+  color: var(--ade-text);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.7);
 }
 
-.ade-picker-menu fieldset {
+.ade-picker-menu [data-slot="menu-radio-group"] {
   display: grid;
   gap: 2px;
 }
 
-.ade-picker-menu legend {
+.ade-picker-menu [data-slot="menu-group-label"] {
   padding: 0 6px 2px;
   color: var(--ade-text-tertiary);
   font: 500 10.5px/2 var(--ade-font-mono);
   text-transform: uppercase;
 }
 
-.ade-picker-menu label {
+.ade-picker-menu [data-slot="menu-radio-item"] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1519,16 +1508,34 @@ button.ade-subagent:hover .ade-subagent-open {
   color: var(--ade-text-muted);
   font-size: 13px;
   cursor: pointer;
+  outline: none;
 }
 
-.ade-picker-menu label:hover,
-.ade-picker-menu label:has(:checked) {
-  background: var(--ade-bg);
+.ade-picker-menu [data-slot="menu-radio-item"] svg[width] {
+  margin-left: auto;
+}
+
+.ade-picker-menu [data-slot="menu-radio-item"][data-highlighted],
+.ade-picker-menu [data-slot="menu-radio-item"][data-checked] {
+  background: rgb(255 255 255 / 0.07);
   color: var(--ade-text);
 }
 
-.ade-picker-menu input {
-  accent-color: var(--ade-accent);
+.ade-picker-menu [data-slot="menu-radio-item"][data-highlighted] {
+  box-shadow: inset 0 0 0 1px var(--ade-border);
+}
+
+.ade-picker-menu [data-slot="menu-item-indicator"] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--ade-text-tertiary);
+  border-radius: 999px;
+}
+
+.ade-picker-menu [data-slot="menu-item-indicator"][data-checked] {
+  border-color: var(--ade-accent);
+  background: radial-gradient(circle, var(--ade-accent) 0 3px, transparent 3.5px);
 }
 
 .ade-queue {
@@ -4583,10 +4590,6 @@ button.ade-subagent:hover .ade-subagent-open {
   .ade-composer-home .ade-composer-form {
     padding: 12px;
     border-radius: 16px;
-  }
-
-  .ade-composer-home .ade-picker-menu {
-    max-width: calc(100vw - 48px);
   }
 
   .ade-home-project-chip {

@@ -102,6 +102,33 @@ export function providerChoices(
     }));
 }
 
+const HXCKS = /hxcks/i;
+
+export type MenuProject = { readonly title: string; readonly workspaceRoot: string };
+
+/**
+ * The model menu: Claude offers only Opus and Fable, and the Hxcks account only in a project whose
+ * name or folder says hxcks (its default model is another account's). The `kept` models stay,
+ * so the thread's own one can always be chosen again.
+ */
+export function menuProviders(
+  providers: ReadonlyArray<ProviderChoice>,
+  project: MenuProject | null,
+  kept: ReadonlyArray<ModelSelection>,
+): ReadonlyArray<ProviderChoice> {
+  const inHxcks =
+    project !== null && (HXCKS.test(project.title) || HXCKS.test(project.workspaceRoot));
+  return providers.flatMap((provider) => {
+    const shown = inHxcks || !(HXCKS.test(provider.instanceId) || HXCKS.test(provider.label));
+    const models = provider.models.filter(
+      (model) =>
+        kept.some((keep) => keep.instanceId === provider.instanceId && keep.model === model.slug) ||
+        (shown && (provider.driver !== "claudeAgent" || /opus|fable/i.test(model.slug))),
+    );
+    return models.length === 0 ? [] : [{ ...provider, models }];
+  });
+}
+
 /** The settings a send uses: the draft's choices over the thread's, within what the provider allows. */
 export function turnSettings(
   draft: TurnDraft,
@@ -128,14 +155,15 @@ export function turnSettings(
 
 /**
  * Starting settings for a new thread in `projectId`: project defaults over machine defaults,
- * falling back to the first available provider/model and clamped to what that provider allows.
+ * falling back to the first model the menu offers and clamped to what that provider allows.
  */
 export function defaultNewThreadSettings(
   config: Pick<ServerConfig, "settings">,
   projectId: ProjectId,
-  providers: ReadonlyArray<ProviderChoice>,
-  project?: LegacyProjectSettingsFields | null,
+  allProviders: ReadonlyArray<ProviderChoice>,
+  project: (LegacyProjectSettingsFields & MenuProject) | null,
 ): TurnSettings | null {
+  const providers = menuProviders(allProviders, project, []);
   const firstProvider = providers.find((choice) => choice.models.length > 0);
   if (firstProvider === undefined) return null;
   const resolved = resolveProjectSettings(config.settings, projectId, project).settings;
