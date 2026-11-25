@@ -1,6 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { hasUnseenRunFailure } from "@t3tools/client-runtime/state/thread-settled";
 import { getThreadSortTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  resolveThreadStatusKind,
+  type ThreadStatusInput,
+} from "@t3tools/client-runtime/state/thread-status";
 import { type EnvironmentId, isListedThreadLineage, type ProjectId } from "@t3tools/contracts";
 
 // Shared with apps/web's fork: the same rule decides who "needs you" on both surfaces.
@@ -8,29 +11,29 @@ import { threadNeedsYou } from "../../../web/src/fork/decisions/decisions.logic.
 
 export type ThreadState = "needs-you" | "working" | "error" | "done";
 
-type StateInput = Parameters<typeof threadNeedsYou>[0] &
-  Pick<EnvironmentThreadShell, "pendingSubagentRequest" | "lastVisitedAt">;
+type StateInput = ThreadStatusInput & Parameters<typeof threadNeedsYou>[0];
 
+/** The thread's mark in T3's words, bucketed for the ADE's counters and groups. */
 export function threadState(thread: StateInput): ThreadState {
-  // A parent shows its subagent's request: the child itself has no row of its own.
+  // What the decisions panel counts, and a parent whose subagent asks, read as waiting on you
+  // first, even while the thread's own work runs in the background.
   if (threadNeedsYou(thread) || thread.pendingSubagentRequest != null) return "needs-you";
-  const runtime = thread.runtime?.status;
-  if (
-    runtime === "preparing" ||
-    runtime === "queued" ||
-    runtime === "starting" ||
-    runtime === "running" ||
-    runtime === "waiting"
-  )
-    return "working";
-  // As in T3's sidebar, a failed run the user already opened settles; a failure with no failed
-  // run has nothing to date it, so it stays.
-  if (
-    runtime === "failed" &&
-    (thread.latestRun?.status !== "failed" || hasUnseenRunFailure(thread))
-  )
-    return "error";
-  return "done";
+  switch (resolveThreadStatusKind(thread)) {
+    case "approval":
+    case "input":
+    case "guest":
+    case "plan":
+      return "needs-you";
+    // «waiting» is the thread waiting on its own subagent or task: work, not the user.
+    case "working":
+    case "connecting":
+    case "waiting":
+      return "working";
+    case "failed":
+      return "error";
+    default:
+      return "done";
+  }
 }
 
 type GroupInput = Pick<

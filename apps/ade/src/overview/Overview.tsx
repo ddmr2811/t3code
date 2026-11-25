@@ -8,6 +8,7 @@ import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, PROVIDER_DISPLAY_NAMES, WS_METHODS } from "@t3tools/contracts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
@@ -308,7 +309,6 @@ function SessionMeta(props: { thread: EnvironmentThreadShell }) {
 
 const SessionRow = memo(function SessionRow(props: {
   thread: EnvironmentThreadShell;
-  state: ThreadState;
   onOpen: (key: string) => void;
 }) {
   return (
@@ -318,7 +318,9 @@ const SessionRow = memo(function SessionRow(props: {
         className="ade-session"
         onClick={() => props.onOpen(sessionKey(props.thread))}
       >
-        <ThreadStateBadge state={props.state} />
+        <span className="ade-thread-mark">
+          <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} />
+        </span>
         <span className="ade-session-title">{props.thread.title}</span>
         <SessionMeta thread={props.thread} />
       </button>
@@ -341,7 +343,7 @@ const BoardCard = memo(function BoardCard(props: {
       >
         <SessionMeta thread={props.thread} />
         <span className="ade-session-title">{props.thread.title}</span>
-        <ThreadStateBadge state={props.state} withText />
+        <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} withText />
       </button>
     </li>
   );
@@ -367,7 +369,7 @@ function Sessions() {
           </h2>
           <ul>
             {groups[state].slice(0, SHOWN).map((thread) => (
-              <SessionRow key={sessionKey(thread)} thread={thread} state={state} onOpen={open} />
+              <SessionRow key={sessionKey(thread)} thread={thread} onOpen={open} />
             ))}
           </ul>
           <More count={groups[state].length} />

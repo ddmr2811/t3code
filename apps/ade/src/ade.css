@@ -537,19 +537,73 @@ body {
   flex-shrink: 0;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   color: var(--ade-text-tertiary);
 }
 
-.ade-thread-state[data-state="needs-you"] {
+/* T3's states on the ADE's palette: orange is active or waiting on you, green only an unread
+   finish, red only a failure. Waiting on its own subagent or task stays quiet, as in T3. */
+.ade-thread-state:is(
+  [data-kind="approval"],
+  [data-kind="input"],
+  [data-kind="guest"],
+  [data-kind="plan"],
+  [data-kind="working"],
+  [data-kind="connecting"]
+) {
   color: var(--ade-accent);
 }
 
-.ade-thread-state[data-state="working"] {
-  color: var(--ade-accent);
+.ade-thread-state[data-kind="completed"] {
+  color: var(--ade-ok);
 }
 
-.ade-thread-state[data-state="error"] {
+.ade-thread-state[data-kind="failed"] {
   color: var(--ade-danger);
+}
+
+/* T3's status-pulse: stepped, so it repaints a few times a second, not every frame. */
+@media (prefers-reduced-motion: no-preference) {
+  .ade-thread-state:is([data-kind="working"], [data-kind="connecting"]) svg {
+    animation: ade-status-pulse 2s infinite;
+  }
+}
+
+@keyframes ade-status-pulse {
+  0%,
+  40% {
+    opacity: 1;
+    animation-timing-function: steps(6);
+  }
+  50%,
+  90% {
+    opacity: 0.5;
+    animation-timing-function: steps(6);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* A fixed slot, so titles line up whether or not a row has a mark. */
+.ade-thread-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 14px;
+}
+
+/* What waits on you reads first in the list. */
+.ade-thread:has(
+    .ade-thread-state:is(
+      [data-kind="approval"],
+      [data-kind="input"],
+      [data-kind="guest"],
+      [data-kind="plan"]
+    )
+  )
+  .ade-thread-title {
+  color: var(--ade-accent);
+  font-weight: 600;
 }
 
 .ade-thread-view h1 {
@@ -1140,6 +1194,13 @@ button.ade-subagent:hover .ade-subagent-open {
   font-size: 12px;
 }
 
+/* Only a question or an approval for the user takes the accent; work going on stays quiet. */
+.ade-background-title[data-asks],
+.ade-background-state[data-asks] {
+  color: var(--ade-accent);
+  font-weight: 600;
+}
+
 .ade-tool-empty,
 .ade-notice {
   margin: 4px 0 0;
@@ -1472,6 +1533,9 @@ button.ade-subagent:hover .ade-subagent-open {
 
 .ade-queue {
   display: grid;
+  /* An auto column grows to the queued text's full width; the text cuts itself instead. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 6px;
   margin: 0;
   padding: 0;

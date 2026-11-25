@@ -8,6 +8,7 @@ import { ProhibitIcon } from "@phosphor-icons/react/dist/csr/Prohibit";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import {
   type EnvironmentId,
   type ForkCoordinationStatus,
@@ -361,6 +362,7 @@ function ProjectBoardCard(props: {
   onRemove: (environmentId: EnvironmentId, id: string) => Promise<void>;
 }) {
   const { item } = props;
+  const liveKind = item.thread === null ? null : resolveThreadStatusKind(item.thread);
   const canEdit = useAtomValue(forkCoordinationUpsertCommand.permissionAtom(item.environmentId));
   const canRemove = useAtomValue(forkCoordinationRemoveCommand.permissionAtom(item.environmentId));
   const [removing, setRemoving] = useState(false);
@@ -369,8 +371,11 @@ function ProjectBoardCard(props: {
     <article className="ade-coord-card" data-coord-status={item.status}>
       <header className="ade-coord-card-head">
         <div className="ade-coord-card-badges">
-          <CoordinationStatusBadge status={item.status} />
-          {item.liveState === "needs-you" ? <ThreadStateBadge state="needs-you" withText /> : null}
+          {/* A live thread's card says it in T3's marks; a note keeps its own status beside them. */}
+          {item.entry === null && liveKind !== null ? null : (
+            <CoordinationStatusBadge status={item.status} />
+          )}
+          <ThreadStateBadge kind={liveKind} withText />
           {item.entry === null ? <span className="ade-chip">Hilo en vivo</span> : null}
         </div>
         <span className="ade-coord-updated">{formatUpdatedShort(item.updatedAt)}</span>

@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  askingThreadIds,
   backgroundWork,
   formatElapsed,
   groupTurns,
@@ -107,11 +108,11 @@ describe("liveActivity", () => {
       ...extra,
     }) as never;
 
-  it("says the agent thinks between tools, and names the subagent it waits on", () => {
+  it("says the agent thinks between tools, and names the subagent at work", () => {
     expect(liveActivity(structure())).toBe("Pensando");
     const subagent = item("subagent", "running", { title: "Actualizar servidores" });
     expect(liveActivity(structure({ turnItems: [subagent] }))).toBe(
-      "Esperando a Actualizar servidores",
+      "Subagente trabajando · Actualizar servidores",
     );
   });
 
@@ -139,16 +140,21 @@ describe("liveActivity", () => {
     });
     expect(liveActivity(delegated)).toBe("Pensando");
     expect(backgroundWork(delegated)).toEqual({
-      title: "Esperando · Actualizar servidores F8-F9",
+      title: "Subagente trabajando · Actualizar servidores F8-F9",
       startedAtMs: DateTime.toEpochMillis(at),
       tasks: [
         {
           taskId: "task-1",
           label: "Actualizar servidores F8-F9",
-          waiting: true,
+          asksYou: false,
           childThreadId: "thread-child",
         },
       ],
+    });
+    // «Te espera» only once the subagent asks the user something.
+    expect(backgroundWork(delegated, new Set(["thread-child"]))).toMatchObject({
+      title: "Te espera · Actualizar servidores F8-F9",
+      tasks: [{ asksYou: true }],
     });
   });
 
@@ -165,8 +171,39 @@ describe("liveActivity", () => {
         ],
       }),
     );
-    expect(work).toMatchObject({ title: "Esperando · 2 tareas", startedAtMs: null });
-    expect(work?.tasks.map((task) => task.waiting)).toEqual([true, false]);
+    expect(work).toMatchObject({ title: "En marcha · 2 tareas", startedAtMs: null });
+  });
+});
+
+describe("askingThreadIds", () => {
+  const shell = (id: string, overrides: Record<string, unknown> = {}) =>
+    ({
+      environmentId: "machine-a",
+      id,
+      archivedAt: null,
+      deletedAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default",
+      hasActionableProposedPlan: false,
+      latestRun: null,
+      runtime: null,
+      pendingSubagentRequest: null,
+      ...overrides,
+    }) as never;
+
+  it("counts a child whose own subagent asks for approval, on this machine only", () => {
+    expect(
+      askingThreadIds(
+        [
+          shell("child", { pendingSubagentRequest: "approval" }),
+          shell("quiet"),
+          shell("asks", { hasPendingUserInput: true }),
+          shell("elsewhere", { environmentId: "machine-b", hasPendingApprovals: true }),
+        ],
+        "machine-a",
+      ).split("\n"),
+    ).toEqual(["child", "asks"]);
   });
 });
 

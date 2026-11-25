@@ -59,6 +59,24 @@ describe("threadState", () => {
       }),
       "working",
     ],
+    // Its turn ended, but it waits on the subagent it started: the row says it works.
+    [
+      "a parent waiting on its subagent",
+      stateInput({
+        pendingBackgroundTasks: [{ taskId: "task-1", kind: "subagent", description: "Revisar" }],
+      }),
+      "working",
+    ],
+    // As the decisions panel counts it, though its background work also holds the thread.
+    [
+      "a ready plan with background work",
+      stateInput({
+        interactionMode: "plan",
+        hasActionableProposedPlan: true,
+        pendingBackgroundTasks: [{ taskId: "task-1", kind: "subagent", description: "Revisar" }],
+      }),
+      "needs-you",
+    ],
     [
       "a failure not yet opened",
       stateInput({ latestRun: run("failed"), runtime: runtime("failed") as StateInput["runtime"] }),
