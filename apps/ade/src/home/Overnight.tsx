@@ -42,6 +42,12 @@ export function Overnight(props: { needsYouCount: number }) {
   });
   if (summary === null) return null;
   const week = spendSummary(usage.environments, flat.byEnvironment).week;
+  const partial = usage.needsPairing.length > 0 || usage.failed.length > 0 ? " · parcial" : "";
+  const spend = usage.pending
+    ? "cargando…"
+    : usage.readable.length === 0
+      ? "sin permiso para leerlo"
+      : `${usd(week.realUsd)}${week.estimatedUsd > 0 ? ` · ${usd(week.estimatedUsd)} est.` : ""}${partial}`;
   const pending = props.needsYouCount;
 
   return (
@@ -59,11 +65,7 @@ export function Overnight(props: { needsYouCount: number }) {
           {summary.closed === 1 ? "1 hueco cerrado" : `${summary.closed} huecos cerrados`} en el
           tablero
         </li>
-        <li>
-          {usage.pending
-            ? "Gasto de la semana: cargando…"
-            : `Gasto de la semana: ${usd(week.realUsd)}${week.estimatedUsd > 0 ? ` · ${usd(week.estimatedUsd)} est.` : ""}`}
-        </li>
+        <li>Gasto de la semana: {spend}</li>
       </ul>
     </section>
   );

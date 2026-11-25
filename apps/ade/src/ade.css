@@ -1575,6 +1575,21 @@ body {
   overflow-wrap: anywhere;
 }
 
+.ade-proposal-instructions summary {
+  cursor: pointer;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-proposal-instructions pre {
+  max-height: 240px;
+  margin: 6px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 var(--ade-font-mono);
+}
+
 .ade-request-actions {
   display: flex;
   flex-wrap: wrap;

@@ -95,7 +95,7 @@ export class ForkBots extends Context.Service<
     /** A coordinator's thread suggests a bot; the user decides with `answerProposal`. */
     readonly propose: (
       draft: BotProposalDraft,
-      from: { readonly threadId: ThreadId; readonly limits: DispatchModes | undefined },
+      from: ProposalSender,
     ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Only an accepted proposal creates a bot, through the same checks as `upsert`. */
     readonly answerProposal: (
@@ -113,6 +113,13 @@ export class ForkBots extends Context.Service<
 export type HandoffSender =
   | { readonly kind: "user" }
   | { readonly kind: "agent"; readonly limits: DispatchModes };
+
+/** The calling thread as it is now: a thread moved to another project proposes nothing there. */
+export interface ProposalSender {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly limits: DispatchModes | undefined;
+}
 
 export interface BotProposalDraft {
   readonly handle: string;
@@ -403,88 +410,91 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => invalidInput("Invalid bot configuration.")),
     );
     const id = parsed.id ?? `bot:${SecureRandom.uuidV4Unsafe()}`;
-    return yield* botLocks.withLock(
-      id,
-      storeLock.withPermits(1)(
-        Effect.gen(function* () {
-          const directory = yield* fileStore.read();
-          const existing =
-            parsed.id === undefined
-              ? undefined
-              : directory.bots.find((bot) => bot.id === parsed.id);
-          if (parsed.id !== undefined && existing === undefined) {
-            return yield* notFound("Bot was not found.");
-          }
-          if (
-            directory.bots.some(
-              (bot) => bot.id !== id && bot.handle.toLowerCase() === parsed.handle.toLowerCase(),
-            )
-          ) {
-            return yield* new ForkBotsError({
-              reason: "conflict",
-              message: "Another bot already uses this handle.",
-            });
-          }
-          const coordinator = parsed.coordinator ?? existing?.coordinator ?? false;
-          const otherCoordinator = directory.bots.find(
-            (bot) => bot.id !== id && bot.coordinator && bot.projectId === parsed.projectId,
-          );
-          if (coordinator && otherCoordinator !== undefined) {
-            return yield* new ForkBotsError({
-              reason: "conflict",
-              message: `Project ${parsed.projectId} already has a coordinator: ${otherCoordinator.id}.`,
-            });
-          }
-          if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
-            return yield* new ForkBotsError({
-              reason: "limitExceeded",
-              message: `Bot directory cannot hold more than ${FORK_BOTS_MAX_COUNT} bots.`,
-            });
-          }
-          const runtimeMode = parsed.runtimeMode ?? existing?.runtimeMode ?? "approval-required";
-          yield* validateConfiguration({
-            projectId: parsed.projectId,
-            runtimeMode,
-            instanceId: parsed.modelSelection.instanceId,
-            model: parsed.modelSelection.model,
-          });
-          const now = yield* nowIso;
-          const draft = {
-            id,
-            handle: parsed.handle,
-            name: parsed.name,
-            role: parsed.role,
-            instructions: parsed.instructions,
-            projectId: parsed.projectId,
-            runtimeMode,
-            modelSelection: parsed.modelSelection,
-            coordinator,
-          };
-          // The thread was started with the old prompt, mode, and model; the next message starts
-          // a fresh one so the bot never silently overrides what the user set on that thread.
-          const kept =
-            existing !== undefined && !threadConfigChanged(existing, draft) ? existing : undefined;
-          const bot: ForkBot = {
-            ...draft,
-            threadId: kept?.threadId ?? null,
-            memoryHash: kept?.memoryHash ?? null,
-            handoffHops: existing?.handoffHops ?? 0,
-            archived: existing?.archived ?? false,
-            createdAt: existing?.createdAt ?? now,
-            updatedAt: now,
-          };
-          const bots =
-            existing === undefined
-              ? [...directory.bots, bot]
-              : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
-          if (existing?.threadId != null && kept === undefined) {
-            yield* pauseRoutines(id, existing.threadId);
-          }
-          yield* fileStore.write({ ...directory, bots, updatedAt: now });
-          return bot;
-        }),
-      ),
+    return yield* botLocks.withLock(id, storeLock.withPermits(1)(saveBot(parsed, id)));
+  });
+
+  /**
+   * Holding `storeLock`. `finish` adds to the same write, so a bot and what created it are saved
+   * together or not at all.
+   */
+  const saveBot = Effect.fn("ForkBots.saveBot")(function* (
+    parsed: ForkBotUpsertInput,
+    id: ForkBot["id"],
+    finish: (directory: StoredBotDirectory, bot: ForkBot) => StoredBotDirectory = (d) => d,
+  ) {
+    const directory = yield* fileStore.read();
+    const existing =
+      parsed.id === undefined ? undefined : directory.bots.find((bot) => bot.id === parsed.id);
+    if (parsed.id !== undefined && existing === undefined) {
+      return yield* notFound("Bot was not found.");
+    }
+    if (
+      directory.bots.some(
+        (bot) => bot.id !== id && bot.handle.toLowerCase() === parsed.handle.toLowerCase(),
+      )
+    ) {
+      return yield* new ForkBotsError({
+        reason: "conflict",
+        message: "Another bot already uses this handle.",
+      });
+    }
+    const coordinator = parsed.coordinator ?? existing?.coordinator ?? false;
+    const otherCoordinator = directory.bots.find(
+      (bot) => bot.id !== id && bot.coordinator && bot.projectId === parsed.projectId,
     );
+    if (coordinator && otherCoordinator !== undefined) {
+      return yield* new ForkBotsError({
+        reason: "conflict",
+        message: `Project ${parsed.projectId} already has a coordinator: ${otherCoordinator.id}.`,
+      });
+    }
+    if (existing === undefined && directory.bots.length >= FORK_BOTS_MAX_COUNT) {
+      return yield* new ForkBotsError({
+        reason: "limitExceeded",
+        message: `Bot directory cannot hold more than ${FORK_BOTS_MAX_COUNT} bots.`,
+      });
+    }
+    const runtimeMode = parsed.runtimeMode ?? existing?.runtimeMode ?? "approval-required";
+    yield* validateConfiguration({
+      projectId: parsed.projectId,
+      runtimeMode,
+      instanceId: parsed.modelSelection.instanceId,
+      model: parsed.modelSelection.model,
+    });
+    const now = yield* nowIso;
+    const draft = {
+      id,
+      handle: parsed.handle,
+      name: parsed.name,
+      role: parsed.role,
+      instructions: parsed.instructions,
+      projectId: parsed.projectId,
+      runtimeMode,
+      modelSelection: parsed.modelSelection,
+      coordinator,
+    };
+    // The thread was started with the old prompt, mode, and model; the next message starts
+    // a fresh one so the bot never silently overrides what the user set on that thread.
+    const kept =
+      existing !== undefined && !threadConfigChanged(existing, draft) ? existing : undefined;
+    const bot: ForkBot = {
+      ...draft,
+      threadId: kept?.threadId ?? null,
+      memoryHash: kept?.memoryHash ?? null,
+      handoffHops: existing?.handoffHops ?? 0,
+      archived: existing?.archived ?? false,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    const bots =
+      existing === undefined
+        ? [...directory.bots, bot]
+        : directory.bots.map((candidate) => (candidate.id === id ? bot : candidate));
+    if (existing?.threadId != null && kept === undefined) {
+      yield* pauseRoutines(id, existing.threadId);
+    }
+    yield* fileStore.write(finish({ ...directory, bots, updatedAt: now }, bot));
+    return bot;
   });
 
   const setArchived = Effect.fn("ForkBots.setArchived")(function* (input: ForkBotSetArchivedInput) {
@@ -912,12 +922,17 @@ const make = Effect.gen(function* () {
 
   const propose = Effect.fn("ForkBots.propose")(function* (
     draft: BotProposalDraft,
-    from: { readonly threadId: ThreadId; readonly limits: DispatchModes | undefined },
+    from: ProposalSender,
   ) {
     const coordinator = (yield* storeLock.withPermits(1)(fileStore.read())).bots.find(
       (bot) => bot.threadId === from.threadId,
     );
-    if (coordinator === undefined || !coordinator.coordinator || coordinator.archived) {
+    if (
+      coordinator === undefined ||
+      !coordinator.coordinator ||
+      coordinator.archived ||
+      coordinator.projectId !== from.projectId
+    ) {
       return yield* new ForkBotsError({
         reason: "permissionDenied",
         message: "Only the project's coordinator can propose a bot.",
@@ -996,34 +1011,46 @@ const make = Effect.gen(function* () {
             message: "Another bot already uses this handle.",
           });
         }
-        yield* fileStore.write({
-          ...directory,
-          proposals: [...directory.proposals, proposal].slice(-FORK_BOTS_PROPOSAL_HISTORY),
-          updatedAt: proposal.createdAt,
-        });
+        // Pending ones wait for the user and rejected ones are the vetoes, so only accepted go.
+        const all = [...directory.proposals, proposal];
+        const excess = all.length - FORK_BOTS_PROPOSAL_HISTORY;
+        const dropped = new Set(
+          all
+            .filter((candidate) => candidate.status === "accepted")
+            .slice(0, Math.max(0, excess))
+            .map((candidate) => candidate.id),
+        );
+        const proposals = all.filter((candidate) => !dropped.has(candidate.id));
+        if (proposals.length > FORK_BOTS_PROPOSAL_HISTORY) {
+          return yield* limitExceeded(
+            "The bot directory holds too many open or refused proposals.",
+          );
+        }
+        yield* fileStore.write({ ...directory, proposals, updatedAt: proposal.createdAt });
         return proposal;
       }),
     );
   });
 
-  const decideProposal = (proposal: ForkBotProposal) =>
-    storeLock.withPermits(1)(
-      Effect.gen(function* () {
-        const directory = yield* fileStore.read();
-        const current = directory.proposals.find((candidate) => candidate.id === proposal.id);
-        if (current?.status !== "pending") {
-          return yield* invalidInput("This proposal was answered.");
-        }
-        yield* fileStore.write({
-          ...directory,
-          proposals: directory.proposals.map((candidate) =>
-            candidate.id === proposal.id ? proposal : candidate,
-          ),
-          updatedAt: proposal.decidedAt,
-        });
-        return proposal;
-      }),
-    );
+  const markDecided = (directory: StoredBotDirectory, proposal: ForkBotProposal) => ({
+    ...directory,
+    proposals: directory.proposals.map((candidate) =>
+      candidate.id === proposal.id ? proposal : candidate,
+    ),
+    updatedAt: proposal.decidedAt,
+  });
+
+  /** The mode the coordinator's thread runs in now; null when it has no live thread. */
+  const liveThreadMode = Effect.fn("ForkBots.liveThreadMode")(function* (bot: ForkBot | undefined) {
+    if (bot?.threadId == null) return null;
+    const outcome = yield* threads.getThreadRecords(bot.threadId, ["runs"]).pipe(Effect.result);
+    if (outcome._tag === "Failure") {
+      if (isThreadNotFoundError(outcome.failure)) return null;
+      return yield* unavailable("Could not read the coordinator's thread.");
+    }
+    const thread = outcome.success.thread;
+    return thread.archivedAt === null && thread.deletedAt === null ? thread.runtimeMode : null;
+  });
 
   const answerProposal = Effect.fn("ForkBots.answerProposal")(function* (
     input: ForkBotAnswerProposalInput,
@@ -1031,19 +1058,62 @@ const make = Effect.gen(function* () {
     const parsed = yield* decodeAnswerProposalInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid proposal answer.")),
     );
-    const directory = yield* storeLock.withPermits(1)(fileStore.read());
-    const proposal = directory.proposals.find((candidate) => candidate.id === parsed.id);
-    if (proposal === undefined) return yield* notFound("Bot proposal was not found.");
-    if (proposal.status !== "pending") return yield* invalidInput("This proposal was answered.");
     const decidedAt = yield* nowIso;
-    if (parsed.answer === "reject") {
-      const rejected = yield* decideProposal({ ...proposal, status: "rejected", decidedAt });
-      // The store already refuses the same bot; the note lets the coordinator skip similar ones.
+    // Checking it is pending and saving the answer under one lock: a second answer is refused.
+    const answered = yield* storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const proposal = directory.proposals.find((candidate) => candidate.id === parsed.id);
+        if (proposal === undefined) return yield* notFound("Bot proposal was not found.");
+        if (proposal.status !== "pending") {
+          return yield* invalidInput("This proposal was already answered.");
+        }
+        if (parsed.answer === "reject") {
+          const rejected: ForkBotProposal = { ...proposal, status: "rejected", decidedAt };
+          yield* fileStore.write(markDecided(directory, rejected));
+          return rejected;
+        }
+        // The coordinator may have lost permissions since it proposed; the bot never gets more.
+        const coordinator = directory.bots.find((bot) => bot.id === proposal.proposedBy);
+        let runtimeMode = proposal.runtimeMode;
+        for (const ceiling of [
+          coordinator?.runtimeMode ?? "approval-required",
+          yield* liveThreadMode(coordinator),
+        ]) {
+          if (ceiling !== null && isRuntimeModeAbove(runtimeMode, ceiling)) runtimeMode = ceiling;
+        }
+        const id = `bot:${SecureRandom.uuidV4Unsafe()}`;
+        const acceptedAs = (botId: ForkBot["id"]): ForkBotProposal => ({
+          ...proposal,
+          status: "accepted",
+          botId,
+          decidedAt,
+        });
+        const bot = yield* saveBot(
+          {
+            handle: proposal.handle,
+            name: proposal.name,
+            role: proposal.role,
+            instructions: proposal.instructions,
+            projectId: proposal.projectId,
+            runtimeMode,
+            modelSelection: proposal.modelSelection,
+            coordinator: false,
+          },
+          id,
+          (next, saved) => markDecided(next, acceptedAs(saved.id)),
+        );
+        return acceptedAs(bot.id);
+      }),
+    );
+    if (answered.status === "rejected") {
+      // The store already refuses the same handle; the note lets the coordinator skip similar
+      // ones. Only the validated handle goes in: the agent's other text is not the user's.
       yield* memory
         .upsert(
           {
-            projectId: proposal.projectId,
-            text: `El usuario dijo que no al bot propuesto «${proposal.name}» (@${proposal.handle}, ${proposal.role}). No vuelvas a proponer ese bot ni uno parecido.`,
+            projectId: answered.projectId,
+            text: `El usuario dijo que no al bot propuesto @${answered.handle}. No vuelvas a proponer ese bot ni uno parecido.`,
             inclusion: "searchable",
           },
           "user",
@@ -1051,29 +1121,13 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.catch((error) =>
             Effect.logWarning("fork bots could not remember a rejected proposal", {
-              proposalId: proposal.id,
+              proposalId: answered.id,
               reason: error.reason,
             }),
           ),
         );
-      return rejected;
     }
-    // The coordinator may have lost permissions since it proposed; the bot never gets more.
-    const coordinator = directory.bots.find((bot) => bot.id === proposal.proposedBy);
-    const ceiling = coordinator?.runtimeMode ?? "approval-required";
-    const bot = yield* upsert({
-      handle: proposal.handle,
-      name: proposal.name,
-      role: proposal.role,
-      instructions: proposal.instructions,
-      projectId: proposal.projectId,
-      runtimeMode: isRuntimeModeAbove(proposal.runtimeMode, ceiling)
-        ? ceiling
-        : proposal.runtimeMode,
-      modelSelection: proposal.modelSelection,
-      coordinator: false,
-    });
-    return yield* decideProposal({ ...proposal, status: "accepted", botId: bot.id, decidedAt });
+    return answered;
   });
 
   return ForkBots.of({

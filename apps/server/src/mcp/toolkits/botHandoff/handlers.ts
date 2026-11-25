@@ -66,7 +66,7 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
         });
       }
       const proposal = yield* forkBots
-        .propose(draft, { threadId: caller.id, limits })
+        .propose(draft, { threadId: caller.id, projectId: caller.projectId, limits })
         .pipe(Effect.mapError(toFailure));
       return { id: proposal.id };
     }),

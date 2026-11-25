@@ -669,7 +669,7 @@ describe("ForkBots", () => {
           runtimeMode,
         });
         const { threadId } = yield* service.sendMessage({ id: coordinator.id, text: "hola" });
-        return { coordinator, from: { threadId, limits: undefined } };
+        return { coordinator, from: { threadId, projectId: projectA, limits: undefined } };
       });
 
     it.effect("creates nothing until the user says yes, never above the coordinator", () =>
@@ -682,7 +682,7 @@ describe("ForkBots", () => {
             text: "hola",
           });
           const notCoordinator = yield* service
-            .propose(draft, { threadId: helperThread, limits: undefined })
+            .propose(draft, { threadId: helperThread, projectId: projectA, limits: undefined })
             .pipe(Effect.flip);
           expect(notCoordinator).toMatchObject({ reason: "permissionDenied" });
           const above = yield* service
@@ -697,6 +697,11 @@ describe("ForkBots", () => {
             )
             .pipe(Effect.flip);
           expect(aboveThread).toMatchObject({ reason: "permissionDenied" });
+          // The coordinator's thread was moved to another project since it was bound.
+          const moved = yield* service
+            .propose(draft, { ...from, projectId: ProjectId.make("proj-b") })
+            .pipe(Effect.flip);
+          expect(moved).toMatchObject({ reason: "permissionDenied" });
 
           const proposal = yield* service.propose(
             { ...draft, runtimeMode: "auto-accept-edits" },
@@ -758,6 +763,78 @@ describe("ForkBots", () => {
           expect(again).toMatchObject({ reason: "conflict" });
           const other = yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, from);
           expect(other.status).toBe("pending");
+        }),
+      ),
+    );
+
+    it.effect("answers a proposal once, never above the coordinator's thread", () =>
+      withBots(({ service, threadModes }) =>
+        Effect.gen(function* () {
+          const { from } = yield* coordinatorThread(service);
+          // Its user lowered the coordinator's thread below the bot's own mode.
+          threadModes.set(from.threadId, "approval-required");
+          const first = yield* service.propose(
+            { ...draft, runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          const accepted = yield* service.answerProposal({ id: first.id, answer: "accept" });
+          const bots = (yield* service.list({})).bots;
+          expect(bots.find((bot) => bot.id === accepted.botId)?.runtimeMode).toBe(
+            "approval-required",
+          );
+
+          yield* TestClock.adjust("7 days");
+          const second = yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, from);
+          const answers = yield* Effect.all(
+            [
+              service.answerProposal({ id: second.id, answer: "accept" }).pipe(Effect.result),
+              service.answerProposal({ id: second.id, answer: "reject" }).pipe(Effect.result),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(answers.filter((answer) => answer._tag === "Success")).toHaveLength(1);
+          const stored = (yield* service.list({})).proposals.find((p) => p.id === second.id);
+          const created = (yield* service.list({})).bots.some((bot) => bot.handle === "otro");
+          expect(created).toBe(stored?.status === "accepted");
+        }),
+      ),
+    );
+
+    it.effect("drops only old accepted proposals, never pending ones or refusals", () =>
+      withBots(({ service, botsFile, fs }) =>
+        Effect.gen(function* () {
+          const { coordinator, from } = yield* coordinatorThread(service);
+          const old = (index: number, status: "accepted" | "rejected") => ({
+            id: `proposal:old-${index}`,
+            projectId: projectA,
+            proposedBy: coordinator.id,
+            handle: `viejo${index}`,
+            name: `Viejo ${index}`,
+            role: "Rol",
+            instructions: "Nada.",
+            routine: "a demanda",
+            reason: "Pruebas.",
+            runtimeMode: "approval-required",
+            modelSelection: { instanceId: codex, model: "gpt-5.4" },
+            status,
+            botId: null,
+            createdAt: "1969-01-01T00:00:00.000Z",
+            decidedAt: "1969-01-01T00:00:00.000Z",
+          });
+          // The oldest is a refusal, then the history is full of accepted ones.
+          const stored = JSON.parse(yield* fs.readFileString(botsFile));
+          stored.proposals = [
+            old(0, "rejected"),
+            ...Array.from({ length: 99 }, (_, index) => old(index + 1, "accepted")),
+          ];
+          yield* fs.writeFileString(botsFile, JSON.stringify(stored));
+
+          const fresh = yield* service.propose(draft, from);
+          const proposals = (yield* service.list({})).proposals;
+          expect(proposals).toHaveLength(100);
+          expect(proposals.map((p) => p.id)).toEqual(
+            expect.arrayContaining(["proposal:old-0", fresh.id]),
+          );
         }),
       ),
     );

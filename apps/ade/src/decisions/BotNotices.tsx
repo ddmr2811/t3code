@@ -274,6 +274,10 @@ function ProposalNotice(
         <dt>Permisos</dt>
         <dd>{proposal.runtimeMode}</dd>
       </dl>
+      <details className="ade-proposal-instructions">
+        <summary>Instrucciones exactas</summary>
+        <pre>{proposal.instructions}</pre>
+      </details>
       <p className="ade-request-note">
         Nada se crea sin tu «sí». Un «No» queda en la memoria del proyecto para no repetirlo; la
         rutina la añades tú desde Bots cuando exista.

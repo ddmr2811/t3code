@@ -26,6 +26,8 @@ export const forkBotsListQuery = createEnvironmentRpcQueryAtomFamily(connectionA
   tag: WS_METHODS.forkBotsList,
   staleTimeMs: 15_000,
   idleTtlMs: 60_000,
+  // A coordinator proposes from its nightly pass, with no ADE action to refresh after.
+  refreshIntervalMs: 60_000,
 });
 
 export const forkBotsUpsertCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
