@@ -74,6 +74,7 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     // An @mention typed in the ADE: the user acts, so the RPC scope is the permission check.
     [WS_METHODS.forkBotsHandoff]: (input) => forkBots.handoff(input, { kind: "user" }),
     [WS_METHODS.forkBotsDismissHandoff]: (input) => forkBots.dismissHandoff(input),
+    [WS_METHODS.forkBotsAnswerProposal]: (input) => forkBots.answerProposal(input),
     // Project memory, as the user edits it.
     [WS_METHODS.forkMemoryList]: (input) => forkMemory.list(input),
     [WS_METHODS.forkMemoryUpsert]: (input) => forkMemory.upsert(input, "user"),

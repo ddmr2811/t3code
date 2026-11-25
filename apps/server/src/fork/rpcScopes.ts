@@ -47,6 +47,7 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkBotsSendMessage]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsHandoff]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkBotsDismissHandoff]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkBotsAnswerProposal]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryList]: AuthOrchestrationReadScope,
   [WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,

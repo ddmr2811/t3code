@@ -107,3 +107,25 @@ export function deriveInitialThreadTitle(text: string): string {
   if (firstLine.length <= MAX_TITLE_LENGTH) return firstLine;
   return `${firstLine.slice(0, MAX_TITLE_LENGTH - 1).trimEnd()}…`;
 }
+
+const OVERNIGHT_SHOWN_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * «Mientras dormías»: shown for 12 h after a coordinator's nightly pass ran, with the board
+ * entries closed since the evening before it. Null when no nightly pass ran lately.
+ */
+export function overnightSummary(input: {
+  readonly nightlyRuns: ReadonlyArray<string>;
+  readonly entries: ReadonlyArray<{ readonly status: string; readonly updatedAt: string }>;
+  readonly now: number;
+}): { readonly ranAt: number; readonly closed: number } | null {
+  const ranAt = Math.max(
+    ...input.nightlyRuns.map(Date.parse).filter((ms) => input.now - ms < OVERNIGHT_SHOWN_MS),
+  );
+  if (!Number.isFinite(ranAt)) return null;
+  const since = ranAt - OVERNIGHT_SHOWN_MS;
+  const closed = input.entries.filter(
+    (entry) => entry.status === "done" && Date.parse(entry.updatedAt) >= since,
+  ).length;
+  return { ranAt, closed };
+}

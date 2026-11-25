@@ -153,7 +153,40 @@ export const NIGHTLY_CONSOLIDATION_PROMPT = [
   "2. Fusiona duplicados entre notas de agentes en una sola con project_memory_save y `replaces`, sin perder información. Las notas del usuario y las esenciales no se pueden sustituir: si sobran o se repiten, propónlo.",
   "3. Si una nota de agente quedó obsoleta porque otra la sustituye, añádela a `replaces`.",
   "4. Termina proponiendo, con su id, qué notas esenciales bajarías a buscables y cuáles borrarías, para que el usuario decida.",
+  "5. Repasa las peticiones del usuario de los últimos 30 días en este hilo y en la memoria. Si pidió al menos 3 veces algo parecido que ningún bot cubre, propón un bot con bot_propose (nombre, rol, instrucciones, rutina y el porqué con fechas). Antes, busca «dijo que no» con project_memory_search y no propongas nada parecido a lo rechazado. Si no hay un caso claro, no propongas nada.",
 ].join("\n");
+
+/** The nightly prompt before F8, still saved in coordinators' tasks until they are updated. */
+const NIGHTLY_PROMPT_BEFORE_F8 = NIGHTLY_CONSOLIDATION_PROMPT.split("\n").slice(0, 5).join("\n");
+
+/** Recognised by its exact prompt, so another task with a similar title is never touched. */
+export function isNightlyTask(task: Pick<ScheduledTask, "prompt">): boolean {
+  return task.prompt === NIGHTLY_CONSOLIDATION_PROMPT || task.prompt === NIGHTLY_PROMPT_BEFORE_F8;
+}
+
+/** Titled as the nightly task but with a prompt the user wrote: the ADE leaves it alone. */
+export function isCustomNightly(task: Pick<ScheduledTask, "title" | "prompt">): boolean {
+  return task.title.startsWith("Consolidación nocturna · ") && !isNightlyTask(task);
+}
+
+/** Brings an older nightly task to the current prompt; schedule, pause and the rest stay. */
+export function nightlyPromptUpdate(task: ScheduledTask): ScheduledTaskUpsertInput {
+  return {
+    id: task.id,
+    requireExisting: true,
+    title: task.title,
+    prompt: NIGHTLY_CONSOLIDATION_PROMPT,
+    enabled: task.enabled,
+    schedule: task.schedule,
+    projectId: task.projectId,
+    threadId: task.threadId,
+    ...(task.threadMode === undefined ? {} : { threadMode: task.threadMode }),
+    workspaceStrategy: task.workspaceStrategy,
+    modelSelection: task.modelSelection,
+    runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
+  };
+}
 
 export type CoordinatorRoutine =
   | {

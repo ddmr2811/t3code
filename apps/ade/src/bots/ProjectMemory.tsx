@@ -24,6 +24,9 @@ import { cn } from "../ui/utils.ts";
 import {
   type CoordinatorRoutine,
   NIGHTLY_CONSOLIDATION_PROMPT,
+  isCustomNightly,
+  isNightlyTask,
+  nightlyPromptUpdate,
   coordinatorRoutineInput,
 } from "./bots.logic.ts";
 import {
@@ -319,7 +322,10 @@ function CoordinatorRoutines(props: {
     loaded && threadId !== null
       ? tasksResult.value.tasks.filter((task) => task.threadId === threadId)
       : [];
-  const hasNightly = tasks.some((task) => task.prompt === NIGHTLY_CONSOLIDATION_PROMPT);
+  const nightly = tasks.find(isNightlyTask);
+  const nightlyOutdated = nightly !== undefined && nightly.prompt !== NIGHTLY_CONSOLIDATION_PROMPT;
+  // Creating another would run two nightly passes in one thread.
+  const customNightly = nightly === undefined && tasks.some(isCustomNightly);
   const disabled = busy || !loaded || !canSchedule || threadId === null;
 
   const create = async (routine: CoordinatorRoutine) => {
@@ -335,7 +341,13 @@ function CoordinatorRoutines(props: {
     const failure = await runCommand(
       registry,
       serverEnvironment.upsertScheduledTask,
-      { environmentId, input: coordinatorRoutineInput(bot, threadId, routine) },
+      {
+        environmentId,
+        input:
+          routine.kind === "nightly" && nightly !== undefined
+            ? nightlyPromptUpdate(nightly)
+            : coordinatorRoutineInput(bot, threadId, routine),
+      },
       "No se pudo programar la rutina",
     );
     setBusy(false);
@@ -371,7 +383,7 @@ function CoordinatorRoutines(props: {
       <p className={HINT}>
         {threadId === null
           ? "Escríbele primero al coordinador: las rutinas continúan su hilo."
-          : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados y propone qué bajar de esenciales."}
+          : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados, propone qué bajar de esenciales y, si repites un encargo, un bot nuevo."}
       </p>
       {tasksResult._tag === "Failure" ? (
         <p className="ade-error" role="alert">
@@ -417,9 +429,15 @@ function CoordinatorRoutines(props: {
             type="button"
             className="ade-button-quiet m-0!"
             onClick={() => void create({ kind: "nightly" })}
-            disabled={disabled || hasNightly}
+            disabled={disabled || customNightly || (nightly !== undefined && !nightlyOutdated)}
           >
-            {hasNightly ? "Consolidación nocturna activa" : "Consolidación nocturna"}
+            {customNightly
+              ? "Nocturna personalizada: edítala en Ajustes"
+              : nightly === undefined
+                ? "Consolidación nocturna"
+                : nightlyOutdated
+                  ? "Actualizar consolidación nocturna"
+                  : "Consolidación nocturna activa"}
           </button>
         </div>
       ) : (

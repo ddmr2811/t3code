@@ -3,7 +3,13 @@ import {
   ForkBotHandle,
   ForkBotHandoffId,
   ForkBotMessage,
+  ForkBotName,
+  ForkBotProposalInstructions,
+  ForkBotProposalId,
+  ForkBotProposalNote,
+  ForkBotRole,
   OrchestratorMcpFailure,
+  RuntimeMode,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
@@ -35,4 +41,37 @@ const BotHandoffTool = Tool.make("bot_handoff", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenOutsideBotThreads);
 
-export const BotHandoffToolkit = Toolkit.make(BotHandoffTool);
+const BotProposeTool = Tool.make("bot_propose", {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ForkBots.ForkBots,
+  ],
+  description:
+    "Coordinator only. Propose a new bot to the user when they asked for the same kind of work at least 3 times in the last 30 days and no bot covers it. Nothing is created: the proposal waits in the user's inbox for yes or no. At most one proposal per project and week; a bot the user said no to is refused, and project_memory_search lists those refusals, so do not propose anything similar.",
+  parameters: Schema.Struct({
+    handle: ForkBotHandle.annotate({ description: "Without the @." }),
+    name: ForkBotName,
+    role: ForkBotRole,
+    instructions: ForkBotProposalInstructions,
+    routine: ForkBotProposalNote.annotate({
+      description: "When it should run on its own, e.g. «cada lunes a las 09:00», or «a demanda».",
+    }),
+    reason: ForkBotProposalNote.annotate({
+      description: "The repeated requests that led to it, with their dates.",
+    }),
+    runtimeMode: Schema.optionalKey(RuntimeMode).annotate({
+      description: "Defaults to approval-required; never above your own.",
+    }),
+    model: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))).annotate({
+      description: "A model of your own provider; defaults to yours.",
+    }),
+  }),
+  success: Schema.Struct({ id: ForkBotProposalId }),
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenOutsideBotThreads);
+
+export const BotHandoffToolkit = Toolkit.make(BotHandoffTool, BotProposeTool);

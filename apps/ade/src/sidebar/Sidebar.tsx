@@ -88,7 +88,7 @@ import {
   type ThreadState,
   threadState,
 } from "./sidebar.logic.ts";
-import { useCutHandoffs } from "../decisions/HandoffNotices.tsx";
+import { useBotNotices } from "../decisions/BotNotices.tsx";
 import { snoozeClockAtom, snoozesAtom } from "../decisions/snoozed.ts";
 
 const STATE_VIEW = {
@@ -191,10 +191,10 @@ export function useDecisionsPanel() {
   const threads = useAtomValue(needsYouThreadsAtom);
   const snoozedKeys = useAtomValue(snoozedKeysAtom);
   // A bot handoff cut for too many hops also waits for the user, so it counts and opens the panel.
-  const cutHandoffKeys = useCutHandoffs().map((notice) => notice.key);
+  const botNoticeKeys = useBotNotices().map((notice) => notice.key);
   const [choice, setChoice] = useAtom(decisionsChoiceAtom);
   const narrowViewport = useAtomValue(narrowViewportAtom);
-  const allKeys = [...threads.map(threadKeyOf), ...cutHandoffKeys];
+  const allKeys = [...threads.map(threadKeyOf), ...botNoticeKeys];
   // Counters and the opening on new arrivals leave out what «Luego» hid.
   const keys = allKeys.filter((key) => !snoozedKeys.includes(key));
   const snoozedCount = allKeys.length - keys.length;

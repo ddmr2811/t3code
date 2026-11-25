@@ -4,8 +4,10 @@ import {
   FORK_BOTS_PROTOCOL_VERSION,
   ForkBot,
   ForkBotHandoff,
+  ForkBotProposal,
   type ForkBotListResult,
   IsoDateTime,
+  ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -25,6 +27,18 @@ const uniqueBots = Schema.makeFilter(
   { expected: "unique bot ids and handles" },
 );
 
+/** Refusals kept per project; an older one then rests on the memory note alone. */
+export const FORK_BOTS_VETOES_PER_PROJECT = 20;
+/** Pending proposals stop here, in UTF-8 bytes as saved, so bots added by hand keep room. */
+export const FORK_BOTS_PROPOSALS_MAX_BYTES = 512 * 1024;
+
+/** A «No» to a proposed bot. Never sent to clients. */
+const StoredVeto = Schema.Struct({
+  projectId: ProjectId,
+  handle: Schema.String,
+  name: Schema.String,
+});
+
 export const StoredBotDirectory = Schema.Struct({
   version: Schema.Literal(FORK_BOTS_PROTOCOL_VERSION),
   updatedAt: Schema.NullOr(IsoDateTime),
@@ -33,6 +47,9 @@ export const StoredBotDirectory = Schema.Struct({
   handoffs: Schema.Array(ForkBotHandoff)
     .check(Schema.isMaxLength(FORK_BOTS_HANDOFF_HISTORY))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Oldest first: every pending one and each project's last answered, for the weekly wait. */
+  proposals: Schema.Array(ForkBotProposal).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  vetoes: Schema.Array(StoredVeto).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;
 
@@ -41,6 +58,8 @@ export const EMPTY_BOT_DIRECTORY: StoredBotDirectory = {
   updatedAt: null,
   bots: [],
   handoffs: [],
+  proposals: [],
+  vetoes: [],
 };
 
 export const decodeStoredBotDirectory = Schema.decodeUnknownEffect(
@@ -53,6 +72,7 @@ export function listBots(directory: StoredBotDirectory): ForkBotListResult {
       (left, right) => left.name.localeCompare(right.name, "es") || left.id.localeCompare(right.id),
     ),
     handoffs: directory.handoffs,
+    proposals: directory.proposals,
     updatedAt: directory.updatedAt,
   };
 }

@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  FORK_BOTS_MAX_FILE_BYTES,
   type ForkBotUpsertInput,
   ProjectId,
   type RuntimeMode,
@@ -20,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -32,9 +34,11 @@ import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import * as ForkBots from "./ForkBots.ts";
+import { FORK_BOTS_VETOES_PER_PROJECT } from "./store.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const projectA = ProjectId.make("proj-a");
+const projectB = ProjectId.make("proj-b");
 
 const provider: ServerProvider = {
   instanceId: codex,
@@ -70,6 +74,8 @@ const withBots = <A, E, R>(
     readonly threadModels: Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>;
     /** Each live thread's runtime mode, which its user may raise above the bot's. */
     readonly threadModes: Map<ThreadId, RuntimeMode>;
+    /** Threads the user archived; they still answer, with `archivedAt` set. */
+    readonly archivedThreads: Set<ThreadId>;
     readonly board: ForkCoordination.ForkCoordination["Service"];
     /** The next launch reaches the provider and then never returns, as when the server stops. */
     readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
@@ -86,6 +92,8 @@ const withBots = <A, E, R>(
       const liveThreads = new Set<ThreadId>();
       const threadModels = new Map<ThreadId, { instanceId: ProviderInstanceId; model: string }>();
       const threadModes = new Map<ThreadId, RuntimeMode>();
+      const archivedThreads = new Set<ThreadId>();
+      const threadProjects = new Map<ThreadId, ProjectId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
 
@@ -93,8 +101,8 @@ const withBots = <A, E, R>(
         Layer.mock(ProjectService.ProjectService)({
           getById: (projectId) =>
             Effect.succeed(
-              projectId === projectA
-                ? Option.some({ id: projectA, title: "Proyecto A" } as never)
+              projectId === projectA || projectId === projectB
+                ? Option.some({ id: projectId, title: "Proyecto" } as never)
                 : Option.none(),
             ),
         }),
@@ -110,6 +118,7 @@ const withBots = <A, E, R>(
               liveThreads.add(threadId);
               threadModels.set(threadId, input.modelSelection);
               threadModes.set(threadId, input.runtimeMode);
+              threadProjects.set(threadId, input.projectId);
               return { threadId } as never;
             });
           },
@@ -120,11 +129,11 @@ const withBots = <A, E, R>(
               ? Effect.succeed({
                   thread: {
                     id: threadId,
-                    projectId: projectA,
+                    projectId: threadProjects.get(threadId),
                     modelSelection: threadModels.get(threadId),
                     runtimeMode: threadModes.get(threadId),
                     interactionMode: "default",
-                    archivedAt: null,
+                    archivedAt: archivedThreads.has(threadId) ? "2026-11-24T00:00:00.000Z" : null,
                     deletedAt: null,
                     lineage: { parentThreadId: null, relationshipToParent: null },
                   },
@@ -188,6 +197,7 @@ const withBots = <A, E, R>(
           texts,
           threadModels,
           threadModes,
+          archivedThreads,
           board: yield* ForkCoordination.ForkCoordination,
           stallNextLaunch: Deferred.make<void>().pipe(
             Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
@@ -641,6 +651,343 @@ describe("ForkBots", () => {
             .pipe(Effect.flip);
           expect(planMode).toMatchObject({ reason: "permissionDenied" });
           expect(texts.filter((text) => /dos|tres/.test(text))).toEqual([]);
+        }),
+      ),
+    );
+  });
+
+  describe("bot proposals", () => {
+    const draft = {
+      handle: "changelog",
+      name: "Changelog",
+      role: "Redacta el changelog",
+      instructions: "Resume los PR integrados.",
+      routine: "cada lunes a las 09:00",
+      reason: "Lo pediste el 2, el 9 y el 16 de noviembre.",
+    };
+    // A coordinator with a live thread, as the nightly pass that proposes runs in it.
+    const coordinatorThread = (
+      service: ForkBots.ForkBots["Service"],
+      projectId: ProjectId = projectA,
+      handle = "jefa",
+    ) =>
+      Effect.gen(function* () {
+        const coordinator = yield* service.upsert({
+          ...baseBot,
+          handle,
+          projectId,
+          coordinator: true,
+          runtimeMode: "auto-accept-edits",
+        });
+        const { threadId } = yield* service.sendMessage({ id: coordinator.id, text: "hola" });
+        return { coordinator, from: { threadId, projectId, limits: undefined } };
+      });
+
+    it.effect("creates nothing until the user says yes, never above the coordinator", () =>
+      withBots(({ service }) =>
+        Effect.gen(function* () {
+          const { coordinator, from } = yield* coordinatorThread(service);
+          const helper = yield* service.upsert({ ...baseBot, handle: "ayudante" });
+          const { threadId: helperThread } = yield* service.sendMessage({
+            id: helper.id,
+            text: "hola",
+          });
+          const notCoordinator = yield* service
+            .propose(draft, { threadId: helperThread, projectId: projectA, limits: undefined })
+            .pipe(Effect.flip);
+          expect(notCoordinator).toMatchObject({ reason: "permissionDenied" });
+          const above = yield* service
+            .propose({ ...draft, runtimeMode: "full-access" }, from)
+            .pipe(Effect.flip);
+          expect(above).toMatchObject({ reason: "permissionDenied" });
+          // The caller's thread may run narrower than its bot; that limit counts too.
+          const aboveThread = yield* service
+            .propose(
+              { ...draft, runtimeMode: "auto-accept-edits" },
+              { ...from, limits: { runtimeMode: "approval-required", interactionMode: "default" } },
+            )
+            .pipe(Effect.flip);
+          expect(aboveThread).toMatchObject({ reason: "permissionDenied" });
+          // The coordinator's thread was moved to another project since it was bound.
+          const moved = yield* service
+            .propose(draft, { ...from, projectId: ProjectId.make("proj-b") })
+            .pipe(Effect.flip);
+          expect(moved).toMatchObject({ reason: "permissionDenied" });
+
+          const proposal = yield* service.propose(
+            { ...draft, runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          expect(proposal).toMatchObject({ status: "pending", proposedBy: coordinator.id });
+          expect((yield* service.list({})).bots.map((bot) => bot.handle).toSorted()).toEqual([
+            "ayudante",
+            "jefa",
+          ]);
+
+          // The coordinator lost permissions after proposing; the new bot gets no more than it has.
+          yield* service.upsert({
+            ...baseBot,
+            id: coordinator.id,
+            handle: "jefa",
+            coordinator: true,
+            runtimeMode: "approval-required",
+          });
+          const accepted = yield* service.answerProposal({ id: proposal.id, answer: "accept" });
+          const bot = (yield* service.list({})).bots.find(
+            (candidate) => candidate.id === accepted.botId,
+          );
+          expect(bot).toMatchObject({
+            handle: "changelog",
+            coordinator: false,
+            runtimeMode: "approval-required",
+          });
+          const twice = yield* service
+            .answerProposal({ id: proposal.id, answer: "reject" })
+            .pipe(Effect.flip);
+          expect(twice).toMatchObject({ reason: "invalidInput" });
+        }),
+      ),
+    );
+
+    it.effect("allows one proposal per project and week, and remembers a no", () =>
+      withBots(({ service, memory }) =>
+        Effect.gen(function* () {
+          const { from } = yield* coordinatorThread(service);
+          const first = yield* service.propose(draft, from);
+          const waiting = yield* service
+            .propose({ ...draft, handle: "otro", name: "Otro" }, from)
+            .pipe(Effect.flip);
+          expect(waiting).toMatchObject({ reason: "limitExceeded" });
+
+          yield* service.answerProposal({ id: first.id, answer: "reject" });
+          const sameWeek = yield* service
+            .propose({ ...draft, handle: "otro", name: "Otro" }, from)
+            .pipe(Effect.flip);
+          expect(sameWeek).toMatchObject({ reason: "limitExceeded" });
+          const note = yield* memory.search(projectA, "dijo que no changelog");
+          expect(note.notes).toMatchObject([{ origin: "user" }]);
+
+          yield* TestClock.adjust("7 days");
+          const again = yield* service
+            .propose({ ...draft, handle: "changelog2" }, from)
+            .pipe(Effect.flip);
+          expect(again).toMatchObject({ reason: "conflict" });
+          const other = yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, from);
+          expect(other.status).toBe("pending");
+        }),
+      ),
+    );
+
+    it.effect("answers a proposal once, never above the coordinator's thread", () =>
+      withBots(({ service, threadModes, archivedThreads }) =>
+        Effect.gen(function* () {
+          const { from } = yield* coordinatorThread(service);
+          // Its user lowered the coordinator's thread below the bot's own mode.
+          threadModes.set(from.threadId, "approval-required");
+          const first = yield* service.propose(
+            { ...draft, runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          const accepted = yield* service.answerProposal({ id: first.id, answer: "accept" });
+          const bots = (yield* service.list({})).bots;
+          expect(bots.find((bot) => bot.id === accepted.botId)?.runtimeMode).toBe(
+            "approval-required",
+          );
+
+          // An archived coordinator thread gives no mode to trust: the bot asks for everything.
+          threadModes.set(from.threadId, "auto-accept-edits");
+          yield* TestClock.adjust("7 days");
+          const third = yield* service.propose(
+            { ...draft, handle: "tercero", name: "Tercero", runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          archivedThreads.add(from.threadId);
+          const archived = yield* service.answerProposal({ id: third.id, answer: "accept" });
+          expect(
+            (yield* service.list({})).bots.find((bot) => bot.id === archived.botId)?.runtimeMode,
+          ).toBe("approval-required");
+
+          yield* TestClock.adjust("7 days");
+          const second = yield* service.propose({ ...draft, handle: "otro", name: "Otro" }, from);
+          const answers = yield* Effect.all(
+            [
+              service.answerProposal({ id: second.id, answer: "accept" }).pipe(Effect.result),
+              service.answerProposal({ id: second.id, answer: "reject" }).pipe(Effect.result),
+            ],
+            { concurrency: "unbounded" },
+          );
+          expect(answers.filter((answer) => answer._tag === "Success")).toHaveLength(1);
+          const stored = (yield* service.list({})).proposals.find((p) => p.id === second.id);
+          const created = (yield* service.list({})).bots.some((bot) => bot.handle === "otro");
+          expect(created).toBe(stored?.status === "accepted");
+
+          // The coordinator was moved to another project, with a new thread there: it no longer
+          // lends its ceiling to a proposal made for this one.
+          archivedThreads.delete(from.threadId);
+          yield* TestClock.adjust("7 days");
+          const fourth = yield* service.propose(
+            { ...draft, handle: "cuarto", name: "Cuarto", runtimeMode: "auto-accept-edits" },
+            from,
+          );
+          const coordinator = (yield* service.list({})).bots.find((bot) => bot.handle === "jefa")!;
+          yield* service.upsert({
+            ...baseBot,
+            id: coordinator.id,
+            handle: "jefa",
+            projectId: projectB,
+            coordinator: true,
+            runtimeMode: "auto-accept-edits",
+          });
+          yield* service.sendMessage({ id: coordinator.id, text: "hola" });
+          const moved = yield* service.answerProposal({ id: fourth.id, answer: "accept" });
+          expect(
+            (yield* service.list({})).bots.find((bot) => bot.id === moved.botId)?.runtimeMode,
+          ).toBe("approval-required");
+        }),
+      ),
+    );
+
+    it.effect("keeps every refusal and the weekly wait, whatever other projects do", () =>
+      withBots(({ service }) =>
+        Effect.gen(function* () {
+          const a = yield* coordinatorThread(service);
+          const b = yield* coordinatorThread(service, projectB, "jefeb");
+          const vetoed = yield* service.propose(draft, a.from);
+          yield* service.answerProposal({ id: vetoed.id, answer: "reject" });
+          // Many weeks of proposals later, in this project and another, the first «No» holds.
+          for (let week = 1; week <= 12; week += 1) {
+            yield* TestClock.adjust("7 days");
+            for (const [from, prefix] of [
+              [a.from, "a"],
+              [b.from, "b"],
+            ] as const) {
+              const next = yield* service.propose(
+                { ...draft, handle: `${prefix}${week}`, name: `${prefix} ${week}` },
+                from,
+              );
+              yield* service.answerProposal({
+                id: next.id,
+                answer: week % 2 ? "reject" : "accept",
+              });
+            }
+          }
+          // Only each project's last answered proposal stays; the first «No» is a veto apart.
+          const proposals = (yield* service.list({})).proposals;
+          expect(proposals.map((p) => p.handle).toSorted()).toEqual(["a12", "b12"]);
+          const weekly = yield* service
+            .propose({ ...draft, handle: "otro", name: "Otro" }, a.from)
+            .pipe(Effect.flip);
+          expect(weekly).toMatchObject({ message: expect.stringContaining("this week") });
+          yield* TestClock.adjust("7 days");
+          const again = yield* service.propose(draft, a.from).pipe(Effect.flip);
+          expect(again).toMatchObject({ reason: "conflict" });
+        }),
+      ),
+    );
+
+    it.effect("keeps a few refusals per project, and proposals within their byte budget", () =>
+      withBots(({ service, botsFile, fs }) =>
+        Effect.gen(function* () {
+          const { coordinator, from } = yield* coordinatorThread(service);
+          // Three bytes per character in UTF-8, as CJK text is.
+          const wide = (length: number) => "漢".repeat(length);
+          const longest = (index: number) => ({
+            handle: `${index}`.padEnd(32, "x"),
+            name: `${wide(77)}${String(index).padStart(3, "0")}`,
+            role: wide(120),
+            instructions: wide(4000),
+            routine: wide(500),
+            reason: wide(500),
+          });
+          for (let index = 0; index <= FORK_BOTS_VETOES_PER_PROJECT + 5; index += 1) {
+            const proposal = yield* service.propose(longest(index), from);
+            yield* service.answerProposal({ id: proposal.id, answer: "reject" });
+            yield* TestClock.adjust("7 days");
+          }
+          const stored = JSON.parse(yield* fs.readFileString(botsFile));
+          expect(stored.vetoes).toHaveLength(FORK_BOTS_VETOES_PER_PROJECT);
+          expect(stored.proposals).toHaveLength(1);
+
+          const other = (index: number, status: "pending" | "rejected") => ({
+            ...longest(100 + index),
+            ...(status === "pending" ? {} : { instructions: "" }),
+            id: `proposal:other-${index}`,
+            projectId: `proj-other-${index}`,
+            proposedBy: coordinator.id,
+            runtimeMode: "approval-required",
+            modelSelection: { instanceId: codex, model: "gpt-5.4" },
+            status,
+            botId: null,
+            createdAt: "1969-01-01T00:00:00.000Z",
+            decidedAt: status === "pending" ? null : "1969-01-01T00:00:00.000Z",
+          });
+
+          // 50 other projects with all their refusals and an answered proposal, none pending: over
+          // the budget in bytes, yet proposing still works, as only pending proposals count.
+          stored.proposals = Array.from({ length: 50 }, (_, index) => other(index, "rejected"));
+          stored.vetoes = Array.from({ length: 50 * FORK_BOTS_VETOES_PER_PROJECT }, (_, index) => ({
+            projectId: `proj-other-${index % 50}`,
+            handle: `${index}`.padEnd(32, "x"),
+            name: wide(80),
+          }));
+          yield* fs.writeFileString(botsFile, JSON.stringify(stored, null, 2));
+          yield* service.propose(longest(98), from);
+
+          // Other projects' pending proposals fill the budget, with the bot file still far from full.
+          stored.proposals = Array.from({ length: 40 }, (_, index) => other(index, "pending"));
+          stored.vetoes = [];
+          yield* fs.writeFileString(botsFile, JSON.stringify(stored, null, 2));
+          const full = yield* service.propose(longest(99), from).pipe(Effect.flip);
+          expect(full).toMatchObject({
+            reason: "limitExceeded",
+            message: expect.stringContaining("no room"),
+          });
+          // A bot added by hand still has its room.
+          const manual = yield* service.upsert({
+            ...baseBot,
+            handle: "manual",
+            instructions: wide(8000),
+          });
+          expect(manual.handle).toBe("manual");
+
+          // A proposal that fits but would leave no room to accept or refuse it is not stored.
+          const nearlyFull = JSON.parse(yield* fs.readFileString(botsFile));
+          nearlyFull.proposals = [];
+          nearlyFull.vetoes = [];
+          const size = () =>
+            new TextEncoder().encode(`${JSON.stringify(nearlyFull, null, 2)}\n`).byteLength;
+          for (let index = 0; size() < FORK_BOTS_MAX_FILE_BYTES - 20_000; index += 1) {
+            nearlyFull.vetoes.push({
+              projectId: `proj-pad-${Math.floor(index / FORK_BOTS_VETOES_PER_PROJECT)}`,
+              handle: `${index}`.padEnd(32, "x"),
+              name: wide(80),
+            });
+          }
+          yield* fs.writeFileString(botsFile, JSON.stringify(nearlyFull, null, 2));
+          const noRoom = yield* service.propose(longest(97), from).pipe(Effect.flip);
+          expect(noRoom).toMatchObject({
+            reason: "limitExceeded",
+            message: expect.stringContaining("no room left to answer"),
+          });
+          // Nor a tiny one: the accepted bot's own fields need room beyond the proposal's text.
+          for (let index = 0; size() < FORK_BOTS_MAX_FILE_BYTES - 3000; index += 1) {
+            nearlyFull.vetoes.push({
+              projectId: `proj-fill-${index}`,
+              handle: `f${index}`,
+              name: "f",
+            });
+          }
+          yield* fs.writeFileString(botsFile, JSON.stringify(nearlyFull, null, 2));
+          const tiny = {
+            handle: "ab",
+            name: "a",
+            role: "a",
+            instructions: "",
+            routine: "a",
+            reason: "a",
+          };
+          const tinyNoRoom = yield* service.propose(tiny, from).pipe(Effect.flip);
+          expect(tinyNoRoom).toMatchObject({ reason: "limitExceeded" });
         }),
       ),
     );

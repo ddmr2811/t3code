@@ -1,6 +1,22 @@
-import { type ForkBot, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  type ForkBot,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  type ScheduledTask,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { botState, coordinatorRoutineInput, parseMention, validateBotDraft } from "./bots.logic.ts";
+import {
+  NIGHTLY_CONSOLIDATION_PROMPT,
+  botState,
+  coordinatorRoutineInput,
+  isCustomNightly,
+  isNightlyTask,
+  nightlyPromptUpdate,
+  parseMention,
+  validateBotDraft,
+} from "./bots.logic.ts";
 
 type BotThread = NonNullable<Parameters<typeof botState>[1]>;
 type RunStatus = "running" | "completed" | "failed" | "interrupted" | "cancelled";
@@ -163,5 +179,32 @@ describe("bots.logic", () => {
     });
     expect(daily.prompt.endsWith("\n\nResume el día")).toBe(true);
     expect(webhook.schedule).toEqual({ type: "webhook" });
+
+    // A coordinator's nightly task saved before F8, paused and moved to 04:15 by its user.
+    const saved = {
+      ...nightly,
+      id: "task-nightly",
+      enabled: false,
+      schedule: { type: "fixed_time", timeOfDay: "04:15" },
+      prompt: [
+        "Consolidación nocturna de la memoria del proyecto.",
+        "1. Repasa todas las notas con project_memory_search (consulta vacía; si hay más de 50, busca por temas).",
+        "2. Fusiona duplicados entre notas de agentes en una sola con project_memory_save y `replaces`, sin perder información. Las notas del usuario y las esenciales no se pueden sustituir: si sobran o se repiten, propónlo.",
+        "3. Si una nota de agente quedó obsoleta porque otra la sustituye, añádela a `replaces`.",
+        "4. Termina proponiendo, con su id, qué notas esenciales bajarías a buscables y cuáles borrarías, para que el usuario decida.",
+      ].join("\n"),
+    } as unknown as ScheduledTask;
+    expect(isNightlyTask(saved)).toBe(true);
+    expect(isNightlyTask({ ...saved, prompt: "Resume la noche" })).toBe(false);
+    // The user rewrote its prompt: neither updated nor created again beside it.
+    expect(isCustomNightly({ ...saved, prompt: "Resume la noche" })).toBe(true);
+    expect(isCustomNightly(saved)).toBe(false);
+    expect(nightlyPromptUpdate(saved)).toMatchObject({
+      id: "task-nightly",
+      prompt: NIGHTLY_CONSOLIDATION_PROMPT,
+      enabled: false,
+      schedule: { type: "fixed_time", timeOfDay: "04:15" },
+      title: nightly.title,
+    });
   });
 });

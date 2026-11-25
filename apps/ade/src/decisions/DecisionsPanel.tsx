@@ -22,7 +22,7 @@ import {
   togglePendingAlerts,
   usePendingTrayNotifications,
 } from "./notifications.ts";
-import { HandoffNotices, useCutHandoffs } from "./HandoffNotices.tsx";
+import { BotNotices, useBotNotices } from "./BotNotices.tsx";
 import { FirstRequest, RequestCards, trayHasFocus } from "./Requests.tsx";
 import {
   buildPendingTrayItems,
@@ -203,7 +203,7 @@ function OneAtATime(props: {
       {current === undefined ? (
         <p className="ade-request-note">No queda nada por decidir ahora.</p>
       ) : current.item === null ? (
-        <HandoffNotices
+        <BotNotices
           include={(key) => key === current.key}
           onOpenBackLayer={props.onOpenBackLayer}
           later={laterButton}
@@ -267,7 +267,7 @@ export function DecisionsPanel() {
   const [kindFilter, setKindFilter] = useState<PendingTrayFilterKind>("all");
   const [machineFilter, setMachineFilter] = useState<EnvironmentId | "all">("all");
   const [mode, setMode] = useState<TrayMode>("una");
-  const handoffs = useCutHandoffs();
+  const handoffs = useBotNotices();
 
   // One timer to the nearest return, and a re-check when the tab shows again after sleeping.
   useEffect(() => {
@@ -312,7 +312,7 @@ export function DecisionsPanel() {
     ...handoffs.map((notice) => ({
       key: notice.key,
       kind: "approval" as const,
-      label: "Aviso",
+      label: notice.label,
       title: notice.title,
       item: null,
     })),
@@ -341,6 +341,12 @@ export function DecisionsPanel() {
     kind: effectiveKind,
     environmentId: effectiveMachine,
   });
+
+  const later = (key: string, ids: ReadonlyArray<string>) => {
+    // Snoozing the last one must not close the panel under the user's hands.
+    if (waitingKeys.length === 1) setOpen(true);
+    snoozeDecision(registry, key, ids, [...waitingKeys, ...snoozedKeys]);
+  };
 
   const handleToggleAlerts = async () => {
     await togglePendingAlerts(registry);
@@ -406,9 +412,7 @@ export function DecisionsPanel() {
           waiting={waiting}
           onLater={(key, ids) => {
             setMode("una");
-            // Snoozing the last one must not close the panel under the user's hands.
-            if (waitingKeys.length === 1) setOpen(true);
-            snoozeDecision(registry, key, ids, [...waitingKeys, ...snoozedKeys]);
+            later(key, ids);
           }}
           onOpenBackLayer={openBackLayer}
         />
@@ -459,9 +463,11 @@ export function DecisionsPanel() {
       ) : null}
       {effectiveMode !== "lista" ? null : (
         <>
-          <HandoffNotices
+          <BotNotices
             include={(key) => !snoozedKeys.includes(key)}
             onOpenBackLayer={openBackLayer}
+            // A bot notice sets aside just itself, as in the one-at-a-time tray.
+            onLater={(key) => later(key, [key])}
           />
           {visible.length === 0 &&
           handoffs.every((handoff) => snoozedKeys.includes(handoff.key)) ? (
