@@ -467,7 +467,7 @@ const make = Effect.gen(function* () {
             usable.instanceId === candidate.instanceId && usable.model === candidate.model,
         ),
     );
-    if (selection === undefined) {
+    if (selection == null) {
       return yield* unavailable("No provider is available for a bot in this project.");
     }
     // Only the chosen or default allowed model: no fallback to another provider's model.
