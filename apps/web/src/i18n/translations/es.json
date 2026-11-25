@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Abrir vistas previas en el navegador y automatizar el navegador del host.",
   "2d2eb19fbba4d272": "Ver diagnóstico y uso",
   "2a708b0c5ffe07fe": "Leer el diagnóstico de procesos, el historial de recursos y los totales de uso.",
+  "482bfd25a8a74784": "Ver totales de uso",
+  "e80df779810fe4c5": "Leer los totales de tokens y gasto por día, proveedor y modelo. Ningún otro diagnóstico.",
   "128c7167031e28d6": "Ver terminales",
   "4c63765d186debca": "Leer la salida y el estado de las terminales existentes.",
   "df85bf6f7aeac38f": "Usar terminales",

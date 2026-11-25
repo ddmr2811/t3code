@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Öppna förhandsvisningar i webbläsaren och vara värd för webbläsarautomatisering.",
   "2d2eb19fbba4d272": "Visa diagnostik och användning",
   "2a708b0c5ffe07fe": "Läsa processdiagnostik, resurshistorik och användningstotaler.",
+  "482bfd25a8a74784": "Visa användningssummor",
+  "e80df779810fe4c5": "Läs summor för tokens och kostnader per dag, leverantör och modell. Ingen annan diagnostik.",
   "128c7167031e28d6": "Visa terminaler",
   "4c63765d186debca": "Läsa befintlig terminalutdata och status.",
   "df85bf6f7aeac38f": "Använda terminaler",

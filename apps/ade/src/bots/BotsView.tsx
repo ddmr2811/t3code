@@ -39,6 +39,8 @@ import { BotAvatar } from "./BotAvatar.tsx";
 import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import { ProjectMemory } from "./ProjectMemory.tsx";
+import { BotSpend } from "../overview/Spend.tsx";
+import { USAGE_PROVIDER_OF_DRIVER } from "../overview/spend.state.ts";
 import {
   allBotsAtom,
   forkBotsHandoffCommand,
@@ -153,6 +155,13 @@ function MachineBots(props: {
     allThreads.find(
       (candidate) => candidate.environmentId === environmentId && candidate.id === bot.threadId,
     );
+  const providers = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.providers;
+  const providerOf = (bot: ForkBot) => {
+    const driver = providers?.find(
+      (provider) => provider.instanceId === bot.modelSelection.instanceId,
+    )?.driver;
+    return driver === undefined ? null : (USAGE_PROVIDER_OF_DRIVER[String(driver)] ?? null);
+  };
   const stateOf = (bot: ForkBot) =>
     botState(bot, threadOf(bot), bot.threadId !== null && routines.has(bot.threadId));
   const [editing, setEditing] = useState<ForkBot | "new" | null>(null);
@@ -357,6 +366,16 @@ function MachineBots(props: {
                     <span className="ade-bot-meta">
                       {bot.modelSelection.instanceId} · {bot.modelSelection.model}
                     </span>
+                    {/* Same condition as BotProgress: only a thread the card already follows. */}
+                    {bot.threadId !== null &&
+                    (state.status === "working" || state.status === "needs-you") ? (
+                      <BotSpend
+                        environmentId={environmentId}
+                        threadId={bot.threadId}
+                        model={bot.modelSelection.model}
+                        provider={providerOf(bot)}
+                      />
+                    ) : null}
                   </span>
                   <span className="ade-bot-status" data-status={state.status}>
                     {state.label}

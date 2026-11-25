@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Browservorschauen öffnen und die Browserautomatisierung des Hosts nutzen.",
   "2d2eb19fbba4d272": "Diagnose und Nutzung ansehen",
   "2a708b0c5ffe07fe": "Prozessdiagnose, Ressourcenverlauf und Nutzungssummen lesen.",
+  "482bfd25a8a74784": "Nutzungssummen ansehen",
+  "e80df779810fe4c5": "Token- und Kostensummen nach Tag, Anbieter und Modell lesen. Keine weiteren Diagnosedaten.",
   "128c7167031e28d6": "Terminals ansehen",
   "4c63765d186debca": "Ausgabe und Status vorhandener Terminals lesen.",
   "df85bf6f7aeac38f": "Terminals verwenden",

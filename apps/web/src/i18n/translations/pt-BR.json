@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Abrir pré-visualizações no navegador e hospedar automação de navegador.",
   "2d2eb19fbba4d272": "Ver diagnóstico e uso",
   "2a708b0c5ffe07fe": "Ler diagnóstico de processos, histórico de recursos e totais de uso.",
+  "482bfd25a8a74784": "Ver totais de uso",
+  "e80df779810fe4c5": "Ler os totais de tokens e gastos por dia, provedor e modelo. Nenhum outro diagnóstico.",
   "128c7167031e28d6": "Ver terminais",
   "4c63765d186debca": "Ler a saída e o status dos terminais existentes.",
   "df85bf6f7aeac38f": "Usar terminais",

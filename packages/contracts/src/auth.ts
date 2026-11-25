@@ -50,6 +50,8 @@ export const AuthRelayWriteScope = "relay:write" as const;
 export const AuthRelayConfigureScope = "relay:configure" as const;
 /** Fork: reach the local sidecars behind the extension gateway. Never in a default grant. */
 export const AuthForkGatewayScope = "fork:gateway" as const;
+/** Fork: the usage summary alone, for clients that must not read the rest of diagnostics. */
+export const AuthUsageReadScope = "usage:read" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -70,6 +72,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthRelayWriteScope,
   AuthRelayConfigureScope,
   AuthForkGatewayScope,
+  AuthUsageReadScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -124,7 +127,9 @@ export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentSco
         : // Fork: only for display to old clients; operate never implies the gateway.
           requiredPermission === AuthForkGatewayScope
           ? AuthOrchestrationOperateScope
-          : (legacyParents[requiredPermission] ?? requiredPermission),
+          : requiredPermission === AuthUsageReadScope
+            ? AuthOrchestrationReadScope
+            : (legacyParents[requiredPermission] ?? requiredPermission),
     requiredPermission,
   };
 }
@@ -146,6 +151,21 @@ export function sessionGrantsScope(
   if (session.auth?.serverUpdateScope !== undefined) return false;
   const parent = legacyParents[scope];
   return parent !== undefined && session.scopes?.includes(parent) === true;
+}
+
+/**
+ * Whether a session may put `scope` in a pairing link it creates: one it holds, or `usage:read`
+ * from `diagnostics:read`, which already reads the usage summary. Holding is not widened.
+ */
+export function canDelegateScope(
+  held: ReadonlyArray<AuthEnvironmentScope> | ReadonlySet<AuthEnvironmentScope>,
+  scope: AuthEnvironmentScope,
+): boolean {
+  const has = (candidate: AuthEnvironmentScope) =>
+    Array.isArray(held)
+      ? held.includes(candidate)
+      : (held as ReadonlySet<AuthEnvironmentScope>).has(candidate);
+  return has(scope) || (scope === AuthUsageReadScope && has(AuthDiagnosticsReadScope));
 }
 
 export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {

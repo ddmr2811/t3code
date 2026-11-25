@@ -1050,6 +1050,8 @@
   "27a33c41c85826c7": "Open browser previews and host browser automation.",
   "2d2eb19fbba4d272": "View diagnostics and usage",
   "2a708b0c5ffe07fe": "Read process diagnostics, resource history, and usage totals.",
+  "482bfd25a8a74784": "View usage totals",
+  "e80df779810fe4c5": "Read token and spend totals by day, provider, and model. No other diagnostics.",
   "128c7167031e28d6": "View terminals",
   "4c63765d186debca": "Read existing terminal output and status.",
   "df85bf6f7aeac38f": "Use terminals",

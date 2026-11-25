@@ -2081,6 +2081,95 @@ body {
   background: currentColor;
 }
 
+.ade-spend-of {
+  color: var(--ade-text-muted);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.ade-spend-ruler {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+/* A rule of marks instead of a bar: filled in the accent up to the value, grey after it. */
+.ade-spend-ticks {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  height: 14px;
+}
+
+.ade-spend-ticks > span {
+  width: 2px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--ade-border);
+}
+
+.ade-spend-ticks > span[data-major] {
+  height: 14px;
+}
+
+.ade-spend-ticks > span[data-filled] {
+  background: var(--ade-accent);
+}
+
+.ade-spend-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--ade-text-tertiary);
+  font: 10px var(--ade-font-mono);
+}
+
+.ade-summary-aside[data-kind="flat"],
+.ade-summary-aside[data-kind="unpriced"] {
+  color: var(--ade-text-tertiary);
+}
+
+.ade-spend-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-spend-cap input {
+  width: 88px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: transparent;
+  color: var(--ade-text);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-spend-cap input:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 720px) {
+  .ade-spend-cap input {
+    min-height: 44px;
+  }
+}
+
+.ade-bot-spend {
+  color: var(--ade-text-muted);
+  font: 12px var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-spend-est {
+  color: var(--ade-text-tertiary);
+  font-size: 11px;
+}
+
 .ade-sessions {
   display: grid;
   gap: 16px;

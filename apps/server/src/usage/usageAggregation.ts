@@ -438,6 +438,7 @@ export class UsageAggregator {
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
         unpricedTokens: bucket.unpricedTokens,
+        providerReportedRecords: bucket.providerReportedRecords,
         sessions: bucket.sessions.size,
       });
     }
