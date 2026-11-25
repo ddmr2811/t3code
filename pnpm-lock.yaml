@@ -477,6 +477,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.2
         version: 6.1.2(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(babel-plugin-react-compiler@1.0.0)(oxc-transform-react@0.152.0)
+      electron-builder:
+        specifier: 26.16.1
+        version: 26.16.1(electron-builder-squirrel-windows@26.16.1)(supports-color@8.1.1)
       playwright:
         specifier: 1.64.1
         version: 1.64.1

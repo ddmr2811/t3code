@@ -107,6 +107,10 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
+    "apps/ade": {
+      // Electron starts the Windows shell by the "main" of desktop/package.json.
+      "entry": ["desktop/main.mjs!"],
+    },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.
       "ignoreDependencies": ["@astrojs/check"],
