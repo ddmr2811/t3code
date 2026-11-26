@@ -3,11 +3,12 @@ import {
   type ForkMemoryNote,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { memoryAge, memoryChanges, memoryReaders } from "./memory.logic.ts";
+import { memoryAge, memoryChanges, memoryReaders, turnOpen } from "./memory.logic.ts";
 
 const project = ProjectId.make("proj-1");
 
@@ -88,5 +89,39 @@ describe("memoryAge", () => {
     expect(memoryAge("2026-11-25T11:00:00.000Z", now)).toBe("ayer");
     expect(memoryAge("2026-11-23T13:00:00.000Z", now)).toBe("hace 2 días");
     expect(memoryAge("2026-10-20T12:00:00.000Z", now)).toMatch(/20 oct/);
+  });
+});
+
+describe("turnOpen", () => {
+  type Thread = NonNullable<Parameters<typeof turnOpen>[0]>;
+  const thread = (status: "running" | "completed", overrides: Partial<Thread> = {}): Thread => ({
+    archivedAt: null,
+    deletedAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingGuestMessageCount: 0,
+    interactionMode: "default",
+    hasActionableProposedPlan: false,
+    pendingSubagentRequest: null,
+    latestRun: {
+      runId: RunId.make("run-1"),
+      status,
+      requestedAt: "2026-11-23T10:00:00.000Z",
+      startedAt: "2026-11-23T10:00:00.000Z",
+      completedAt: status === "running" ? null : "2026-11-23T10:05:00.000Z",
+      assistantMessageId: null,
+    },
+    runtime: {
+      status: status === "running" ? "running" : "idle",
+      activeRunId: status === "running" ? RunId.make("run-1") : null,
+    } as Thread["runtime"],
+    ...overrides,
+  });
+
+  it("holds while the coordinator works or waits for an approval, and frees once it finished", () => {
+    expect(turnOpen(thread("running"))).toBe(true);
+    expect(turnOpen(thread("running", { hasPendingApprovals: true }))).toBe(true);
+    expect(turnOpen(thread("completed"))).toBe(false);
+    expect(turnOpen(undefined)).toBe(false);
   });
 });

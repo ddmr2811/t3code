@@ -36,6 +36,7 @@ import {
   memoryReaders,
   memorySections,
   previousLabel,
+  turnOpen,
 } from "./memory.logic.ts";
 
 /** Notes are one line; pasted line breaks become spaces, as the server requires. */
@@ -112,12 +113,13 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   const sections = memorySections(memory.notes);
   const readers = memoryReaders(bots, project.id, sections.essential.length);
   const coordinator = readers.find((reader) => reader.bot.coordinator)?.bot ?? null;
-  const coordinatorThread = threads.find(
-    (thread) => thread.environmentId === environmentId && thread.id === coordinator?.threadId,
-  );
-  // The server refuses to go back meanwhile; the button says why before anyone tries.
+  const threadOf = (threadId: string | null | undefined) =>
+    threads.find((thread) => thread.environmentId === environmentId && thread.id === threadId);
+  // The server refuses to go back meanwhile; the button says why before anyone tries. The
+  // correction's own thread counts too, in case the coordinator changed since.
   const coordinatorWorking =
-    coordinator !== null && botState(coordinator, coordinatorThread, false).status === "working";
+    (coordinator !== null && turnOpen(threadOf(coordinator.threadId))) ||
+    turnOpen(threadOf(memory.previous?.threadId));
   const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
 
   return (
@@ -312,6 +314,8 @@ function Correction(props: {
 
   const previous = memory.previous;
   const changes = previous === undefined ? [] : memoryChanges(previous.notes, memory.notes);
+  // The thread that holds the way back: the correction's own, else the coordinator's.
+  const heldBy = previous?.threadId ?? coordinatorThreadId;
   const blocked =
     props.coordinatorHandle === null
       ? "Para corregir en una frase, el proyecto necesita un coordinador (en Bots)."
@@ -384,14 +388,12 @@ function Correction(props: {
                 {memoryAge(previous.savedAt, props.now)}
               </p>
             </div>
-            {coordinatorThreadId === null ? null : (
+            {heldBy === null ? null : (
               <button
                 type="button"
                 className="v4-secondary"
                 onClick={() =>
-                  setSelectedThread(
-                    scopedThreadKey(scopeThreadRef(environmentId, coordinatorThreadId)),
-                  )
+                  setSelectedThread(scopedThreadKey(scopeThreadRef(environmentId, heldBy)))
                 }
               >
                 Ver el hilo
