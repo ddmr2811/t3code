@@ -18,6 +18,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
+  type ThreadId,
   forkMemoryEssentialBytes,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -68,15 +69,19 @@ export class ForkProjectMemory extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ForkMemoryNote>, ForkMemoryError>;
     /**
      * Keeps the project's notes as they are now, replacing the version kept before, if the
-     * project is still at `revision`. `undo` puts the version kept before back while nothing
-     * else changed, for a correction that never reached its coordinator.
+     * project is still at `revision`. `undo` puts the version kept before back, for a
+     * correction that never reached its coordinator; `attach` records the thread it reached.
      */
     readonly checkpoint: (
       projectId: ProjectId,
       correction: string,
       revision: number,
     ) => Effect.Effect<
-      { readonly previous: ForkMemoryPrevious; readonly undo: Effect.Effect<void> },
+      {
+        readonly previous: ForkMemoryPrevious;
+        readonly undo: Effect.Effect<void>;
+        readonly attach: (threadId: ThreadId) => Effect.Effect<void>;
+      },
       ForkMemoryError
     >;
     /** Swaps the notes with the kept version, which becomes the notes left behind; ForkBots
@@ -362,13 +367,41 @@ const make = Effect.gen(function* () {
           if (Option.isSome(found) && Option.isNone(found.value)) delete others[id];
         }
         yield* store.write({ ...memory, projects: { ...others, [projectId]: kept } });
+        const isOurs = (kept: ForkMemoryPrevious | undefined) =>
+          kept?.savedAt === previous.savedAt &&
+          kept.revision === previous.revision &&
+          kept.correction === previous.correction;
+        const attach = (threadId: ThreadId) =>
+          lock
+            .withPermits(1)(
+              Effect.gen(function* () {
+                const latest = yield* store.read();
+                const current = stateOf(latest, projectId);
+                if (current === undefined || !isOurs(current.previous)) return;
+                yield* store.write({
+                  ...latest,
+                  projects: {
+                    ...latest.projects,
+                    [projectId]: { ...current, previous: { ...previous, threadId } },
+                  },
+                });
+              }),
+            )
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("fork memory could not note the correction's thread", {
+                  projectId,
+                  reason: error.reason,
+                }),
+              ),
+            );
         const undo = lock
           .withPermits(1)(
             Effect.gen(function* () {
               const latest = yield* store.read();
               const current = stateOf(latest, projectId);
               // Another copy was kept since; this one is no longer the user's way back.
-              if (current?.previous?.savedAt !== previous.savedAt) return;
+              if (current === undefined || !isOurs(current.previous)) return;
               const rest = Object.fromEntries(
                 Object.entries(latest.projects ?? {}).filter(([id]) => id !== projectId),
               );
@@ -395,7 +428,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return { previous, undo };
+        return { previous, undo, attach };
       }),
     );
   });

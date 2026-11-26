@@ -2,6 +2,8 @@ import type { ForkBot, ForkMemoryNote, ForkMemoryPrevious, ProjectId } from "@t3
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { threadState } from "../sidebar/sidebar.logic.ts";
+
 /** Essentials oldest first, as the coordinator receives them; the rest newest first. */
 export function memorySections(notes: ReadonlyArray<ForkMemoryNote>) {
   return {
@@ -79,6 +81,16 @@ export function memoryAge(iso: string, nowMs: number): string {
   const days = Math.floor((nowMs - ms) / DAY);
   if (days < 30) return days === 1 ? "ayer" : `hace ${days} días`;
   return DateTime.formatLocal(parsed.value, { locale: "es-ES", day: "numeric", month: "short" });
+}
+
+/**
+ * A coordinator turn not yet over: working, or waiting on the user's answer. The server refuses
+ * to go back during either, since the turn may still save.
+ */
+export function turnOpen(thread: Parameters<typeof threadState>[0] | undefined): boolean {
+  if (thread === undefined) return false;
+  const state = threadState(thread);
+  return state === "working" || state === "needs-you";
 }
 
 export function previousLabel(previous: ForkMemoryPrevious): string {

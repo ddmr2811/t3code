@@ -134,6 +134,8 @@ const withBots = <A, E, R>(
     readonly archivedThreads: Set<ThreadId>;
     /** Threads with a turn still running or queued. */
     readonly busyThreads: Set<ThreadId>;
+    /** Threads whose records fail to load with an error other than «not found». */
+    readonly unreadableThreads: Set<ThreadId>;
     readonly board: ForkCoordination.ForkCoordination["Service"];
     /** The next launch reaches the provider and then never returns, as when the server stops. */
     readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
@@ -160,6 +162,7 @@ const withBots = <A, E, R>(
       const threadModes = new Map<ThreadId, RuntimeMode>();
       const archivedThreads = new Set<ThreadId>();
       const busyThreads = new Set<ThreadId>();
+      const unreadableThreads = new Set<ThreadId>();
       const threadProjects = new Map<ThreadId, ProjectId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
@@ -201,24 +204,26 @@ const withBots = <A, E, R>(
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadRecords: ((threadId: ThreadId) =>
-            liveThreads.has(threadId)
-              ? Effect.succeed({
-                  thread: {
-                    id: threadId,
-                    projectId: threadProjects.get(threadId),
-                    modelSelection: threadModels.get(threadId),
-                    runtimeMode: threadModes.get(threadId),
-                    interactionMode: "default",
-                    archivedAt: archivedThreads.has(threadId) ? "2026-11-24T00:00:00.000Z" : null,
-                    deletedAt: null,
-                    lineage: { parentThreadId: null, relationshipToParent: null },
-                  },
-                  runs: [{ status: busyThreads.has(threadId) ? "running" : "completed" }],
-                } as never)
-              : Effect.fail({
-                  _tag: "OrchestratorThreadNotFoundError",
-                  threadId,
-                } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
+            unreadableThreads.has(threadId)
+              ? Effect.fail({ _tag: "OrchestratorV2StoreError", threadId } as never)
+              : liveThreads.has(threadId)
+                ? Effect.succeed({
+                    thread: {
+                      id: threadId,
+                      projectId: threadProjects.get(threadId),
+                      modelSelection: threadModels.get(threadId),
+                      runtimeMode: threadModes.get(threadId),
+                      interactionMode: "default",
+                      archivedAt: archivedThreads.has(threadId) ? "2026-11-24T00:00:00.000Z" : null,
+                      deletedAt: null,
+                      lineage: { parentThreadId: null, relationshipToParent: null },
+                    },
+                    runs: [{ status: busyThreads.has(threadId) ? "running" : "completed" }],
+                  } as never)
+                : Effect.fail({
+                    _tag: "OrchestratorThreadNotFoundError",
+                    threadId,
+                  } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
           sendToThread: ((input: { threadId: ThreadId; text: string; messageId: string }) =>
             Effect.sync(() => {
               sentTo.push(input.threadId);
@@ -309,6 +314,7 @@ const withBots = <A, E, R>(
           threadModes,
           archivedThreads,
           busyThreads,
+          unreadableThreads,
           board: yield* ForkCoordination.ForkCoordination,
           stallNextLaunch: Deferred.make<void>().pipe(
             Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
@@ -1783,6 +1789,81 @@ describe("ForkBots", () => {
           const back = yield* service.restoreMemory({ projectId: projectA, revision: 3 });
           // Each note keeps who wrote it, so the coordinator can still merge its own.
           expect(back.notes).toEqual([price]);
+        }),
+      ),
+    );
+
+    it.effect("makes a restore wait for a correction still being handed over", () =>
+      withBots(({ service, memory, stallNextLaunch }) =>
+        Effect.gen(function* () {
+          yield* memory.upsert(
+            { projectId: projectA, text: "Uno.", inclusion: "searchable" },
+            "agent",
+          );
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          // The copy is kept (revision 2) and the hand-over to the coordinator is under way.
+          const reached = yield* stallNextLaunch;
+          const correcting = yield* service
+            .correctMemory({ projectId: projectA, text: "Dos.", revision: 1 })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+          const restoring = yield* service
+            .restoreMemory({ projectId: projectA, revision: 2 })
+            .pipe(Effect.flip, Effect.forkChild);
+          // The same stores' reads queue behind an unguarded restore's, which would end by now;
+          // a restore waiting on the coordinator's lock cannot have.
+          for (let i = 0; i < 10; i++) {
+            yield* service.list({});
+            yield* memory.list({ projectId: projectA, includePrevious: true });
+          }
+          expect(restoring.pollUnsafe()).toBeUndefined();
+          // The hand-over fails; its copy goes, and the waiting restore finds revision 2 gone.
+          yield* Fiber.interrupt(correcting);
+          expect(yield* Fiber.join(restoring)).toMatchObject({ reason: "conflict" });
+          expect((yield* memory.list({ projectId: projectA })).notes.map((n) => n.text)).toEqual([
+            "Uno.",
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("refuses going back when it cannot tell whether the coordinator still works", () =>
+      withBots(({ service, memory, unreadableThreads }) =>
+        Effect.gen(function* () {
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          const sent = yield* service.correctMemory({
+            projectId: projectA,
+            text: "Una.",
+            revision: 0,
+          });
+          unreadableThreads.add(sent.threadId);
+          expect(
+            yield* service.restoreMemory({ projectId: projectA, revision: 1 }).pipe(Effect.flip),
+          ).toMatchObject({ reason: "storageFailed" });
+          expect((yield* memory.list({ projectId: projectA })).revision).toBe(1);
+        }),
+      ),
+    );
+
+    it.effect("watches the correction's own thread after the coordinator changes", () =>
+      withBots(({ service, memory, busyThreads }) =>
+        Effect.gen(function* () {
+          const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+          const sent = yield* service.correctMemory({
+            projectId: projectA,
+            text: "Una.",
+            revision: 0,
+          });
+          expect(sent.previous.threadId).toBe(sent.threadId);
+          busyThreads.add(sent.threadId);
+          // Stops coordinating while its correction turn is still running.
+          yield* service.upsert({ ...baseBot, id: coordinator.id, coordinator: false });
+          expect(
+            yield* service.restoreMemory({ projectId: projectA, revision: 1 }).pipe(Effect.flip),
+          ).toMatchObject({ reason: "busy" });
+          busyThreads.delete(sent.threadId);
+          yield* service.restoreMemory({ projectId: projectA, revision: 1 });
+          expect((yield* memory.list({ projectId: projectA })).revision).toBe(2);
         }),
       ),
     );

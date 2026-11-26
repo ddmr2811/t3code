@@ -78,6 +78,8 @@ export const ForkMemoryPrevious = Schema.Struct({
   /** Kept before a correction was sent, or left behind by going back to the version before. */
   reason: Schema.Literals(["correction", "restore"]),
   correction: Schema.optionalKey(ForkMemoryText),
+  /** The thread the correction went to, whose turn may still save over a restore. */
+  threadId: Schema.optionalKey(ThreadId),
   notes: ProjectNotes,
 });
 export type ForkMemoryPrevious = typeof ForkMemoryPrevious.Type;

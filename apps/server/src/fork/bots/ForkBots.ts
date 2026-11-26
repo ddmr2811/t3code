@@ -1046,7 +1046,7 @@ const make = Effect.gen(function* () {
           });
         }
         // Kept before the coordinator can touch a note, so going back undoes all of it.
-        const { previous, undo } = yield* memory
+        const { previous, undo, attach } = yield* memory
           .checkpoint(parsed.projectId, parsed.text, parsed.revision)
           .pipe(
             Effect.mapError((error) =>
@@ -1061,7 +1061,14 @@ const make = Effect.gen(function* () {
           { handoffHops: 0 },
           undefined,
         ).pipe(Effect.onError(() => undo));
-        return { threadId: sent.threadId, queued: sent.queued, handle: bot.handle, previous };
+        // Under this lock, so a restore waiting on it already sees the thread to watch.
+        yield* attach(sent.threadId);
+        return {
+          threadId: sent.threadId,
+          queued: sent.queued,
+          handle: bot.handle,
+          previous: { ...previous, threadId: sent.threadId },
+        };
       }),
     );
   });
@@ -1079,22 +1086,34 @@ const make = Effect.gen(function* () {
     const coordinator = directory.bots.find(
       (bot) => bot.coordinator && !bot.archived && bot.projectId === input.projectId,
     );
-    if (coordinator?.threadId != null) {
-      const outcome = yield* threads
-        .getThreadRecords(coordinator.threadId, ["runs"])
-        .pipe(Effect.result);
-      // A turn still running or queued could save over the version the user goes back to.
-      if (
-        outcome._tag === "Success" &&
-        outcome.success.runs.some((run) => !ThreadManagement.isTerminalRunStatus(run.status))
-      ) {
-        return yield* new ForkMemoryError({
-          reason: "busy",
-          message: `@${coordinator.handle} is still applying the correction; go back once it finishes.`,
-        });
+    const guarded = Effect.gen(function* () {
+      const kept = (yield* memory.list({ projectId: input.projectId, includePrevious: true }))
+        .previous;
+      // The correction's own thread, even if the bot changed since, and the coordinator's now.
+      const watched = new Set(
+        [kept?.threadId, coordinator?.threadId].filter((id): id is ThreadId => id != null),
+      );
+      for (const threadId of watched) {
+        const outcome = yield* threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.result);
+        if (outcome._tag === "Failure") {
+          if (isThreadNotFoundError(outcome.failure)) continue;
+          return yield* new ForkMemoryError({
+            reason: "storageFailed",
+            message: "Could not check whether the coordinator is still working; try again.",
+          });
+        }
+        // A turn still running or queued could save over the version the user goes back to.
+        if (outcome.success.runs.some((run) => !ThreadManagement.isTerminalRunStatus(run.status))) {
+          return yield* new ForkMemoryError({
+            reason: "busy",
+            message: "The coordinator is still applying the correction; go back once it finishes.",
+          });
+        }
       }
-    }
-    return yield* memory.restore(input);
+      return yield* memory.restore(input);
+    });
+    // A correction holds this lock from its copy until its turn is registered.
+    return yield* coordinator === undefined ? guarded : botLocks.withLock(coordinator.id, guarded);
   });
 
   /**
