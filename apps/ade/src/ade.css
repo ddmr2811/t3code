@@ -5728,7 +5728,8 @@ button.ade-subagent:hover .ade-subagent-open {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 16px 20px 8px;
+  /* The name sits on the board's column titles (board 16px + column 12px). */
+  padding: 28px 20px 8px;
 }
 
 .ade-mission-chat-header .ade-button-quiet {
@@ -5768,11 +5769,11 @@ button.ade-subagent:hover .ade-subagent-open {
 
 .ade-mission-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(200px, 1fr));
   align-items: start;
   gap: 12px;
   min-height: 0;
-  padding: 20px 24px;
+  padding: 16px 24px;
   overflow: auto;
 }
 
@@ -5798,7 +5799,7 @@ button.ade-subagent:hover .ade-subagent-open {
   gap: 8px;
   margin: 0;
   padding: 0 4px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -5876,7 +5877,7 @@ button.ade-mission-card-main:focus-visible {
 
 .ade-mission-card h3 {
   margin: 0;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
 }
@@ -5933,7 +5934,7 @@ button.ade-mission-card-main:focus-visible {
   }
 
   .ade-mission-board {
-    grid-template-columns: repeat(4, minmax(220px, 260px));
+    grid-template-columns: repeat(4, minmax(200px, 260px));
   }
 }
 
