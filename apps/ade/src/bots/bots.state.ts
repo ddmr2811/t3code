@@ -91,6 +91,8 @@ export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectio
   tag: WS_METHODS.forkMemoryList,
   staleTimeMs: 15_000,
   idleTtlMs: 60_000,
+  // The coordinator saves from its own turn, with no ADE action to refresh after.
+  refreshIntervalMs: 15_000,
 });
 
 export const forkMemoryUpsertCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -101,6 +103,16 @@ export const forkMemoryUpsertCommand = createEnvironmentRpcCommand(connectionAto
 export const forkMemoryRemoveCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "ade:fork-memory:remove",
   tag: WS_METHODS.forkMemoryRemove,
+});
+
+export const forkMemoryCorrectCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:correct",
+  tag: WS_METHODS.forkMemoryCorrect,
+});
+
+export const forkMemoryRestoreCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:restore",
+  tag: WS_METHODS.forkMemoryRestore,
 });
 
 export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {

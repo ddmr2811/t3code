@@ -2,6 +2,8 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   DEFAULT_SERVER_SETTINGS,
   FORK_BOTS_MAX_FILE_BYTES,
   FORK_BOTS_PROTOCOL_VERSION,
@@ -15,6 +17,8 @@ import {
   type ServerProvider,
   TextGenerationError,
   ThreadId,
+  WS_METHODS,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -27,10 +31,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as RpcTest from "effect/rpc/RpcTest";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -1561,6 +1567,137 @@ describe("ForkBots", () => {
           };
           const draft = yield* service.draft({ text: sentence, projectId: projectA });
           expect(draft.modelSelection).toEqual({ instanceId: codex, model: "gpt-5.4" });
+        }),
+      ),
+    );
+  });
+
+  describe("memory corrections", () => {
+    const tested = [WS_METHODS.forkMemoryCorrect, WS_METHODS.forkMemoryRestore] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+          (typeof tested)[number]
+        > => !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+
+    it.effect("lets only an operator correct or restore, and keeps the notes before either", () =>
+      withBots(({ service, memory, texts }) =>
+        Effect.gen(function* () {
+          const handlers = Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.forkMemoryCorrect, (input) =>
+              service.correctMemory(input),
+            ),
+            group.toLayerHandler(WS_METHODS.forkMemoryRestore, (input) => memory.restore(input)),
+          );
+          const client = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+            RpcTest.makeClient(group).pipe(
+              Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+            );
+          const price = yield* memory.upsert(
+            { projectId: projectA, text: "El pack cuesta 2.400 €.", inclusion: "searchable" },
+            "agent",
+          );
+          const other = yield* memory.upsert(
+            { projectId: projectB, text: "Nota de B.", inclusion: "searchable" },
+            "agent",
+          );
+          const correction = { projectId: projectA, text: "El pack cuesta 1.800 €." };
+
+          const operator = yield* client([
+            AuthOrchestrationReadScope,
+            AuthOrchestrationOperateScope,
+          ]);
+          // Without a coordinator nobody applies it, and nothing is kept.
+          expect(
+            yield* operator[WS_METHODS.forkMemoryCorrect](correction).pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ForkBotsError", reason: "notFound" });
+          expect((yield* memory.list({ projectId: projectA })).previous).toBeUndefined();
+          yield* service.upsert({ ...baseBot, coordinator: true });
+
+          const reader = yield* client([AuthOrchestrationReadScope]);
+          const denied = {
+            _tag: "EnvironmentAuthorizationError",
+            requiredPermission: AuthOrchestrationOperateScope,
+          };
+          expect(
+            yield* reader[WS_METHODS.forkMemoryCorrect](correction).pipe(Effect.flip),
+          ).toMatchObject(denied);
+          expect(
+            yield* reader[WS_METHODS.forkMemoryRestore]({ projectId: projectA, revision: 1 }).pipe(
+              Effect.flip,
+            ),
+          ).toMatchObject(denied);
+          expect((yield* memory.list({ projectId: projectA })).previous).toBeUndefined();
+          expect(texts.join("\n")).not.toContain("1.800");
+
+          const sent = yield* operator[WS_METHODS.forkMemoryCorrect](correction);
+          expect(texts.at(-1)).toContain("«El pack cuesta 1.800 €.»");
+          expect(sent.previous).toMatchObject({ revision: 1, reason: "correction" });
+          expect(sent.previous.notes.map((note) => note.text)).toEqual(["El pack cuesta 2.400 €."]);
+
+          // The coordinator's turn merges its note, as project_memory_save does.
+          yield* memory.upsert(
+            { projectId: projectA, text: "El pack cuesta 1.800 €.", inclusion: "searchable" },
+            "agent",
+            [price.id],
+          );
+          const corrected = yield* memory.list({ projectId: projectA });
+          expect(corrected.revision).toBe(2);
+
+          const back = yield* operator[WS_METHODS.forkMemoryRestore]({
+            projectId: projectA,
+            revision: sent.previous.revision,
+          });
+          expect(back.notes).toEqual([price]);
+          expect(back.previous?.notes.map((note) => note.text)).toEqual([
+            "El pack cuesta 1.800 €.",
+          ]);
+          expect((yield* memory.list({ projectId: projectB })).notes).toEqual([other]);
+          // A screen still showing the version it just restored cannot restore it twice.
+          expect(
+            yield* operator[WS_METHODS.forkMemoryRestore]({
+              projectId: projectA,
+              revision: sent.previous.revision,
+            }).pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ForkMemoryError", reason: "notFound" });
+
+          // Going back is undone the same way.
+          const again = yield* operator[WS_METHODS.forkMemoryRestore]({
+            projectId: projectA,
+            revision: corrected.revision ?? 0,
+          });
+          expect(again.notes.map((note) => note.text)).toEqual(["El pack cuesta 1.800 €."]);
+        }),
+      ),
+    );
+
+    it.effect("reads a memory file saved before revisions", () =>
+      withBots(({ memory, fs, forkDir }) =>
+        Effect.gen(function* () {
+          const note = {
+            id: "mem:old",
+            projectId: projectA,
+            text: "Nota de antes.",
+            inclusion: "searchable",
+            origin: "user",
+            createdAt: "2026-11-20T10:00:00.000Z",
+            updatedAt: "2026-11-21T10:00:00.000Z",
+          } as const;
+          yield* fs.makeDirectory(forkDir, { recursive: true });
+          yield* fs.writeFileString(
+            `${forkDir}/memory.json`,
+            JSON.stringify({ version: 1, updatedAt: note.updatedAt, notes: [note] }),
+          );
+          expect(yield* memory.list({ projectId: projectA })).toEqual({
+            notes: [note],
+            revision: 1,
+            updatedAt: note.updatedAt,
+          });
         }),
       ),
     );

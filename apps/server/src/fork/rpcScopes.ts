@@ -56,6 +56,8 @@ export const FORK_RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkMemoryList]: AuthOrchestrationReadScope,
   [WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkMemoryCorrect]: AuthOrchestrationOperateScope,
+  [WS_METHODS.forkMemoryRestore]: AuthOrchestrationOperateScope,
   // Integrations: the token is a setting; answering a bot's request is operating it.
   [WS_METHODS.forkIntegrationsList]: AuthOrchestrationReadScope,
   [WS_METHODS.forkIntegrationsConnect]: AuthSettingsWriteScope,

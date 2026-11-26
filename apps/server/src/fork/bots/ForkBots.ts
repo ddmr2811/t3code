@@ -19,6 +19,8 @@ import {
   type ForkBotHandoff,
   ForkBotHandoffInput,
   type ForkBotHandoffResult,
+  ForkMemoryCorrectInput,
+  type ForkMemoryCorrectResult,
   type ForkMemoryNote,
   ForkBotListInput,
   type ForkBotListResult,
@@ -111,6 +113,10 @@ export class ForkBots extends Context.Service<
     readonly dismissHandoff: (
       input: ForkBotDismissHandoffInput,
     ) => Effect.Effect<ForkBotHandoff, ForkBotsError>;
+    /** Keeps the project's notes, then hands the user's sentence to its coordinator. */
+    readonly correctMemory: (
+      input: ForkMemoryCorrectInput,
+    ) => Effect.Effect<ForkMemoryCorrectResult, ForkBotsError>;
     /** A coordinator's thread suggests a bot; the user decides with `answerProposal`. */
     readonly propose: (
       draft: BotProposalDraft,
@@ -200,6 +206,7 @@ const decodeDraftReply = Schema.decodeUnknownEffect(Schema.fromJsonString(DraftR
 const decodeSetArchivedInput = Schema.decodeUnknownEffect(ForkBotSetArchivedInput);
 const decodeRemoveInput = Schema.decodeUnknownEffect(ForkBotRemoveInput);
 const decodeSendMessageInput = Schema.decodeUnknownEffect(ForkBotSendMessageInput);
+const decodeMemoryCorrectInput = Schema.decodeUnknownEffect(ForkMemoryCorrectInput);
 const decodeHandoffInput = Schema.decodeUnknownEffect(ForkBotHandoffInput);
 const decodeDismissHandoffInput = Schema.decodeUnknownEffect(ForkBotDismissHandoffInput);
 
@@ -227,6 +234,20 @@ const COORDINATOR_INSTRUCTIONS = [
   "4. Guarda en la memoria con project_memory_save, sin que te lo pidan, solo lo importante y duradero: decisiones, convenciones, datos que costó averiguar.",
   "--- FIN DEL PAPEL DE COORDINADOR ---",
 ].join("\n");
+
+/** The user's sentence is one line, so it cannot close the block it sits in. */
+function memoryCorrectionMessage(correction: string): string {
+  return [
+    "--- CORRECCIÓN DE LA MEMORIA DEL PROYECTO ---",
+    "El usuario corrige la memoria del proyecto con esta frase. La versión anterior ya está guardada y puede volver a ella.",
+    `«${correction}»`,
+    "1. Busca con project_memory_search las notas a las que afecta.",
+    "2. Guarda con project_memory_save lo corregido, un hecho por nota, y pon en `replaces` las notas que sustituye.",
+    "3. Una nota del usuario o esencial no la puedes sustituir: guarda la corregida y di cuál debe quitar el usuario.",
+    "4. Contesta en una o dos frases qué cambiaste. No hagas nada más en este turno.",
+    "--- FIN DE LA CORRECCIÓN ---",
+  ].join("\n");
+}
 
 function initialBotMessage(bot: ForkBot, text: string): string {
   return [
@@ -993,6 +1014,38 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const correctMemory = Effect.fn("ForkBots.correctMemory")(function* (
+    input: ForkMemoryCorrectInput,
+  ) {
+    const parsed = yield* decodeMemoryCorrectInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid memory correction.")),
+    );
+    const directory = yield* storeLock.withPermits(1)(fileStore.read());
+    const coordinator = directory.bots.find(
+      (bot) => bot.coordinator && !bot.archived && bot.projectId === parsed.projectId,
+    );
+    if (coordinator === undefined) {
+      return yield* notFound(`Project ${parsed.projectId} has no coordinator to apply it.`);
+    }
+    return yield* botLocks.withLock(
+      coordinator.id,
+      Effect.gen(function* () {
+        const bot = yield* readBot(coordinator.id);
+        // Kept before the coordinator can touch a note, so going back undoes all of it.
+        const previous = yield* memory
+          .checkpoint(parsed.projectId, parsed.text)
+          .pipe(Effect.mapError((error) => unavailable(error.message)));
+        const sent = yield* deliver(
+          bot,
+          memoryCorrectionMessage(parsed.text),
+          { handoffHops: 0 },
+          undefined,
+        );
+        return { threadId: sent.threadId, queued: sent.queued, handle: bot.handle, previous };
+      }),
+    );
+  });
+
   /**
    * The board is a trace; the handoff itself is already on disk, so a failed write is logged.
    * Delivered handoffs share one entry per pair of bots, so they never fill the board. A cut one
@@ -1519,6 +1572,7 @@ const make = Effect.gen(function* () {
     handoff,
     dismissHandoff,
     workflowTurn,
+    correctMemory,
     // Untraced: /mcp asks on every request, inside the request's own span.
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);
