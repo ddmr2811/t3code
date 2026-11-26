@@ -45,6 +45,9 @@ const noMultilineControl = Schema.makeFilter(
   (value: string) => !MULTILINE_CONTROL_PATTERN.test(value),
   { expected: "text without control characters" },
 );
+// Also C1 controls and lone UTF-16 surrogates, which encode as U+FFFD and could share a handoff id.
+const HANDOFF_CONTEXT_UNSAFE_PATTERN =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|\p{Cs}/u;
 const utf8 = new TextEncoder();
 const withinHandoffContextBytes = Schema.makeFilter(
   (value: string) => utf8.encode(value).byteLength <= FORK_BOTS_HANDOFF_CONTEXT_MAX_BYTES,
@@ -81,7 +84,9 @@ export const ForkBotMessage = TrimmedNonEmptyString.check(
 );
 export const ForkBotHandoffContext = TrimmedNonEmptyString.check(
   withinHandoffContextBytes,
-  noMultilineControl,
+  Schema.makeFilter((value: string) => !HANDOFF_CONTEXT_UNSAFE_PATTERN.test(value), {
+    expected: "text without control characters or lone surrogates",
+  }),
 );
 
 export const ForkBot = Schema.Struct({

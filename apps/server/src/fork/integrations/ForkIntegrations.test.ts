@@ -17,6 +17,7 @@ import {
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -206,6 +207,7 @@ const withIntegrations = <A, E, R>(
           list: () => Effect.succeed({ tasks: [] } as never),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+        Layer.mock(McpProviderSessions.McpProviderSessions)({ read: () => Effect.undefined }),
       );
       const layer = ForkIntegrations.layerWith({
         githubCommand: binary ?? "",
@@ -371,16 +373,6 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
               "application/json",
             ),
           });
-          // Having reached /mcp, its finished turn does not warn that it lacks bot_handoff.
-          yield* harness.forkBots.noteRunUpdated({
-            threadId: bot.threadId,
-            providerInstanceId: codex,
-            status: "completed",
-          });
-          const bots = (yield* harness.forkBots.list({})).bots;
-          expect(bots.find((candidate) => candidate.id === bot.id)?.handoffToolsMissing).toBe(
-            false,
-          );
           const call = (input: object) =>
             httpClient
               .post("/mcp", {

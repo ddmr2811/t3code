@@ -45,6 +45,7 @@ import {
   projectKeyFromName,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
@@ -121,14 +122,14 @@ export class ForkBots extends Context.Service<
     ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Whether a thread is a bot's current one; answered from memory. */
     readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
-    /** A bot thread's provider reached T3's MCP, so it has bot_handoff. */
-    readonly noteMcpReached: (
+    /** A bot thread was served a tool list with bot_handoff under this MCP credential. */
+    readonly noteHandoffToolsListed: (
       threadId: ThreadId,
-      providerInstanceId: ProviderInstanceId,
+      mcpCredentialId: string,
     ) => Effect.Effect<void>;
     /** At the end of a bot's turn, marks or clears `handoffToolsMissing`. */
     readonly noteRunUpdated: (
-      run: Pick<OrchestrationV2Run, "threadId" | "providerInstanceId" | "status">,
+      run: Pick<OrchestrationV2Run, "id" | "threadId" | "status">,
     ) => Effect.Effect<void, ForkBotsError>;
   }
 >()("t3/fork/bots/ForkBots") {}
@@ -255,7 +256,13 @@ function handoffMessage(
   return [
     `--- TRASPASO de @${from.handle} (${from.name}) · ${handoff.id} · salto ${handoff.hops} de ${FORK_BOTS_HANDOFF_MAX_HOPS} ---`,
     text,
-    ...(context === undefined ? [] : [`--- CONTEXTO de @${from.handle} (extracto) ---`, context]),
+    // Quoted line by line, so the excerpt cannot imitate the block's own delimiters.
+    ...(context === undefined
+      ? []
+      : [
+          `--- CONTEXTO de @${from.handle} (extracto) ---`,
+          ...context.split("\n").map((line) => `> ${line}`),
+        ]),
     "--- FIN DEL TRASPASO ---",
   ].join("\n");
 }
@@ -295,6 +302,14 @@ function isThreadNotFoundError(error: unknown): boolean {
   );
 }
 
+const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
 function providerIsSelectable(provider: ServerProvider): boolean {
   return (
     provider.enabled &&
@@ -317,11 +332,18 @@ const make = Effect.gen(function* () {
   });
   // MCP asks on every request whether the caller is a bot's thread, so the answer stays in memory.
   const botThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  // The MCP credential (one per provider session) that last listed bot_handoff, per bot thread.
+  const handoffListedBy = new Map<ThreadId, string>();
   const remember = (directory: StoredBotDirectory) =>
-    Ref.set(
-      botThreads,
-      new Set(directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId]))),
-    );
+    Effect.suspend(() => {
+      const threads = new Set(
+        directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId])),
+      );
+      for (const threadId of handoffListedBy.keys()) {
+        if (!threads.has(threadId)) handoffListedBy.delete(threadId);
+      }
+      return Ref.set(botThreads, threads);
+    });
   const fileStore = {
     read: () => rawStore.read().pipe(Effect.tap(remember)),
     write: (directory: StoredBotDirectory) =>
@@ -353,6 +375,7 @@ const make = Effect.gen(function* () {
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const fileSystem = yield* FileSystem.FileSystem;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
   /**
    * A routine copies the mode and model of the thread it continues. When the bot leaves that
@@ -1347,14 +1370,22 @@ const make = Effect.gen(function* () {
     return answered;
   });
 
-  // Since this server started; a provider that loads the MCP reaches it again when its session opens.
-  const mcpReached = new Map<ThreadId, Set<ProviderInstanceId>>();
+  // Each running turn's MCP credential, only for turns this process saw start: one recovered
+  // after a restart is not judged. A turn's entry goes when it ends.
+  const runCredentials = new Map<OrchestrationV2Run["id"], string | undefined>();
   const noteRunUpdated = Effect.fn("ForkBots.noteRunUpdated")(function* (
-    run: Pick<OrchestrationV2Run, "threadId" | "providerInstanceId" | "status">,
+    run: Pick<OrchestrationV2Run, "id" | "threadId" | "status">,
   ) {
+    if (run.status === "running") {
+      runCredentials.set(run.id, (yield* mcpSessions.read(run.threadId))?.providerSessionId);
+      return;
+    }
+    if (!TERMINAL_RUN_STATUSES.has(run.status) || !runCredentials.has(run.id)) return;
+    const credential = runCredentials.get(run.id);
+    runCredentials.delete(run.id);
     // Only a completed turn: one that failed early may have stopped before the MCP connected.
     if (run.status !== "completed" || !(yield* Ref.get(botThreads)).has(run.threadId)) return;
-    const missing = mcpReached.get(run.threadId)?.has(run.providerInstanceId) !== true;
+    const missing = credential === undefined || handoffListedBy.get(run.threadId) !== credential;
     yield* storeLock.withPermits(1)(
       Effect.gen(function* () {
         const directory = yield* fileStore.read();
@@ -1407,14 +1438,13 @@ const make = Effect.gen(function* () {
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);
     }),
-    // Untraced: /mcp calls it on every request from a bot's thread, as it does isBotThread.
-    noteMcpReached: Effect.fnUntraced(function* (
+    // Untraced: /mcp calls it on every tool list a bot's thread asks for.
+    noteHandoffToolsListed: Effect.fnUntraced(function* (
       threadId: ThreadId,
-      providerInstanceId: ProviderInstanceId,
+      mcpCredentialId: string,
     ) {
-      const instances = mcpReached.get(threadId) ?? new Set();
-      instances.add(providerInstanceId);
-      mcpReached.set(threadId, instances);
+      if ((yield* Ref.get(botThreads)).has(threadId))
+        handoffListedBy.set(threadId, mcpCredentialId);
     }),
     noteRunUpdated,
   });

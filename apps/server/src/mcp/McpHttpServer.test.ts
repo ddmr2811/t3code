@@ -31,6 +31,7 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
+import * as ForkBots from "../fork/bots/ForkBots.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -2016,7 +2017,10 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        tool("bot_handoff", "Hands work to another bot."),
       );
+      // Fork: the deferring thread is a bot's; only a tool list may count as it having bot_handoff.
+      const handoffListed: Array<[string, string]> = [];
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
         Layer.mergeAll(
@@ -2026,12 +2030,20 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              bot_handoff: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(ForkBots.ForkBots)({
+            isBotThread: (threadId) => Effect.succeed(threadId === "thread-deferringToken"),
+            noteHandoffToolsListed: (threadId, credential) =>
+              Effect.sync(() => void handoffListed.push([threadId, credential])),
+          }),
+        ),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
@@ -2098,8 +2110,17 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
 
       const deferring = yield* session("deferringToken", true);
       const other = yield* session("otherToken", false);
+      expect(handoffListed).toEqual([]);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      // Behind tool_search it is still within reach of the bot.
+      expect(handoffListed).toEqual([["thread-deferringToken", "deferringToken"]]);
+      expect(yield* other.listed).toEqual([
+        "bot_handoff",
+        "delegate_task",
+        "preview_open",
+        "schedule_task",
+      ]);
+      expect(handoffListed).toHaveLength(1);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
@@ -2107,7 +2128,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* other.listed).toEqual([
+        "bot_handoff",
+        "delegate_task",
+        "preview_open",
+        "schedule_task",
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

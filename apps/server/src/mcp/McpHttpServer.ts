@@ -350,12 +350,6 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined || Option.isNone(forkBots)
         ? false
         : yield* forkBots.value.isBotThread(limited.thread.threadId);
-    if (bot && limited.thread !== undefined && Option.isSome(forkBots)) {
-      yield* forkBots.value.noteMcpReached(
-        limited.thread.threadId,
-        limited.thread.providerInstanceId,
-      );
-    }
     return {
       ...limited,
       linkedEnvironments,
@@ -1462,11 +1456,23 @@ const layerToolExposure = Layer.effect(
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
     const exposure = yield* McpToolExposure.McpToolExposure;
+    const forkBots = yield* Effect.serviceOption(ForkBots.ForkBots);
     // Untraced: it runs once per tool on every list request.
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
       if (method !== "tools/list") return true;
       const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      const thread = Option.getOrUndefined(scope)?.thread;
+      const providerSessionId = thread?.providerSessionId;
+      // Fork: listed or behind tool_search, the bot now has bot_handoff in this session.
+      if (
+        target === "bot_handoff" &&
+        thread !== undefined &&
+        thread.subagent !== true &&
+        Option.isSome(forkBots) &&
+        Option.getOrUndefined(scope)?.bot === true
+      ) {
+        yield* forkBots.value.noteHandoffToolsListed(thread.threadId, thread.providerSessionId);
+      }
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }
