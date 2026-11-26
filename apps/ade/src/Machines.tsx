@@ -108,6 +108,7 @@ export function PairingForm(props: {
   const [link, setLink] = useState(widen?.host ?? initial?.link ?? "");
   const [code, setCode] = useState("");
   const [terminal, setTerminal] = useState(false);
+  const [credentials, setCredentials] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(initial?.error ?? null);
 
@@ -121,6 +122,7 @@ export function PairingForm(props: {
       {
         ...(code.trim() === "" ? { pairingUrl: link } : { host: link, pairingCode: code }),
         terminal,
+        credentials,
         ...(widen === undefined ? {} : { widen }),
       },
       // The form shows the failure; the console would only repeat it.
@@ -161,14 +163,24 @@ export function PairingForm(props: {
         />
       </label>
       {widen === undefined ? (
-        <label className="ade-pairing-check">
-          <input
-            type="checkbox"
-            checked={terminal}
-            onChange={(event) => setTerminal(event.target.checked)}
-          />
-          Permitir terminal (un shell en la máquina)
-        </label>
+        <>
+          <label className="ade-pairing-check">
+            <input
+              type="checkbox"
+              checked={terminal}
+              onChange={(event) => setTerminal(event.target.checked)}
+            />
+            Permitir terminal (un shell en la máquina)
+          </label>
+          <label className="ade-pairing-check">
+            <input
+              type="checkbox"
+              checked={credentials}
+              onChange={(event) => setCredentials(event.target.checked)}
+            />
+            Permitir guardar credenciales de integraciones (cambia ajustes de la máquina)
+          </label>
+        </>
       ) : null}
       {error !== null && (
         <p className="ade-pairing-error" role="alert">

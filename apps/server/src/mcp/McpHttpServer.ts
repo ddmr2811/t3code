@@ -77,6 +77,8 @@ import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { BotHandoffToolkit } from "./toolkits/botHandoff/tools.ts";
 import * as BotHandoffHandlers from "./toolkits/botHandoff/handlers.ts";
 import * as ForkBots from "../fork/bots/ForkBots.ts";
+import { IntegrationsToolkit } from "./toolkits/integrations/tools.ts";
+import * as IntegrationsHandlers from "./toolkits/integrations/handlers.ts";
 import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
@@ -1509,6 +1511,12 @@ const layerFeedbackToolkit = toolkitRegistration(FeedbackToolkit, FeedbackHandle
   ),
 );
 
+// Fork: a bot reaches outside apps only through the fork's ForkIntegrations service.
+const layerIntegrationsToolkit = toolkitRegistration(
+  IntegrationsToolkit,
+  IntegrationsHandlers.layer,
+);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1576,6 +1584,7 @@ export const layerTools = Layer.mergeAll(
   layerProjectMemoryToolkit,
   layerBotHandoffToolkit,
   layerFeedbackToolkit,
+  layerIntegrationsToolkit,
   layerEnvironmentToolkit,
   layerThemeToolkit,
   layerPreviewControlsRegistration,
@@ -1615,11 +1624,23 @@ const layerToolExposure = Layer.effect(
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
     const exposure = yield* McpToolExposure.McpToolExposure;
+    const forkBots = yield* Effect.serviceOption(ForkBots.ForkBots);
     // Untraced: it runs once per tool on every list request.
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
       if (method !== "tools/list") return true;
       const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      const thread = Option.getOrUndefined(scope)?.thread;
+      const providerSessionId = thread?.providerSessionId;
+      // Fork: listed or behind tool_search, the bot now has bot_handoff in this session.
+      if (
+        target === "bot_handoff" &&
+        thread !== undefined &&
+        thread.subagent !== true &&
+        Option.isSome(forkBots) &&
+        Option.getOrUndefined(scope)?.bot === true
+      ) {
+        yield* forkBots.value.noteHandoffToolsListed(thread.threadId, thread.providerSessionId);
+      }
       if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }

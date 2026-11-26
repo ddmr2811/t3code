@@ -10,6 +10,7 @@ import {
   FORK_BOTS_MAX_FILE_BYTES,
   FORK_BOTS_PROPOSAL_INTERVAL_MS,
   type ForkBot,
+  type ForkBotIntegrations,
   ForkBotAnswerProposalInput,
   ForkBotProposal,
   ForkBotDismissHandoffInput,
@@ -32,16 +33,19 @@ import {
   isForkBotDraftModelAllowed,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2Run,
   type ProjectId,
   type ProviderInstanceId,
   type RuntimeMode,
   type ServerProvider,
   type ThreadId,
   isProviderNativeSubagentThread,
+  integrationAbove,
   isRuntimeModeAbove,
   projectKeyFromName,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
@@ -54,13 +58,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import {
   DispatchModeLimit,
   type DispatchModes,
   exceededDispatchModeLimit,
 } from "../../orchestration-v2/DispatchModeLimit.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -68,6 +75,7 @@ import * as ProviderInstallationGate from "../../provider/ProviderInstallationGa
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
+import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
@@ -114,6 +122,15 @@ export class ForkBots extends Context.Service<
     ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Whether a thread is a bot's current one; answered from memory. */
     readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** A bot thread was served a tool list with bot_handoff under this MCP credential. */
+    readonly noteHandoffToolsListed: (
+      threadId: ThreadId,
+      mcpCredentialId: string,
+    ) => Effect.Effect<void>;
+    /** At the end of a bot's turn, marks or clears `handoffToolsMissing`. */
+    readonly noteRunUpdated: (
+      run: Pick<OrchestrationV2Run, "id" | "threadId" | "status">,
+    ) => Effect.Effect<void, ForkBotsError>;
   }
 >()("t3/fork/bots/ForkBots") {}
 
@@ -230,10 +247,22 @@ function memoryBlock(notes: ReadonlyArray<ForkMemoryNote>): string {
   ].join("\n");
 }
 
-function handoffMessage(handoff: ForkBotHandoff, from: ForkBot, text: string): string {
+function handoffMessage(
+  handoff: ForkBotHandoff,
+  from: ForkBot,
+  text: string,
+  context: string | undefined,
+): string {
   return [
     `--- TRASPASO de @${from.handle} (${from.name}) · ${handoff.id} · salto ${handoff.hops} de ${FORK_BOTS_HANDOFF_MAX_HOPS} ---`,
     text,
+    // Quoted line by line, so the excerpt cannot imitate the block's own delimiters.
+    ...(context === undefined
+      ? []
+      : [
+          `--- CONTEXTO de @${from.handle} (extracto) ---`,
+          ...context.split("\n").map((line) => `> ${line}`),
+        ]),
     "--- FIN DEL TRASPASO ---",
   ].join("\n");
 }
@@ -273,6 +302,14 @@ function isThreadNotFoundError(error: unknown): boolean {
   );
 }
 
+const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
 function providerIsSelectable(provider: ServerProvider): boolean {
   return (
     provider.enabled &&
@@ -295,11 +332,18 @@ const make = Effect.gen(function* () {
   });
   // MCP asks on every request whether the caller is a bot's thread, so the answer stays in memory.
   const botThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  // The MCP credential (one per provider session) that last listed bot_handoff, per bot thread.
+  const handoffListedBy = new Map<ThreadId, string>();
   const remember = (directory: StoredBotDirectory) =>
-    Ref.set(
-      botThreads,
-      new Set(directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId]))),
-    );
+    Effect.suspend(() => {
+      const threads = new Set(
+        directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId])),
+      );
+      for (const threadId of handoffListedBy.keys()) {
+        if (!threads.has(threadId)) handoffListedBy.delete(threadId);
+      }
+      return Ref.set(botThreads, threads);
+    });
   const fileStore = {
     read: () => rawStore.read().pipe(Effect.tap(remember)),
     write: (directory: StoredBotDirectory) =>
@@ -330,6 +374,8 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const fileSystem = yield* FileSystem.FileSystem;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
   /**
    * A routine copies the mode and model of the thread it continues. When the bot leaves that
@@ -601,6 +647,7 @@ const make = Effect.gen(function* () {
       runtimeMode,
       modelSelection: parsed.modelSelection,
       coordinator,
+      integrations: parsed.integrations ?? existing?.integrations ?? {},
     };
     // The thread was started with the old prompt, mode, and model; the next message starts
     // a fresh one so the bot never silently overrides what the user set on that thread.
@@ -611,6 +658,7 @@ const make = Effect.gen(function* () {
       threadId: kept?.threadId ?? null,
       memoryHash: kept?.memoryHash ?? null,
       handoffHops: existing?.handoffHops ?? 0,
+      handoffToolsMissing: kept?.handoffToolsMissing ?? false,
       archived: existing?.archived ?? false,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -718,15 +766,28 @@ const make = Effect.gen(function* () {
 
   /**
    * The one way a message reaches a bot's thread, from the user or from another bot. Callers hold
-   * the bot's lock, so each bot has one queue. `limits` are an agent sender's modes.
+   * the bot's lock, so each bot has one queue. `limits` are an agent sender's modes, and
+   * `senderIntegrations` what the sending bot may do in outside apps.
    */
   const deliver = Effect.fn("ForkBots.deliver")(function* (
     bot: ForkBot,
     text: string,
     patch: Partial<Pick<ForkBot, "handoffHops">>,
     limits: DispatchModes | undefined,
+    senderIntegrations?: ForkBotIntegrations,
   ) {
     if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
+    // A bot never gets done through another what it may not do itself in an outside app.
+    const broader =
+      senderIntegrations === undefined
+        ? undefined
+        : integrationAbove(bot.integrations, senderIntegrations);
+    if (broader !== undefined) {
+      return yield* new ForkBotsError({
+        reason: "permissionDenied",
+        message: `Bot @${bot.handle} may use ${broader}, which this sender may not. Ask the user to send it the work.`,
+      });
+    }
 
     let existingThread: ThreadId | null = null;
     let threadModel: Pick<ModelSelection, "instanceId" | "model"> = bot.modelSelection;
@@ -991,9 +1052,10 @@ const make = Effect.gen(function* () {
         }
         const sent = yield* deliver(
           to,
-          handoffMessage(reserved.handoff, from, parsed.text),
+          handoffMessage(reserved.handoff, from, parsed.text, parsed.context),
           { handoffHops: reserved.handoff.hops },
           sender.kind === "agent" ? sender.limits : undefined,
+          sender.kind === "agent" ? from.integrations : undefined,
         ).pipe(
           // Failed or interrupted: the same id may be sent again.
           // By design at least once: an interruption after the message was queued sends it again.
@@ -1308,6 +1370,59 @@ const make = Effect.gen(function* () {
     return answered;
   });
 
+  // Each running turn's MCP credential, only for turns this process saw start: one recovered
+  // after a restart is not judged. A turn's entry goes when it ends.
+  const runCredentials = new Map<OrchestrationV2Run["id"], string | undefined>();
+  const noteRunUpdated = Effect.fn("ForkBots.noteRunUpdated")(function* (
+    run: Pick<OrchestrationV2Run, "id" | "threadId" | "status">,
+  ) {
+    if (run.status === "running") {
+      runCredentials.set(run.id, (yield* mcpSessions.read(run.threadId))?.providerSessionId);
+      return;
+    }
+    if (!TERMINAL_RUN_STATUSES.has(run.status) || !runCredentials.has(run.id)) return;
+    const credential = runCredentials.get(run.id);
+    runCredentials.delete(run.id);
+    // Only a completed turn: one that failed early may have stopped before the MCP connected.
+    if (run.status !== "completed" || !(yield* Ref.get(botThreads)).has(run.threadId)) return;
+    const missing = credential === undefined || handoffListedBy.get(run.threadId) !== credential;
+    yield* storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const bot = directory.bots.find((candidate) => candidate.threadId === run.threadId);
+        if (bot === undefined || bot.handoffToolsMissing === missing) return;
+        const now = yield* nowIso;
+        yield* fileStore.write({
+          ...directory,
+          bots: directory.bots.map((candidate) =>
+            candidate.id === bot.id
+              ? { ...candidate, handoffToolsMissing: missing, updatedAt: now }
+              : candidate,
+          ),
+          updatedAt: now,
+        });
+      }),
+    );
+  });
+  yield* forkParked(
+    orchestrator.streamDomainEvents.pipe(
+      Stream.mapEffect((event) =>
+        event.type === "run.updated"
+          ? noteRunUpdated(event.payload).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("fork bots could not check a turn for its handoff tools", {
+                  threadId: event.threadId,
+                  cause,
+                }),
+              ),
+            )
+          : Effect.void,
+      ),
+      Stream.retry(Schedule.spaced("30 seconds")),
+      Stream.runDrain,
+    ),
+  );
+
   return ForkBots.of({
     list,
     propose,
@@ -1323,6 +1438,15 @@ const make = Effect.gen(function* () {
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);
     }),
+    // Untraced: /mcp calls it on every tool list a bot's thread asks for.
+    noteHandoffToolsListed: Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      mcpCredentialId: string,
+    ) {
+      if ((yield* Ref.get(botThreads)).has(threadId))
+        handoffListedBy.set(threadId, mcpCredentialId);
+    }),
+    noteRunUpdated,
   });
 });
 

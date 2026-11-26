@@ -153,6 +153,8 @@ describe("bots.logic", () => {
       coordinator: true,
       memoryHash: null,
       handoffHops: 0,
+      handoffToolsMissing: false,
+      integrations: {},
       createdAt: "2026-11-24T00:00:00.000Z",
       updatedAt: "2026-11-24T00:00:00.000Z",
     };

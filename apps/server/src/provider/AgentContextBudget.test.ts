@@ -15,6 +15,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { ForkBots } from "../fork/bots/ForkBots.ts";
 import { ForkGaps } from "../fork/gaps/ForkGaps.ts";
+import { ForkIntegrations } from "../fork/integrations/ForkIntegrations.ts";
 import { ForkProjectMemory } from "../fork/memory/ForkProjectMemory.ts";
 import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -68,6 +69,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(ForkBots)({}),
   Layer.mock(ForkGaps)({}),
+  Layer.mock(ForkIntegrations)({}),
   Layer.mock(ForkProjectMemory)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),

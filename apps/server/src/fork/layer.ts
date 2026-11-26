@@ -5,8 +5,10 @@ import * as ForkCoordination from "./coordination/ForkCoordination.ts";
 import * as ForkExtensions from "./extensions/ForkExtensions.ts";
 import * as ForkFailover from "./failover/ForkFailover.ts";
 import * as ForkGaps from "./gaps/ForkGaps.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ForkGateway from "./gateway/ForkGateway.ts";
 import * as ForkGatewayHttp from "./gateway/http.ts";
+import * as ForkIntegrations from "./integrations/ForkIntegrations.ts";
 import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
 import * as ForkProjectMemory from "./memory/ForkProjectMemory.ts";
@@ -32,7 +34,11 @@ export const ForkLayer = Layer.mergeAll(
   // reads project memory, which the RPCs and the agent's MCP tools share. Handoffs between bots
   // are traced on the shared project coordination board (`<stateDir>/fork/coordination.json`).
   // On top, the ladder a bot climbs when it lacks a tool (`<stateDir>/fork/gaps.json`).
-  ForkGaps.layer.pipe(
+  Layer.merge(
+    ForkGaps.layer,
+    // Alone holds the outside apps' tokens and the requests waiting for the user.
+    ForkIntegrations.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+  ).pipe(
     Layer.provideMerge(ForkBots.layer),
     Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),
   ),
