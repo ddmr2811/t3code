@@ -1,3 +1,4 @@
+import { CloudIcon } from "@phosphor-icons/react/dist/csr/Cloud";
 import { ImageIcon } from "@phosphor-icons/react/dist/csr/Image";
 import { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 import { PaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";
@@ -9,7 +10,7 @@ import { type ChangeEvent, useRef, useState } from "react";
 
 import { cn } from "./ui/utils.ts";
 
-export type BackgroundMode = "luna" | "imagen" | "liso";
+export type BackgroundMode = "cielo" | "luna" | "imagen" | "liso";
 
 export interface BackgroundPreference {
   mode: BackgroundMode;
@@ -18,10 +19,10 @@ export interface BackgroundPreference {
 
 const MODE_KEY = "ade.background";
 const COLOR_KEY = "ade.background.color";
-const DEFAULT_PREFERENCE: BackgroundPreference = { mode: "luna", color: false };
+const DEFAULT_PREFERENCE: BackgroundPreference = { mode: "cielo", color: false };
 
 const isBackgroundMode = (value: unknown): value is BackgroundMode =>
-  value === "luna" || value === "imagen" || value === "liso";
+  value === "cielo" || value === "luna" || value === "imagen" || value === "liso";
 
 export function readBackgroundPreference(storage?: Pick<Storage, "getItem">): BackgroundPreference {
   try {
@@ -74,6 +75,7 @@ export function BackgroundLayer({ pref, customImage }: Pick<Background, "pref" |
       data-ade-bg={pref.mode}
       className="pointer-events-none fixed inset-0 z-0 overflow-hidden"
     >
+      {pref.mode === "cielo" ? <div className="br-sky absolute inset-0" /> : null}
       {pref.mode === "luna" ? <div className="ade-bg-moon absolute inset-0" /> : null}
       {pref.mode === "imagen" ? (
         customImage !== null ? (
@@ -99,6 +101,7 @@ export function BackgroundLayer({ pref, customImage }: Pick<Background, "pref" |
 }
 
 const MODE_ICON = {
+  cielo: CloudIcon,
   luna: MoonIcon,
   imagen: ImageIcon,
   liso: SquareIcon,
@@ -142,6 +145,11 @@ export function BackgroundPicker({
         aria-label="Fondo"
         className="flex items-center gap-0.5"
       >
+        <Toggle value="cielo" aria-label="Fondo: cielo" className={iconToggleClass}>
+          <ToggleIcon>
+            <CloudIcon size={14} />
+          </ToggleIcon>
+        </Toggle>
         <Toggle value="luna" aria-label="Fondo: luna" className={iconToggleClass}>
           <ToggleIcon>
             <MoonIcon size={14} />

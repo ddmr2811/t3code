@@ -252,3 +252,15 @@ export function liveActivity(structure: ThreadStructure): string | null {
   }
   return "Pensando";
 }
+
+// The server wraps what the user typed for a bot (ForkBots.ts: initialBotMessage, memoryBlock and
+// memoryCorrectionMessage); the chat shows only the user's own words.
+const MEMORY_BLOCK = /^<project_memory>\n[\s\S]*?\n<\/project_memory>\n\n/;
+const BOT_REQUEST = /\n--- SOLICITUD DEL USUARIO ---\n([\s\S]*)\n--- FIN DE SOLICITUD ---$/;
+const MEMORY_CORRECTION = /^--- CORRECCIÓN DE LA MEMORIA DEL PROYECTO ---\n[^\n]*\n«(.*)»\n/;
+
+export function visibleUserText(text: string): string {
+  const body = text.replace(MEMORY_BLOCK, "");
+  if (body.startsWith("Actúa como el bot «")) return BOT_REQUEST.exec(body)?.[1] ?? body;
+  return MEMORY_CORRECTION.exec(body)?.[1] ?? body;
+}

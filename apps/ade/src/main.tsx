@@ -14,6 +14,8 @@ import { StrictMode, useContext, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import "./ade.css";
+import "./backroom/backroom.css";
+import "./backroom/screens.css";
 import { BackgroundLayer, BackgroundPicker, useBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";

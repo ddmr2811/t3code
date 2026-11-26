@@ -1,7 +1,6 @@
 import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
-import { BookOpenTextIcon } from "@phosphor-icons/react/dist/csr/BookOpenText";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -16,7 +15,9 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import { useContext, useRef, useState } from "react";
 
-import { BotAvatar } from "../bots/BotAvatar.tsx";
+import { AgentAvatar, botMascot } from "../backroom/AgentAvatar.tsx";
+import { Window } from "../backroom/Window.tsx";
+import { WorkTile } from "../backroom/WorkTile.tsx";
 import { botState } from "../bots/bots.logic.ts";
 import {
   allBotsAtom,
@@ -49,14 +50,16 @@ export function MemoryView() {
     null;
 
   return (
-    <section className="ade-memory" aria-label="Memoria">
-      <header className="ade-memory-head">
-        <h1>Memoria</h1>
-        {projects.length > 1 ? (
-          <label className="ade-memory-field">
-            Proyecto
+    <Window
+      crumb="Memoria"
+      label="Memoria"
+      className="ade-memory"
+      actions={
+        projects.length > 1 ? (
+          <label className="br-field">
+            <span className="ade-sr-only">Proyecto</span>
             <select
-              className="ade-memory-project"
+              className="v4-chip"
               value={selected?.key ?? ""}
               onChange={(event) => setSelectedKey(event.target.value)}
             >
@@ -69,10 +72,11 @@ export function MemoryView() {
               ))}
             </select>
           </label>
-        ) : null}
-      </header>
+        ) : undefined
+      }
+    >
       {selected === null ? (
-        <p className="ade-memory-hint">
+        <p className="br-empty">
           {loading
             ? "Cargando proyectos…"
             : "Añade un proyecto para ver lo que el equipo sabe de él."}
@@ -80,7 +84,7 @@ export function MemoryView() {
       ) : (
         <ProjectMemoryCard key={selected.key} target={selected} />
       )}
-    </section>
+    </Window>
   );
 }
 
@@ -101,7 +105,7 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
         {`: ${errorDisplayMessage(Cause.squash(result.cause)) ?? "error desconocido"}`}
       </p>
     ) : (
-      <p className="ade-memory-hint">Cargando memoria…</p>
+      <p className="br-empty">Cargando memoria…</p>
     );
   }
   const memory = result.value;
@@ -117,27 +121,25 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
 
   return (
-    <div className="ade-memory-card">
-      <div className="ade-memory-main">
-        <div className="ade-memory-title">
-          <span className="ade-memory-mark" aria-hidden>
-            <BookOpenTextIcon size={18} weight="duotone" />
-          </span>
-          <div>
-            <h2>Lo que el equipo sabe de {project.title}</h2>
-            <p>
-              <ClockCounterClockwiseIcon size={13} aria-hidden />
+    <div className="v4-memory">
+      <article className="v4-note">
+        <header className="v4-note-head">
+          <WorkTile kind="book" size="sm" />
+          <span>
+            <h3>Lo que el equipo sabe de {project.title}</h3>
+            <small>
+              <ClockCounterClockwiseIcon size={12} aria-hidden />
               {memory.revision === undefined
                 ? memory.notes.length === 0
                   ? "Aún sin notas"
                   : `${memory.notes.length} notas`
                 : `Revisión ${memory.revision}${memory.updatedAt === undefined ? "" : `, ${memoryAge(memory.updatedAt, now)}`}`}
-            </p>
-          </div>
-        </div>
+            </small>
+          </span>
+        </header>
 
         {memory.notes.length === 0 ? (
-          <p className="ade-memory-hint">
+          <p className="br-empty">
             Aún no hay notas. Los agentes guardan aquí decisiones, convenciones y datos que costó
             averiguar; tú puedes empezar con una frase.
           </p>
@@ -167,21 +169,23 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
           coordinatorWorking={coordinatorWorking}
           now={now}
         />
-      </div>
+      </article>
 
-      <aside className="ade-memory-aside" aria-label="Quién la lee">
-        <h3 className="ade-memory-label">En su próxima tarea</h3>
-        {readers.length === 0 ? (
-          <p className="ade-memory-hint">
-            Ningún bot trabaja en este proyecto. Sus hilos pueden buscar en ella igualmente.
-          </p>
-        ) : (
-          <ul className="ade-memory-readers">
-            {readers.map(({ bot, reads }) => (
-              <Reader key={bot.id} environmentId={environmentId} bot={bot} reads={reads} />
-            ))}
-          </ul>
-        )}
+      <aside className="v4-memory-side" aria-label="Quién la lee">
+        <section>
+          <h4>En su próximo encargo</h4>
+          {readers.length === 0 ? (
+            <p className="br-empty">
+              Ningún bot trabaja en este proyecto. Sus hilos pueden buscar en ella igualmente.
+            </p>
+          ) : (
+            <ul className="v4-next">
+              {readers.map(({ bot, reads }) => (
+                <Reader key={bot.id} environmentId={environmentId} bot={bot} reads={reads} />
+              ))}
+            </ul>
+          )}
+        </section>
       </aside>
     </div>
   );
@@ -195,22 +199,22 @@ function NoteSection(props: {
 }) {
   if (props.notes.length === 0) return null;
   return (
-    <section className="ade-memory-section" aria-label={props.title}>
-      <h3 className="ade-memory-label">
+    <section className="br-note-section" aria-label={props.title}>
+      <h4>
         {props.title} · {props.notes.length}
         <span>{props.hint}</span>
-      </h3>
-      <ul className="ade-memory-rows">
+      </h4>
+      <dl className="v4-note-body">
         {props.notes.map((note) => (
-          <li key={note.id}>
-            <span className="ade-memory-who">
+          <div key={note.id}>
+            <dt>
               {note.origin === "user" ? "Tú" : "Agente"}
-              <span>{memoryAge(note.updatedAt, props.now)}</span>
-            </span>
-            <p>{note.text}</p>
-          </li>
+              <small>{memoryAge(note.updatedAt, props.now)}</small>
+            </dt>
+            <dd>{note.text}</dd>
+          </div>
         ))}
-      </ul>
+      </dl>
     </section>
   );
 }
@@ -224,14 +228,15 @@ function Reader(props: { environmentId: EnvironmentId; bot: ForkBot; reads: stri
   const state = botState(props.bot, thread, false);
   return (
     <li>
-      <BotAvatar status={state.status} size="sm" />
-      <div>
+      <AgentAvatar kind={botMascot(props.bot)} />
+      <span>
         <strong>
           {props.bot.name}
-          {props.bot.coordinator ? <span className="ade-chip">Coordinador</span> : null}
+          {props.bot.coordinator ? " · coordina" : ""}
+          {state.status === "working" ? " · trabajando" : ""}
         </strong>
-        <p>{props.reads}</p>
-      </div>
+        <span>{props.reads}</span>
+      </span>
     </li>
   );
 }
@@ -317,17 +322,17 @@ function Correction(props: {
   return (
     <>
       <form
-        className="ade-memory-correct"
+        className="v4-correction"
         onSubmit={(event) => {
           event.preventDefault();
           void apply();
         }}
       >
-        <span className="ade-memory-you" aria-hidden>
+        <span className="v4-you" aria-hidden>
           Tú
         </span>
-        <div>
-          <label htmlFor="ade-memory-correction" className="ade-memory-label">
+        <div className="br-correction">
+          <label htmlFor="ade-memory-correction" className="ade-sr-only">
             Corrígelo en una frase
           </label>
           <textarea
@@ -345,20 +350,20 @@ function Correction(props: {
             maxLength={FORK_MEMORY_NOTE_MAX_LENGTH}
             disabled={busy || blocked !== null}
           />
-          <div className="ade-memory-correct-row">
-            <span className="ade-memory-hint">
+          <div className="br-correction-row">
+            <button
+              type="submit"
+              className="v4-primary"
+              disabled={busy || blocked !== null || oneLine(draft) === ""}
+            >
+              <ArrowRightIcon size={14} aria-hidden />
+              Aplicar la corrección
+            </button>
+            <span className="br-hint">
               {blocked ??
                 sent ??
                 `La aplica @${props.coordinatorHandle}; antes se guarda la versión actual.`}
             </span>
-            <button
-              type="submit"
-              className="ade-memory-apply"
-              disabled={busy || blocked !== null || oneLine(draft) === ""}
-            >
-              <ArrowRightIcon size={15} aria-hidden />
-              Aplicar corrección
-            </button>
           </div>
         </div>
       </form>
@@ -370,10 +375,10 @@ function Correction(props: {
       )}
 
       {previous === undefined ? null : (
-        <section className="ade-memory-diff" aria-label="Antes y después">
-          <header>
+        <section className="br-note-section" aria-label="Antes y después">
+          <header className="br-diff-head">
             <div>
-              <h3 className="ade-memory-label">Antes y después</h3>
+              <h4>Antes y después</h4>
               <p>
                 {previousLabel(previous)} · revisión {previous.revision},{" "}
                 {memoryAge(previous.savedAt, props.now)}
@@ -382,7 +387,7 @@ function Correction(props: {
             {coordinatorThreadId === null ? null : (
               <button
                 type="button"
-                className="ade-button-quiet m-0!"
+                className="v4-secondary"
                 onClick={() =>
                   setSelectedThread(
                     scopedThreadKey(scopeThreadRef(environmentId, coordinatorThreadId)),
@@ -394,37 +399,36 @@ function Correction(props: {
             )}
           </header>
           {changes.length === 0 ? (
-            <p className="ade-memory-hint">
+            <p className="br-empty">
               {previous.reason === "correction"
                 ? "Aún sin cambios: el coordinador no ha guardado nada desde la corrección."
                 : "Sin diferencias con la versión guardada."}
             </p>
           ) : (
-            <ul className="ade-memory-changes">
+            <dl className="v4-note-body br-changes">
               {changes.map((change) => (
-                <li key={`${change.before?.id ?? ""}:${change.after?.id ?? ""}`}>
-                  <p data-side="before" data-empty={change.before === null ? "" : undefined}>
+                <div key={`${change.before?.id ?? ""}:${change.after?.id ?? ""}`} data-changed="">
+                  <dt data-empty={change.before === null ? "" : undefined}>
                     <span className="ade-sr-only">Antes: </span>
                     {change.before?.text ?? "Nueva"}
-                  </p>
-                  <ArrowRightIcon size={14} aria-hidden />
-                  <p data-side="after" data-empty={change.after === null ? "" : undefined}>
+                  </dt>
+                  <dd>
                     <span className="ade-sr-only">Después: </span>
-                    {change.after === null ? "Quitada" : change.after.text}
-                  </p>
-                </li>
+                    {change.after === null ? "Quitada" : <mark>{change.after.text}</mark>}
+                  </dd>
+                </div>
               ))}
-            </ul>
+            </dl>
           )}
-          <div className="ade-memory-correct-row">
-            <span className="ade-memory-hint">
+          <div className="br-correction-row">
+            <span className="br-hint">
               {props.coordinatorWorking
                 ? "El coordinador aún está aplicando la corrección; podrás volver cuando acabe."
                 : "Volver deja guardada la versión de ahora, así que también se puede deshacer."}
             </span>
             <button
               type="button"
-              className="ade-button-quiet m-0!"
+              className="v4-secondary"
               disabled={busy || !canRestore || changes.length === 0 || props.coordinatorWorking}
               onClick={() => void restore()}
             >

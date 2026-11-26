@@ -49,6 +49,7 @@ import {
   liveActivity,
   rowKind,
   subagentElapsedMs,
+  visibleUserText,
 } from "./timeline.logic.ts";
 
 type Item<T extends OrchestrationV2TurnItem["type"]> = Extract<
@@ -337,7 +338,9 @@ function DeferredWork(props: RowTarget & { row: OrchestrationV2ProjectedTurnItem
 
 function UserMessage(props: RowTarget & { item: Item<"user_message"> }) {
   // The agent needs words to start a turn; the user sent only the attachments.
-  const text = isAttachmentOnlyBootstrapPrompt(props.item.text) ? "" : props.item.text;
+  const text = isAttachmentOnlyBootstrapPrompt(props.item.text)
+    ? ""
+    : visibleUserText(props.item.text);
   const images = props.item.attachments.flatMap((attachment) =>
     attachment.type === "image"
       ? [

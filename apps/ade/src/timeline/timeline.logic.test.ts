@@ -9,6 +9,7 @@ import {
   groupTurns,
   liveActivity,
   planStepChip,
+  visibleUserText,
 } from "./timeline.logic.ts";
 
 // Only the fields grouping reads; the rest of a real item does not change the outcome.
@@ -213,5 +214,51 @@ describe("formatElapsed", () => {
     expect(formatElapsed(60_000)).toBe("1 min 00 s");
     expect(formatElapsed(3_599_000)).toBe("59 min 59 s");
     expect(formatElapsed(3_900_000)).toBe("1 h 05 min");
+  });
+});
+
+describe("visibleUserText", () => {
+  // The shapes ForkBots.ts sends: memory block, bot brief and one-sentence memory correction.
+  const brief = (request: string) =>
+    [
+      "Actúa como el bot «Clara». Rol: Coordina.",
+      "Las instrucciones del operador están delimitadas a continuación; la solicitud del usuario va aparte.",
+      "",
+      "--- PAPEL DE COORDINADOR DEL PROYECTO ---",
+      "Coordinas este proyecto.",
+      "--- FIN DEL PAPEL DE COORDINADOR ---",
+      "",
+      "--- INSTRUCCIONES DEL BOT ---",
+      "Responde en español.",
+      "--- FIN DE INSTRUCCIONES ---",
+      "",
+      "--- SOLICITUD DEL USUARIO ---",
+      request,
+      "--- FIN DE SOLICITUD ---",
+    ].join("\n");
+
+  it.each([
+    [
+      "a bot's brief shows only the request",
+      brief("Publica la guía.\nY avísame."),
+      "Publica la guía.\nY avísame.",
+    ],
+    [
+      "the memory block before a message goes too",
+      `<project_memory>\nNotas esenciales del proyecto:\n- Dos ramas\n</project_memory>\n\n${brief("Hola")}`,
+      "Hola",
+    ],
+    [
+      "a memory correction shows the sentence",
+      "--- CORRECCIÓN DE LA MEMORIA DEL PROYECTO ---\nEl usuario corrige.\n«El pack cuesta 1.800 €»\n1. Busca.\n--- FIN DE LA CORRECCIÓN ---",
+      "El pack cuesta 1.800 €",
+    ],
+    [
+      "what the user typed stays as typed",
+      "Actúa como el bot «Clara», por favor",
+      "Actúa como el bot «Clara», por favor",
+    ],
+  ])("%s", (_name, text, shown) => {
+    expect(visibleUserText(text)).toBe(shown);
   });
 });

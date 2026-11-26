@@ -1,5 +1,5 @@
 import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
-import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import { FlowArrowIcon } from "@phosphor-icons/react/dist/csr/FlowArrow";
 import { TargetIcon } from "@phosphor-icons/react/dist/csr/Target";
 import {
@@ -19,7 +19,9 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useContext, useState } from "react";
 
-import { BotAvatar } from "../bots/BotAvatar.tsx";
+import { AgentAvatar, botMascot } from "../backroom/AgentAvatar.tsx";
+import { Window } from "../backroom/Window.tsx";
+import { WorkTile } from "../backroom/WorkTile.tsx";
 import { botState } from "../bots/bots.logic.ts";
 import { allBotsAtom } from "../bots/bots.state.ts";
 import { Composer, runCommand } from "../composer/Composer.tsx";
@@ -49,6 +51,9 @@ import {
   missionState,
   parseMissionKey,
 } from "./mission.logic.ts";
+
+/** Backroom's stylesheet names the middle columns «running» and «review». */
+const BACKROOM_COLUMN = { todo: "todo", doing: "running", you: "review", done: "done" } as const;
 
 const readMission = () => new URLSearchParams(window.location.search).get("mision");
 
@@ -122,21 +127,21 @@ function MissionList() {
         left.rank - right.rank || right.node.run.updatedAt.localeCompare(left.node.run.updatedAt),
     );
   return (
-    <section className="ade-missions" aria-labelledby="ade-missions-title">
-      <header className="ade-missions-header">
+    <Window crumb="Misiones" labelledBy="ade-missions-title" className="ade-missions">
+      <header className="br-heading">
         <h1 id="ade-missions-title">Misiones</h1>
         <p>
           Cada misión es una ejecución de un flujo: quién lleva cada paso y qué espera tu decisión.
         </p>
       </header>
       {rows.length === 0 ? (
-        <p className="ade-missions-empty">
+        <p className="br-empty">
           {loaded === 0
             ? "Ninguna máquina tiene los flujos encendidos. Se activan en T3 Code: Ajustes → Labs → Workflows."
             : "Aún no hay misiones. Cuando un flujo arranque, aparecerá aquí."}
         </p>
       ) : (
-        <ul className="ade-missions-list">
+        <ul className="v2-mission-list">
           {rows.map(({ environmentId, node }) => {
             const state = missionState(node.run, openQuestions(node));
             return (
@@ -146,25 +151,26 @@ function MissionList() {
                   className="ade-mission-row"
                   onClick={() => open(missionKey(environmentId, node.run.runId))}
                 >
-                  <TargetIcon size={18} aria-hidden className="ade-mission-row-icon" />
-                  <span className="ade-mission-row-title">
-                    {node.run.title || node.run.workflow}
+                  <WorkTile kind="check" className="v2-mission-tile" />
+                  <span>
+                    <span className="v2-h4">{node.run.title || node.run.workflow}</span>
+                    <span className="v2-mission-state" data-tone={state.tone}>
+                      {state.word}
+                    </span>
+                    <small>
+                      {catalog.entries.get(environmentId)?.target.label ?? environmentId}
+                      <span>·</span>
+                      {node.run.workflow}
+                    </small>
                   </span>
-                  <span className="ade-mission-row-meta">
-                    {node.run.workflow} ·{" "}
-                    {catalog.entries.get(environmentId)?.target.label ?? environmentId} ·{" "}
-                    {when(node.run.updatedAt)}
-                  </span>
-                  <span className="ade-mission-state" data-tone={state.tone}>
-                    {state.word}
-                  </span>
+                  <span className="v2-mission-code">{when(node.run.updatedAt)}</span>
                 </button>
               </li>
             );
           })}
         </ul>
       )}
-    </section>
+    </Window>
   );
 }
 
@@ -201,19 +207,15 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
   const detail = Option.getOrUndefined(AsyncResult.value(detailResult));
   if (detail === undefined) {
     return (
-      <section className="ade-missions">
-        <BackToMissions onBack={() => setMission(null)} />
-        <p
-          className="ade-missions-empty"
-          role={detailResult._tag === "Failure" ? "alert" : "status"}
-        >
+      <Window crumb="Misiones" onBack={() => setMission(null)} className="ade-missions">
+        <p className="br-empty" role={detailResult._tag === "Failure" ? "alert" : "status"}>
           {!operable
             ? "Esta sesión no puede operar en esa máquina, o ya no está emparejada."
             : detailResult._tag === "Failure"
               ? "No se pudo leer esta misión."
               : "Cargando la misión…"}
         </p>
-      </section>
+      </Window>
     );
   }
 
@@ -285,22 +287,22 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
     />
   );
   const board = (
-    <div className="ade-mission-board" aria-label="Tablero de la misión">
+    <div className="v4-board" aria-label="Tablero de la misión">
       {MISSION_COLUMNS.map((column) => {
         const list = cards.filter((card) => card.column === column.id);
         return (
           <section
             key={column.id}
-            className="ade-mission-column"
-            data-column={column.id}
-            data-empty={list.length === 0 ? "" : undefined}
+            className="v4-column"
+            data-column={BACKROOM_COLUMN[column.id]}
             aria-labelledby={`ade-mission-col-${column.id}`}
           >
-            <h2 id={`ade-mission-col-${column.id}`}>
-              <span className="ade-mission-dot" aria-hidden />
-              {column.title} <span>{list.length}</span>
-            </h2>
-            <ul>
+            <h4 id={`ade-mission-col-${column.id}`}>
+              <i aria-hidden />
+              {column.title}
+              <span>{list.length}</span>
+            </h4>
+            <ul className="br-cards">
               {list.map((card) => (
                 <li key={card.key}>
                   <MissionCardView
@@ -317,7 +319,7 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
               ))}
             </ul>
             {list.length === 0 && column.id === "todo" && cards.length === 0 ? (
-              <p className="ade-mission-note">Aún no ha empezado ningún paso.</p>
+              <p className="br-empty">Aún no ha empezado ningún paso.</p>
             ) : null}
           </section>
         );
@@ -325,41 +327,34 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
     </div>
   );
 
+  const done = cards.filter((card) => card.column === "done").length;
   return (
-    <section className="ade-mission" aria-labelledby="ade-mission-title">
-      {confirm.dialog}
-      <header className="ade-mission-header">
-        <BackToMissions onBack={() => setMission(null)} />
-        <div className="ade-mission-heading">
-          <h1 id="ade-mission-title">{run.title || run.workflow}</h1>
-          <p className="ade-mission-goal">
-            <TargetIcon size={16} aria-hidden />
-            {run.subject?.title ? run.subject.title : `Flujo ${run.workflow}`}
-            <span className="ade-mission-machine">· {machine?.target.label ?? environmentId}</span>
-          </p>
-        </div>
-        <div className="ade-mission-actions">
+    <Window
+      crumb="Misiones"
+      current={run.title || run.workflow}
+      onBack={() => setMission(null)}
+      labelledBy="ade-mission-title"
+      className="ade-mission"
+      flush
+      actions={
+        <>
           {crew.length === 0 ? null : (
             <span
-              className="ade-mission-crew"
+              className="v4-stack"
               aria-label={`Equipo: ${crew.map((bot) => bot.name).join(", ")}`}
             >
               {crew.map((bot) => (
-                <BotAvatar
-                  key={bot.id}
-                  status={cards.find((card) => card.bot?.id === bot.id)?.face ?? "asleep"}
-                  size="sm"
-                />
+                <AgentAvatar key={bot.id} kind={botMascot(bot)} />
               ))}
             </span>
           )}
-          <span className="ade-mission-state" data-tone={state.tone}>
+          <span className="v4-chip ade-mission-state" data-tone={state.tone}>
             {state.word}
           </span>
           {run.status === "paused" ? (
             <button
               type="button"
-              className="ade-button"
+              className="v4-primary"
               disabled={canResume !== true || acting}
               onClick={() => void act("resume")}
             >
@@ -369,56 +364,67 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
           {run.endedAt === null ? (
             <button
               type="button"
-              className="ade-button-quiet"
+              className="v4-secondary"
               disabled={canCancel !== true || acting}
               onClick={() => void act("cancel")}
             >
               Cancelar
             </button>
           ) : null}
+        </>
+      }
+    >
+      {confirm.dialog}
+      <div className="v4-team">
+        {narrow ? null : chat}
+        <div className="v4-board-area">
+          <header className="v4-board-head">
+            <h3 id="ade-mission-title">{run.title || run.workflow}</h3>
+            <p className="v4-goal">
+              <TargetIcon size={15} aria-hidden />
+              <strong>{run.subject?.title ? run.subject.title : `Flujo ${run.workflow}`}</strong>
+              <span>· {machine?.target.label ?? environmentId}</span>
+            </p>
+            {cards.length === 0 ? null : (
+              <p className="v4-goal-meter">
+                <span className="v4-goal-bar" aria-hidden>
+                  <i style={{ width: `${Math.round((done / cards.length) * 100)}%` }} />
+                </span>
+                <span className="v4-goal-count">
+                  {done} de {cards.length} pasos
+                </span>
+              </p>
+            )}
+            {run.detail !== null && (run.status === "paused" || run.endedAt !== null) ? (
+              <p className="br-detail" data-tone={state.tone}>
+                {run.detail.split("\n", 1)[0]}
+              </p>
+            ) : null}
+            {error === null ? null : (
+              <p className="ade-error" role="alert">
+                {error}
+              </p>
+            )}
+          </header>
+          {narrow ? (
+            <Tabs
+              className="br-tabs"
+              value={tab}
+              onValueChange={(value) => setTab(value as typeof tab)}
+            >
+              <TabsList aria-label="Vista de la misión">
+                <TabsTab value="board">Tablero</TabsTab>
+                <TabsTab value="chat">Conversación</TabsTab>
+              </TabsList>
+              <TabsPanel value="board">{board}</TabsPanel>
+              <TabsPanel value="chat">{chat}</TabsPanel>
+            </Tabs>
+          ) : (
+            board
+          )}
         </div>
-        {run.detail !== null && (run.status === "paused" || run.endedAt !== null) ? (
-          <p className="ade-mission-detail" data-tone={state.tone}>
-            {run.detail.split("\n", 1)[0]}
-          </p>
-        ) : null}
-        {error === null ? null : (
-          <p className="ade-error" role="alert">
-            {error}
-          </p>
-        )}
-      </header>
-      {narrow ? (
-        <Tabs
-          className="ade-mission-tabs"
-          value={tab}
-          onValueChange={(value) => setTab(value as typeof tab)}
-        >
-          <TabsList aria-label="Vista de la misión">
-            <TabsTab value="board">Tablero</TabsTab>
-            <TabsTab value="chat">Conversación</TabsTab>
-          </TabsList>
-          <TabsPanel value="board">{board}</TabsPanel>
-          <TabsPanel value="chat" className="ade-mission-chat-panel">
-            {chat}
-          </TabsPanel>
-        </Tabs>
-      ) : (
-        <div className="ade-mission-body">
-          {chat}
-          {board}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function BackToMissions(props: { onBack: () => void }) {
-  return (
-    <button type="button" className="ade-button-quiet ade-mission-back" onClick={props.onBack}>
-      <ArrowLeftIcon size={15} aria-hidden />
-      Misiones
-    </button>
+      </div>
+    </Window>
   );
 }
 
@@ -430,46 +436,44 @@ function MissionCardView(props: {
   onOpenThread: (threadKey: string) => void;
 }) {
   const { card } = props;
-  const who = (
-    <span className="ade-mission-card-who">
-      {card.bot === null ? (
-        <>
-          <FlowArrowIcon size={16} aria-hidden className="ade-mission-flow-icon" />
-          <span>flujo</span>
-        </>
-      ) : (
-        <>
-          <BotAvatar status={card.face} size="sm" />
-          <span>{card.bot.name}</span>
-        </>
-      )}
-      <span className="ade-mission-card-status" data-face={card.face}>
-        {card.status}
+  const body = (
+    <>
+      <strong>{card.title}</strong>
+      <span className="v4-card-foot">
+        {card.bot === null ? (
+          <FlowArrowIcon size={16} aria-hidden className="br-flow" />
+        ) : (
+          <AgentAvatar kind={botMascot(card.bot)} />
+        )}
+        <small data-face={card.face}>
+          {card.bot === null ? "flujo" : card.bot.name} · {card.status}
+        </small>
+        {card.face === "working" ? (
+          <span className="v4-typing" aria-hidden>
+            <i />
+            <i />
+            <i />
+          </span>
+        ) : props.onPick === null ? null : (
+          <ArrowUpRightIcon size={14} className="v4-card-open" aria-hidden />
+        )}
       </span>
-    </span>
+    </>
   );
   const question = card.question;
   return (
-    <article
-      className="ade-mission-card"
-      data-column={card.column}
-      data-selected={props.selected ? "" : undefined}
-    >
+    <article className="ade-mission-card" data-selected={props.selected ? "" : undefined}>
       {props.onPick === null ? (
-        <div className="ade-mission-card-main">
-          <h3>{card.title}</h3>
-          {who}
-        </div>
+        <div className="v4-card">{body}</div>
       ) : (
         <button
           type="button"
-          className="ade-mission-card-main"
+          className="v4-card"
           aria-pressed={props.selected}
           aria-label={`${card.title}: ver la conversación`}
           onClick={props.onPick}
         >
-          <h3>{card.title}</h3>
-          {who}
+          {body}
         </button>
       )}
       {question === null ? null : (
@@ -503,26 +507,33 @@ function MissionChat(props: {
   );
   const [, setSelectedThread] = useAtom(selectedThreadKeyAtom);
   return (
-    <section className="ade-mission-chat" aria-label="Conversación">
-      <header className="ade-mission-chat-header">
+    <aside className="v4-thread" aria-label="Conversación">
+      <header className="v4-thread-head">
         {props.bot === null ? (
-          <FlowArrowIcon size={22} aria-hidden className="ade-mission-flow-icon" />
+          <span className="agent-avatar br-face" aria-hidden>
+            <FlowArrowIcon size={18} />
+          </span>
         ) : (
-          <BotAvatar status={props.botStatus ?? "asleep"} />
+          <AgentAvatar kind={botMascot(props.bot)} />
         )}
-        <div>
-          <p className="ade-mission-chat-name">
+        <span>
+          <strong>
             {props.bot?.name ?? (thread === null ? "Sin conversación" : thread.title)}
-          </p>
-          <p className="ade-mission-chat-role">
-            {props.bot?.role ??
-              (ref === null ? "El flujo aún no ha hablado con ningún agente." : "Hilo del flujo")}
-          </p>
-        </div>
+          </strong>
+          <small>
+            {props.bot?.coordinator
+              ? "Coordinación"
+              : (props.bot?.role ??
+                (ref === null
+                  ? "El flujo aún no ha hablado con ningún agente."
+                  : "Hilo del flujo"))}
+            {props.botStatus === "working" ? " · trabajando" : ""}
+          </small>
+        </span>
         {ref === null ? null : (
           <button
             type="button"
-            className="ade-button-quiet"
+            className="br-link"
             onClick={() => setSelectedThread(scopedThreadKey(ref))}
           >
             Abrir el hilo
@@ -543,6 +554,6 @@ function MissionChat(props: {
           )}
         </>
       )}
-    </section>
+    </aside>
   );
 }

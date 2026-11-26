@@ -59,11 +59,8 @@ export function Overnight(props: { needsYouCount: number }) {
   const pending = props.needsYouCount;
 
   return (
-    <section className="ade-overnight" aria-label="Mientras dormías">
-      <h2>
-        <MoonIcon size={15} aria-hidden />
-        Mientras dormías
-      </h2>
+    <section className="v2-rail-note" aria-label="Mientras dormías">
+      <MoonIcon size={17} aria-hidden />
       <ul>
         <li>
           {pending === 1 ? "1 decisión pendiente" : `${pending} decisiones pendientes`}

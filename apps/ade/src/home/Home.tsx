@@ -1,6 +1,7 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { Toggle, ToggleGroup } from "@ui-sdk/react/toggle";
+import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 
 import { NewThreadComposer } from "../composer/Composer.tsx";
@@ -11,10 +12,8 @@ import {
   selectedThreadKeyAtom,
   useDecisionsPanel,
 } from "../sidebar/Sidebar.tsx";
-import { projectAccentColor, projectMonogram } from "../sidebar/sidebar.logic.ts";
 import { environmentProjects, threadEnvironment } from "../state.ts";
-import { ForYou, HomeActivity } from "./ForYou.tsx";
-import { Overnight } from "./Overnight.tsx";
+import { ForYou, HomeActivity, HomeRail } from "./ForYou.tsx";
 import { forYouSentence, homeChips, homeProjects } from "./home.logic.ts";
 
 export const homeProjectsAtom = Atom.make((get) => {
@@ -42,6 +41,19 @@ export const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
   Atom.withLabel("ade-home-selected-project"),
 );
 
+const DATE = new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long" });
+const HOUR = new Intl.DateTimeFormat("es-ES", { hour: "numeric", hourCycle: "h23" });
+const nowMillis = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
+const todayLabel = () => {
+  const text = DATE.format(nowMillis());
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
+const greeting = () => {
+  const hour = Number(HOUR.format(nowMillis()));
+  if (hour >= 6 && hour < 13) return "Buenos días";
+  return hour >= 6 && hour < 21 ? "Buenas tardes" : "Buenas noches";
+};
+
 export function Home() {
   const { projects, machineCount, loading } = useAtomValue(homeProjectsAtom);
   const { count: needsYouCount } = useDecisionsPanel();
@@ -57,91 +69,76 @@ export function Home() {
   const multipleMachines = machineCount > 1;
 
   return (
-    <section className="ade-home" aria-label="Inicio">
-      <span className="ade-home-art" aria-hidden />
-      <div className="ade-home-scroll">
-        <div className="ade-home-top">
-          <header className="ade-home-greeting">
-            <h1>¿En qué trabajamos?</h1>
-            <p className="ade-home-sentence" data-pending={needsYouCount > 0 || undefined}>
-              {forYouSentence(needsYouCount)}
-            </p>
+    <section className="ade-home br" aria-label="Inicio">
+      <div className="v2-app">
+        <div className="v2-app-main">
+          <header className="v2-app-greeting">
+            <span>{todayLabel()}</span>
+            <h1 className="v2-h3">{greeting()}</h1>
+            <p data-pending={needsYouCount > 0 || undefined}>{forYouSentence(needsYouCount)}</p>
           </header>
+          <div className="v2-focus-card">
+            <h2 className="v2-h4">¿En qué trabajamos?</h2>
+            {selected === null ? (
+              <p role="status">
+                {loading
+                  ? "Cargando proyectos…"
+                  : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
+              </p>
+            ) : (
+              <>
+                <ToggleGroup
+                  value={[selected.key]}
+                  deselectable={false}
+                  onValueChange={(values) => {
+                    const next = values[0];
+                    if (next !== undefined) setSelectedKey(next);
+                  }}
+                  aria-label="Proyecto donde empezar el hilo"
+                  className="br-projects"
+                >
+                  {chips.map((target) => (
+                    <Toggle
+                      key={target.key}
+                      value={target.key}
+                      className="v4-chip br-project"
+                      aria-label={
+                        multipleMachines
+                          ? `${target.project.title} · ${target.machineLabel}`
+                          : target.project.title
+                      }
+                    >
+                      {target.project.title}
+                      {multipleMachines ? <small>{target.machineLabel}</small> : null}
+                    </Toggle>
+                  ))}
+                  {projects.length > chips.length ? (
+                    <button
+                      type="button"
+                      className="v4-chip br-project"
+                      aria-haspopup="dialog"
+                      onClick={() => openSearch("proyectos")}
+                    >
+                      Más…
+                    </button>
+                  ) : null}
+                </ToggleGroup>
+                <NewThreadComposer
+                  environmentId={selected.environmentId}
+                  machineLabel={selected.machineLabel}
+                  project={selected.project}
+                  onEngage={() => {
+                    if (selectedKey === null) setSelectedKey(selected.key);
+                  }}
+                  onThreadCreated={openThread}
+                />
+              </>
+            )}
+          </div>
           <ForYou onOpenThread={openThread} />
           <HomeActivity multipleMachines={multipleMachines} />
         </div>
-        <div className="ade-home-inner">
-          <Overnight needsYouCount={needsYouCount} />
-          {selected === null ? (
-            <p className="ade-home-empty" role="status">
-              {loading
-                ? "Cargando proyectos…"
-                : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
-            </p>
-          ) : (
-            <>
-              <ToggleGroup
-                value={[selected.key]}
-                deselectable={false}
-                onValueChange={(values) => {
-                  const next = values[0];
-                  if (next !== undefined) setSelectedKey(next);
-                }}
-                aria-label="Proyecto donde empezar el hilo"
-                className="ade-home-projects"
-              >
-                {chips.map((target) => (
-                  <Toggle
-                    key={target.key}
-                    value={target.key}
-                    className="ade-home-project-chip"
-                    aria-label={
-                      multipleMachines
-                        ? `${target.project.title} · ${target.machineLabel}`
-                        : target.project.title
-                    }
-                  >
-                    <span
-                      className="ade-home-project-mark"
-                      style={
-                        { "--ade-project-color": projectAccentColor(target.key) } as Record<
-                          string,
-                          string
-                        >
-                      }
-                      aria-hidden
-                    >
-                      {projectMonogram(target.project.title)}
-                    </span>
-                    <span className="ade-home-project-name">{target.project.title}</span>
-                    {multipleMachines ? (
-                      <span className="ade-home-project-machine">{target.machineLabel}</span>
-                    ) : null}
-                  </Toggle>
-                ))}
-                {projects.length > chips.length ? (
-                  <button
-                    type="button"
-                    className="ade-home-project-chip ade-home-project-more"
-                    aria-haspopup="dialog"
-                    onClick={() => openSearch("proyectos")}
-                  >
-                    Más…
-                  </button>
-                ) : null}
-              </ToggleGroup>
-              <NewThreadComposer
-                environmentId={selected.environmentId}
-                machineLabel={selected.machineLabel}
-                project={selected.project}
-                onEngage={() => {
-                  if (selectedKey === null) setSelectedKey(selected.key);
-                }}
-                onThreadCreated={openThread}
-              />
-            </>
-          )}
-        </div>
+        <HomeRail projectId={selected?.project.id ?? null} needsYouCount={needsYouCount} />
       </div>
     </section>
   );
