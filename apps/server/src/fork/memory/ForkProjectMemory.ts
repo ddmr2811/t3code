@@ -80,7 +80,8 @@ export class ForkProjectMemory extends Context.Service<
       {
         readonly previous: ForkMemoryPrevious;
         readonly undo: Effect.Effect<void>;
-        readonly attach: (threadId: ThreadId) => Effect.Effect<void>;
+        /** False when the thread could not be noted, so no caller claims it was. */
+        readonly attach: (threadId: ThreadId) => Effect.Effect<boolean>;
       },
       ForkMemoryError
     >;
@@ -377,7 +378,7 @@ const make = Effect.gen(function* () {
               Effect.gen(function* () {
                 const latest = yield* store.read();
                 const current = stateOf(latest, projectId);
-                if (current === undefined || !isOurs(current.previous)) return;
+                if (current === undefined || !isOurs(current.previous)) return false;
                 yield* store.write({
                   ...latest,
                   projects: {
@@ -385,6 +386,7 @@ const make = Effect.gen(function* () {
                     [projectId]: { ...current, previous: { ...previous, threadId } },
                   },
                 });
+                return true;
               }),
             )
             .pipe(
@@ -392,7 +394,7 @@ const make = Effect.gen(function* () {
                 Effect.logWarning("fork memory could not note the correction's thread", {
                   projectId,
                   reason: error.reason,
-                }),
+                }).pipe(Effect.as(false)),
               ),
             );
         const undo = lock

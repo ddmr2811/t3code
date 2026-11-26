@@ -37,6 +37,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RpcAuthorization from "../../auth/RpcAuthorization.ts";
+import { ProjectionStoreThreadNotFoundError } from "../../orchestration-v2/ProjectionStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -139,6 +140,13 @@ const withBots = <A, E, R>(
     readonly board: ForkCoordination.ForkCoordination["Service"];
     /** The next launch reaches the provider and then never returns, as when the server stops. */
     readonly stallNextLaunch: Effect.Effect<Deferred.Deferred<void>>;
+    /** The next launch stops at `reached` (with the thread it will start) until `resume`. */
+    readonly pauseNextLaunch: Effect.Effect<{
+      readonly reached: Deferred.Deferred<ThreadId>;
+      readonly resume: Deferred.Deferred<void>;
+    }>;
+    /** Threads that exist; removing one is a thread whose projection was purged. */
+    readonly liveThreads: Set<ThreadId>;
     readonly memory: ForkProjectMemory.ForkProjectMemory["Service"];
     /** The server's settings, which a test may replace before the call that reads them. */
     readonly settings: { current: typeof DEFAULT_SERVER_SETTINGS };
@@ -165,6 +173,10 @@ const withBots = <A, E, R>(
       const unreadableThreads = new Set<ThreadId>();
       const threadProjects = new Map<ThreadId, ProjectId>();
       const stalls: Array<Deferred.Deferred<void>> = [];
+      const pauses: Array<{
+        reached: Deferred.Deferred<ThreadId>;
+        resume: Deferred.Deferred<void>;
+      }> = [];
       const routines: Array<{ id: string; threadId: ThreadId; enabled: boolean }> = [];
       const settings = { current: DEFAULT_SERVER_SETTINGS };
       const mcpCredentials = new Map<ThreadId, string>();
@@ -186,20 +198,30 @@ const withBots = <A, E, R>(
             const stall = stalls.shift();
             if (stall !== undefined)
               return Deferred.succeed(stall, undefined).pipe(Effect.andThen(Effect.never));
-            return Effect.sync(() => {
-              texts.push(input.initialMessage?.text ?? "");
-              const threadId = input.threadId ?? ThreadId.make(`thread-bot-${launched.length + 1}`);
-              launched.push(threadId);
-              liveThreads.add(threadId);
-              threadModels.set(threadId, input.modelSelection);
-              threadModes.set(threadId, input.runtimeMode);
-              threadProjects.set(threadId, input.projectId);
-              const userMessageId = input.initialMessage?.messageId;
-              return {
-                threadId,
-                projection: { runs: [{ id: `run-${threadId}`, userMessageId }] },
-              } as never;
-            });
+            const threadId = input.threadId ?? ThreadId.make(`thread-bot-${launched.length + 1}`);
+            const pause = pauses.shift();
+            const paused =
+              pause === undefined
+                ? Effect.void
+                : Deferred.succeed(pause.reached, threadId).pipe(
+                    Effect.andThen(Deferred.await(pause.resume)),
+                  );
+            return Effect.andThen(
+              paused,
+              Effect.sync(() => {
+                texts.push(input.initialMessage?.text ?? "");
+                launched.push(threadId);
+                liveThreads.add(threadId);
+                threadModels.set(threadId, input.modelSelection);
+                threadModes.set(threadId, input.runtimeMode);
+                threadProjects.set(threadId, input.projectId);
+                const userMessageId = input.initialMessage?.messageId;
+                return {
+                  threadId,
+                  projection: { runs: [{ id: `run-${threadId}`, userMessageId }] },
+                } as never;
+              }),
+            );
           },
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -220,10 +242,13 @@ const withBots = <A, E, R>(
                     },
                     runs: [{ status: busyThreads.has(threadId) ? "running" : "completed" }],
                   } as never)
-                : Effect.fail({
-                    _tag: "OrchestratorThreadNotFoundError",
-                    threadId,
-                  } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
+                : // As OrchestratorV2.getThreadRecords fails for a thread with no projection.
+                  Effect.fail(
+                    new Orchestrator.OrchestratorProjectionError({
+                      threadId,
+                      cause: new ProjectionStoreThreadNotFoundError({ threadId }),
+                    }),
+                  )) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
           sendToThread: ((input: { threadId: ThreadId; text: string; messageId: string }) =>
             Effect.sync(() => {
               sentTo.push(input.threadId);
@@ -316,6 +341,11 @@ const withBots = <A, E, R>(
           busyThreads,
           unreadableThreads,
           board: yield* ForkCoordination.ForkCoordination,
+          pauseNextLaunch: Effect.all({
+            reached: Deferred.make<ThreadId>(),
+            resume: Deferred.make<void>(),
+          }).pipe(Effect.tap((pause) => Effect.sync(() => pauses.push(pause)))),
+          liveThreads,
           stallNextLaunch: Deferred.make<void>().pipe(
             Effect.tap((stall) => Effect.sync(() => stalls.push(stall))),
           ),
@@ -1793,7 +1823,7 @@ describe("ForkBots", () => {
       ),
     );
 
-    it.effect("makes a restore wait for a correction still being handed over", () =>
+    it.effect("makes a restore wait for a hand-over, and an interruption keeps the copy", () =>
       withBots(({ service, memory, stallNextLaunch }) =>
         Effect.gen(function* () {
           yield* memory.upsert(
@@ -1809,7 +1839,7 @@ describe("ForkBots", () => {
           yield* Deferred.await(reached);
           const restoring = yield* service
             .restoreMemory({ projectId: projectA, revision: 2 })
-            .pipe(Effect.flip, Effect.forkChild);
+            .pipe(Effect.forkChild);
           // The same stores' reads queue behind an unguarded restore's, which would end by now;
           // a restore waiting on the coordinator's lock cannot have.
           for (let i = 0; i < 10; i++) {
@@ -1817,12 +1847,81 @@ describe("ForkBots", () => {
             yield* memory.list({ projectId: projectA, includePrevious: true });
           }
           expect(restoring.pollUnsafe()).toBeUndefined();
-          // The hand-over fails; its copy goes, and the waiting restore finds revision 2 gone.
+          // A tab closing mid hand-over may come after the turn was committed: the copy stays.
           yield* Fiber.interrupt(correcting);
-          expect(yield* Fiber.join(restoring)).toMatchObject({ reason: "conflict" });
-          expect((yield* memory.list({ projectId: projectA })).notes.map((n) => n.text)).toEqual([
-            "Uno.",
-          ]);
+          expect(
+            (yield* memory.list({ projectId: projectA, includePrevious: true })).previous,
+          ).toMatchObject({ revision: 1, correction: "Dos." });
+          expect(yield* Fiber.join(restoring)).toMatchObject({ revision: 3 });
+        }),
+      ),
+    );
+
+    it.effect("claims no thread for the copy when it could not note it", () =>
+      withBots(({ service, memory, pauseNextLaunch }) =>
+        Effect.gen(function* () {
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          const pause = yield* pauseNextLaunch;
+          const correcting = yield* service
+            .correctMemory({ projectId: projectA, text: "Una.", revision: 0 })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(pause.reached);
+          // Another copy replaces this one before the hand-over returns.
+          yield* memory.checkpoint(projectA, "Otra.", 1);
+          yield* Deferred.succeed(pause.resume, undefined);
+          expect((yield* Fiber.join(correcting)).previous.threadId).toBeUndefined();
+          const kept = (yield* memory.list({ projectId: projectA, includePrevious: true }))
+            .previous;
+          expect(kept?.correction).toBe("Otra.");
+          expect(kept?.threadId).toBeUndefined();
+        }),
+      ),
+    );
+
+    it.effect("goes back, and hands over again, once the coordinator's thread was purged", () =>
+      withBots(({ service, liveThreads }) =>
+        Effect.gen(function* () {
+          const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+          const sent = yield* service.correctMemory({
+            projectId: projectA,
+            text: "Una.",
+            revision: 0,
+          });
+          liveThreads.delete(sent.threadId);
+          expect(yield* service.restoreMemory({ projectId: projectA, revision: 1 })).toMatchObject({
+            revision: 2,
+          });
+          const next = yield* service.sendMessage({ id: coordinator.id, text: "hola" });
+          expect(next.threadId).not.toBe(sent.threadId);
+        }),
+      ),
+    );
+
+    it.effect("watches the thread a delivery started while the restore waited", () =>
+      withBots(({ service, busyThreads, archivedThreads, pauseNextLaunch }) =>
+        Effect.gen(function* () {
+          const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+          const sent = yield* service.correctMemory({
+            projectId: projectA,
+            text: "Una.",
+            revision: 0,
+          });
+          // The user archived its thread, so the next message starts another one.
+          archivedThreads.add(sent.threadId);
+          const pause = yield* pauseNextLaunch;
+          const sending = yield* service
+            .sendMessage({ id: coordinator.id, text: "Otro encargo." })
+            .pipe(Effect.forkChild);
+          const started = yield* Deferred.await(pause.reached);
+          const restoring = yield* service
+            .restoreMemory({ projectId: projectA, revision: 1 })
+            .pipe(Effect.flip, Effect.forkChild);
+          // The restore reads the old thread before it queues on the coordinator's lock.
+          for (let i = 0; i < 10; i++) yield* service.list({});
+          busyThreads.add(started);
+          yield* Deferred.succeed(pause.resume, undefined);
+          yield* Fiber.join(sending);
+          expect(yield* Fiber.join(restoring)).toMatchObject({ reason: "busy" });
         }),
       ),
     );

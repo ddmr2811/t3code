@@ -344,15 +344,18 @@ function threadConfigChanged(
   );
 }
 
+const THREAD_NOT_FOUND_TAGS = new Set([
+  "OrchestratorThreadNotFoundError",
+  "ProjectionStoreThreadNotFoundError",
+  "ThreadManagementThreadNotFoundError",
+]);
+
+/** The orchestrator wraps a missing projection in OrchestratorProjectionError's `cause`. */
 function isThreadNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    ((error as { _tag?: unknown })._tag === "OrchestratorThreadNotFoundError" ||
-      (error as { _tag?: unknown })._tag === "ProjectionStoreThreadNotFoundError" ||
-      (error as { _tag?: unknown })._tag === "ThreadManagementThreadNotFoundError")
-  );
+  if (typeof error !== "object" || error === null) return false;
+  const tag = (error as { _tag?: unknown })._tag;
+  if (typeof tag === "string" && THREAD_NOT_FOUND_TAGS.has(tag)) return true;
+  return "cause" in error && error.cause !== error && isThreadNotFoundError(error.cause);
 }
 
 const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
@@ -1060,14 +1063,16 @@ const make = Effect.gen(function* () {
           memoryCorrectionMessage(parsed.text),
           { handoffHops: 0 },
           undefined,
-        ).pipe(Effect.onError(() => undo));
+          // Only a typed failure: an interruption may come after the turn was committed, and
+          // undoing then would leave the correction applied with no way back.
+        ).pipe(Effect.tapError(() => undo));
         // Under this lock, so a restore waiting on it already sees the thread to watch.
-        yield* attach(sent.threadId);
+        const attached = yield* attach(sent.threadId);
         return {
           threadId: sent.threadId,
           queued: sent.queued,
           handle: bot.handle,
-          previous: { ...previous, threadId: sent.threadId },
+          previous: attached ? { ...previous, threadId: sent.threadId } : previous,
         };
       }),
     );
@@ -1087,11 +1092,35 @@ const make = Effect.gen(function* () {
       (bot) => bot.coordinator && !bot.archived && bot.projectId === input.projectId,
     );
     const guarded = Effect.gen(function* () {
+      // Read again under the lock: another delivery may have started it on a new thread.
+      const current =
+        coordinator === undefined
+          ? undefined
+          : (yield* storeLock
+              .withPermits(1)(fileStore.read())
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new ForkMemoryError({ reason: "storageFailed", message: error.message }),
+                ),
+              )).bots.find((bot) => bot.id === coordinator.id);
+      if (
+        coordinator !== undefined &&
+        (current === undefined ||
+          !current.coordinator ||
+          current.archived ||
+          current.projectId !== input.projectId)
+      ) {
+        return yield* new ForkMemoryError({
+          reason: "conflict",
+          message: `The coordinator of project ${input.projectId} changed; try again.`,
+        });
+      }
       const kept = (yield* memory.list({ projectId: input.projectId, includePrevious: true }))
         .previous;
       // The correction's own thread, even if the bot changed since, and the coordinator's now.
       const watched = new Set(
-        [kept?.threadId, coordinator?.threadId].filter((id): id is ThreadId => id != null),
+        [kept?.threadId, current?.threadId].filter((id): id is ThreadId => id != null),
       );
       for (const threadId of watched) {
         const outcome = yield* threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.result);

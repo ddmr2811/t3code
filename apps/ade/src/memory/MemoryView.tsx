@@ -309,6 +309,8 @@ function Correction(props: {
 
   const previous = memory.previous;
   const changes = previous === undefined ? [] : memoryChanges(previous.notes, memory.notes);
+  // The thread that holds the way back: the correction's own, else the coordinator's.
+  const heldBy = previous?.threadId ?? coordinatorThreadId;
   const blocked =
     props.coordinatorHandle === null
       ? "Para corregir en una frase, el proyecto necesita un coordinador (en Bots)."
@@ -381,14 +383,12 @@ function Correction(props: {
                 {memoryAge(previous.savedAt, props.now)}
               </p>
             </div>
-            {coordinatorThreadId === null ? null : (
+            {heldBy === null ? null : (
               <button
                 type="button"
                 className="ade-button-quiet m-0!"
                 onClick={() =>
-                  setSelectedThread(
-                    scopedThreadKey(scopeThreadRef(environmentId, coordinatorThreadId)),
-                  )
+                  setSelectedThread(scopedThreadKey(scopeThreadRef(environmentId, heldBy)))
                 }
               >
                 Ver el hilo
