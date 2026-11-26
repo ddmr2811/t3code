@@ -4,6 +4,7 @@ import { Toggle, ToggleGroup } from "@ui-sdk/react/toggle";
 import { Atom } from "effect/reactivity";
 
 import { NewThreadComposer } from "../composer/Composer.tsx";
+import { searchOpenAtom } from "../search/SearchButton.tsx";
 import { environmentCatalog } from "../connection/runtime.ts";
 import {
   listedThreadsAtom,
@@ -13,9 +14,9 @@ import {
 import { projectAccentColor, projectMonogram } from "../sidebar/sidebar.logic.ts";
 import { environmentProjects, threadEnvironment } from "../state.ts";
 import { Overnight } from "./Overnight.tsx";
-import { homeProjects, workingThreadCount } from "./home.logic.ts";
+import { homeChips, homeProjects, workingThreadCount } from "./home.logic.ts";
 
-const homeProjectsAtom = Atom.make((get) => {
+export const homeProjectsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   const threads = get(listedThreadsAtom);
   const machineIds = [...enabledEnvironmentIds(catalog)];
@@ -39,7 +40,7 @@ const workingCountAtom = Atom.make((get) => workingThreadCount(get(listedThreads
 );
 
 // Kept in memory only so leaving Inicio and returning remembers the picked project without touching localStorage.
-const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
+export const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("ade-home-selected-project"),
 );
@@ -54,11 +55,13 @@ export function Home() {
   } = useDecisionsPanel();
   const [selectedKey, setSelectedKey] = useAtom(selectedHomeProjectKeyAtom);
   const openThread = useAtomSet(selectedThreadKeyAtom);
+  const openSearch = useAtomSet(searchOpenAtom);
 
   const selected =
     (selectedKey === null ? undefined : projects.find((target) => target.key === selectedKey)) ??
     projects[0] ??
     null;
+  const chips = homeChips(projects, selected);
   const multipleMachines = machineCount > 1;
   const needsYouText = needsYouCount === 1 ? "1 te necesita" : `${needsYouCount} te necesitan`;
 
@@ -106,7 +109,7 @@ export function Home() {
                 aria-label="Proyecto donde empezar el hilo"
                 className="ade-home-projects"
               >
-                {projects.map((target) => (
+                {chips.map((target) => (
                   <Toggle
                     key={target.key}
                     value={target.key}
@@ -135,6 +138,16 @@ export function Home() {
                     ) : null}
                   </Toggle>
                 ))}
+                {projects.length > chips.length ? (
+                  <button
+                    type="button"
+                    className="ade-home-project-chip ade-home-project-more"
+                    aria-haspopup="dialog"
+                    onClick={() => openSearch("proyectos")}
+                  >
+                    Más…
+                  </button>
+                ) : null}
               </ToggleGroup>
               <NewThreadComposer
                 environmentId={selected.environmentId}

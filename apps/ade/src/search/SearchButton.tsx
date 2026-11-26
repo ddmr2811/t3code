@@ -4,7 +4,8 @@ import { useShortcutHint } from "@ui-sdk/react/shortcuts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { Atom } from "effect/reactivity";
 
-export const searchOpenAtom = Atom.make(false).pipe(
+/** Open, closed, or open on the projects alone (Inicio's «Más…»). */
+export const searchOpenAtom = Atom.make<boolean | "proyectos">(false).pipe(
   Atom.keepAlive,
   Atom.withLabel("ade-search-open"),
 );
@@ -23,7 +24,7 @@ export function SearchButton(props: { variant?: "rail" | "icon" }) {
         className="ade-search-button"
         aria-label="Buscar"
         aria-haspopup="dialog"
-        aria-expanded={open}
+        aria-expanded={open !== false}
         aria-keyshortcuts={hint.ariaKeyshortcuts}
         onClick={() => setOpen(true)}
       >
@@ -40,7 +41,7 @@ export function SearchButton(props: { variant?: "rail" | "icon" }) {
         className={props.variant === "rail" ? "ade-rail-button" : "ade-icon-button"}
         aria-label={LABEL}
         aria-haspopup="dialog"
-        aria-expanded={open}
+        aria-expanded={open !== false}
         aria-keyshortcuts={hint.ariaKeyshortcuts}
         onClick={() => setOpen(true)}
       >

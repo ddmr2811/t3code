@@ -103,27 +103,45 @@ export function providerChoices(
 }
 
 const HXCKS = /hxcks/i;
+// Claude models by any provider: only Opus and Fable.
+const OTHER_CLAUDE = /claude|sonnet|haiku/i;
+const OPUS_OR_FABLE = /opus|fable/i;
+// OpenCode's free models that keep or train on prompts (agentes/politica.md), by slug or name.
+const BANNED_FREE = /big[- ]pickle|flint|tidepool|iceman|nemotron.*free/i;
 
 export type MenuProject = { readonly title: string; readonly workspaceRoot: string };
 
 /**
- * The model menu: Claude offers only Opus and Fable, and the Hxcks account only in a project whose
- * name or folder says hxcks (its default model is another account's). The `kept` models stay,
- * so the thread's own one can always be chosen again.
+ * The model menu: Claude only as Opus or Fable from any provider, no free model that keeps prompts,
+ * Zen/Go twins only as Go (flat rate), the Hxcks account only in a hxcks project. `kept` models
+ * (the thread's own) always stay; `defaults` are spared only the Zen/Go merge.
  */
 export function menuProviders(
   providers: ReadonlyArray<ProviderChoice>,
   project: MenuProject | null,
   kept: ReadonlyArray<ModelSelection>,
+  defaults: ReadonlyArray<ModelSelection> = [],
 ): ReadonlyArray<ProviderChoice> {
   const inHxcks =
     project !== null && (HXCKS.test(project.title) || HXCKS.test(project.workspaceRoot));
   return providers.flatMap((provider) => {
     const shown = inHxcks || !(HXCKS.test(provider.instanceId) || HXCKS.test(provider.label));
+    const listed = (slug: string, list: ReadonlyArray<ModelSelection>) =>
+      list.some((keep) => keep.instanceId === provider.instanceId && keep.model === slug);
+    const slugs = new Set(provider.models.map((model) => model.slug));
     const models = provider.models.filter(
       (model) =>
-        kept.some((keep) => keep.instanceId === provider.instanceId && keep.model === model.slug) ||
-        (shown && (provider.driver !== "claudeAgent" || /opus|fable/i.test(model.slug))),
+        listed(model.slug, kept) ||
+        (shown &&
+          !BANNED_FREE.test(`${model.slug} ${model.name}`) &&
+          !(
+            provider.driver === "opencode" &&
+            model.slug.startsWith("opencode/") &&
+            slugs.has(`opencode-go/${model.slug.slice("opencode/".length)}`) &&
+            !listed(model.slug, defaults)
+          ) &&
+          (OPUS_OR_FABLE.test(model.slug) ||
+            (provider.driver !== "claudeAgent" && !OTHER_CLAUDE.test(model.slug)))),
     );
     return models.length === 0 ? [] : [{ ...provider, models }];
   });
@@ -163,11 +181,11 @@ export function defaultNewThreadSettings(
   allProviders: ReadonlyArray<ProviderChoice>,
   project: (LegacyProjectSettingsFields & MenuProject) | null,
 ): TurnSettings | null {
-  const providers = menuProviders(allProviders, project, []);
-  const firstProvider = providers.find((choice) => choice.models.length > 0);
-  if (firstProvider === undefined) return null;
   const resolved = resolveProjectSettings(config.settings, projectId, project).settings;
   const preferred = resolved.defaultModelSelection;
+  const providers = menuProviders(allProviders, project, [], preferred === null ? [] : [preferred]);
+  const firstProvider = providers.find((choice) => choice.models.length > 0);
+  if (firstProvider === undefined) return null;
   const preferredProvider =
     preferred === null
       ? undefined

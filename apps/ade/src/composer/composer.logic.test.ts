@@ -179,6 +179,10 @@ describe("menuProviders", () => {
     models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
   });
   const enabled = { driver: ProviderDriverKind.make("claudeAgent"), enabled: true };
+  const opencode = (models: ReadonlyArray<[slug: string, name: string]>) => ({
+    driver: ProviderDriverKind.make("opencode"),
+    models: models.map(([slug, name]) => ({ slug, name, isCustom: false, capabilities: null })),
+  });
   const providers = providerChoices(
     {
       providers: [
@@ -190,12 +194,37 @@ describe("menuProviders", () => {
         provider("claudeAgent_claudehxcks", claude(["claude-opus-5-5", "claude-haiku-5-5"])),
         // Recognised by the name shown, whatever its id.
         provider("claudeAgent_work", claude(["claude-opus-5-5"], "ClaudeHxcks")),
+        provider(
+          "opencode",
+          opencode([
+            ["opencode/big-pickle", "Big Pickle"],
+            ["opencode/beam-free", "Beam Free"],
+            ["opencode-go/beam-free", "Beam Free"],
+            ["opencode/flint-40b", "Flint 40B"],
+            ["opencode-go/pickle-2", "Big Pickle 2"],
+            ["opencode/tidepool-alpha-free", "Tidepool Alpha Free"],
+            ["opencode-go/iceman-contributor-free", "Iceman Contributor Free"],
+            ["opencode/nemotron-3.5-lightning-free", "Nemotron 3.5 Lightning Free"],
+            ["opencode/nemotron-3.5-pro", "Nemotron 3.5 Pro"],
+            ["opencode/deepseek-v4.1-flash-free", "DeepSeek V4.1 Flash Free"],
+            ["opencode-go/claude-haiku-5-5", "Claude Haiku 5.5"],
+            ["opencode-go/claude-opus-5-5", "Claude Opus 5.5"],
+            // Same name, another provider inside OpenCode: not a Zen/Go pair, so it stays.
+            ["anthropic/claude-opus-5-5", "Claude Opus 5.5"],
+            ["opencode/kimi-k3.1-pro", "Kimi K3.1 Pro"],
+            ["opencode-go/kimi-k3.1-pro", "Kimi K3.1 Pro"],
+          ]),
+        ),
       ],
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         providerInstances: {
           [ProviderInstanceId.make("claudeAgent_claudehxcks")]: enabled,
           [ProviderInstanceId.make("claudeAgent_work")]: enabled,
+          [ProviderInstanceId.make("opencode")]: {
+            driver: ProviderDriverKind.make("opencode"),
+            enabled: true,
+          },
         },
       },
     },
@@ -221,7 +250,11 @@ describe("menuProviders", () => {
       when: "outside Hxcks: Claude's Opus and Fable, no Hxcks account by id or by name",
       where: elsewhere,
       kept: [],
-      expected: ["codex: m", "claudeAgent: claude-opus-5-5 claude-fable-5-2"],
+      expected: [
+        "codex: m",
+        "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+      ],
     },
     {
       when: "in the Hxcks project: its account too",
@@ -232,6 +265,7 @@ describe("menuProviders", () => {
         "claudeAgent: claude-opus-5-5 claude-fable-5-2",
         "claudeAgent_claudehxcks: claude-opus-5-5",
         "claudeAgent_work: claude-opus-5-5",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
     {
@@ -242,6 +276,20 @@ describe("menuProviders", () => {
         "codex: m",
         "claudeAgent: claude-opus-5-5 claude-sonnet-5-5 claude-fable-5-2",
         "claudeAgent_claudehxcks: claude-haiku-5-5",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+      ],
+    },
+    {
+      when: "OpenCode: a thread on a hidden free model, or on Zen's copy of a Go model, keeps it",
+      where: elsewhere,
+      kept: [
+        { instanceId: ProviderInstanceId.make("opencode"), model: "opencode/big-pickle" },
+        { instanceId: ProviderInstanceId.make("opencode"), model: "opencode/beam-free" },
+      ],
+      expected: [
+        "codex: m",
+        "claudeAgent: claude-opus-5-5 claude-fable-5-2",
+        "opencode: opencode/big-pickle opencode/beam-free opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
   ])("$when", ({ where, kept, expected }) => {
@@ -264,6 +312,11 @@ describe("menuProviders", () => {
       instanceId: ProviderInstanceId.make("codex"),
       model: "m",
     });
+    // A Zen or Go default survives the Zen/Go merge.
+    for (const model of ["opencode/beam-free", "opencode-go/beam-free"]) {
+      const opencodeDefault = { instanceId: ProviderInstanceId.make("opencode"), model };
+      expect(settings(opencodeDefault)).toEqual(opencodeDefault);
+    }
   });
 });
 
@@ -276,7 +329,7 @@ describe("defaultNewThreadSettings", () => {
         providers: [
           provider("codex", { supportedRuntimeModes: ["approval-required", "auto"] }),
           provider("claudeAgent", {
-            models: [{ slug: "sonnet", name: "Sonnet", isCustom: false, capabilities: null }],
+            models: [{ slug: "opus", name: "Opus", isCustom: false, capabilities: null }],
           }),
         ],
         settings: DEFAULT_SERVER_SETTINGS,
@@ -332,11 +385,11 @@ describe("defaultNewThreadSettings", () => {
       {
         title: "Proyecto",
         workspaceRoot: "/p/proyecto",
-        defaultModelSelection: { instanceId: claudeId, model: "sonnet" },
+        defaultModelSelection: { instanceId: claudeId, model: "opus" },
       },
     );
     expect(legacyProjectDefault).toEqual({
-      model: { instanceId: claudeId, model: "sonnet" },
+      model: { instanceId: claudeId, model: "opus" },
       runtimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
       interactionMode: "default",
     });

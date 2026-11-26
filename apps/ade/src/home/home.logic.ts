@@ -31,6 +31,16 @@ export function homeProjectKey(environmentId: EnvironmentId, projectId: ProjectI
   return `${environmentId}:${projectId}`;
 }
 
+const HOME_CHIPS = 5;
+
+/** Inicio's chips: the five most recent, with a project picked from «Más…» in the last place. */
+export function homeChips<T>(projects: ReadonlyArray<T>, selected: T | null): ReadonlyArray<T> {
+  const recent = projects.slice(0, HOME_CHIPS);
+  return selected === null || recent.includes(selected)
+    ? recent
+    : [...recent.slice(0, HOME_CHIPS - 1), selected];
+}
+
 /**
  * Active projects across enabled machines, pinned first, then most recently active by thread
  * recency (falling back to the project's own timestamp) and title. Projects with zero threads stay.
