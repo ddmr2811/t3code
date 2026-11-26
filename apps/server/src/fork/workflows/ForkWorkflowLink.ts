@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ForkBots from "../bots/ForkBots.ts";
 import * as ForkIntegrations from "../integrations/ForkIntegrations.ts";
@@ -37,13 +38,16 @@ export const attach = (link: ForkWorkflowLink["Service"], hooks: ForkWorkflowHoo
       return link.engine?.(true) ?? Effect.void;
     }),
     () =>
-      (link.engine?.(false) ?? Effect.void).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            link.current = undefined;
-          }),
-        ),
-      ),
+      // A later attach owns the slot now; this one leaves it and the engine alone.
+      link.current !== hooks
+        ? Effect.void
+        : (link.engine?.(false) ?? Effect.void).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (link.current === hooks) link.current = undefined;
+              }),
+            ),
+          ),
   );
 
 /** Fills the slot while the fork's services are up. */
@@ -63,18 +67,28 @@ export const layerFill = Layer.effectDiscard(
  * The workflow runtime's `turn`, run only while the fork is attached where the server has a fork.
  * The runtime still asks for what settings say; `attach` turns it on and off around the fork.
  */
-export const gateTurn = <E>(turn: (on: boolean) => Effect.Effect<void, E>) =>
-  Effect.map(Effect.serviceOption(ForkWorkflowLink), (found) => {
-    if (Option.isNone(found)) return turn;
-    const link = found.value;
-    let enabled = false;
-    link.engine = (forkUp) => Effect.ignore(turn(enabled && forkUp));
-    return (on: boolean) =>
-      Effect.suspend(() => {
-        enabled = on;
-        return turn(on && link.current !== undefined);
-      });
-  });
+export const gateTurn = Effect.fn("ForkWorkflowLink.gateTurn")(function* <E>(
+  turn: (on: boolean) => Effect.Effect<void, E>,
+) {
+  const found = yield* Effect.serviceOption(ForkWorkflowLink);
+  if (Option.isNone(found)) return turn;
+  const link = found.value;
+  let enabled = false;
+  let forkUp = link.current !== undefined;
+  // Each turn reads both flags once it is its go, so none applies a state already gone.
+  const lock = yield* Semaphore.make(1);
+  const apply = lock.withPermits(1)(Effect.suspend(() => turn(enabled && forkUp)));
+  link.engine = (up) =>
+    Effect.suspend(() => {
+      forkUp = up;
+      return Effect.ignore(apply);
+    });
+  return (on: boolean) =>
+    Effect.suspend(() => {
+      enabled = on;
+      return apply;
+    });
+});
 
 /**
  * The fork's hooks as a step reads them when it runs, or why it cannot (a server without the fork,

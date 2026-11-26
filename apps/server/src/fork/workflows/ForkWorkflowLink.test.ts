@@ -7,6 +7,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -35,7 +36,8 @@ workflow("paso-de-bot", { version: 1, payload: Schema.Struct({}), returns: Schem
 
 /**
  * The workflow runtime as the server runs it, over a fresh database and `botStep`, with its turn
- * behind the fork's gate. `ended` settles the bot's turn; until then it is still working.
+ * behind the fork's gate. `ended` settles the bot's turn; until then it is still working, and
+ * `watched` and `stopping` tell when the engine starts waiting on it and when it stops waiting.
  */
 const setup = Effect.fn("setup")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -60,10 +62,16 @@ const setup = Effect.fn("setup")(function* () {
     database,
   );
   const ended = yield* Deferred.make<AgentResult>();
+  const watched = yield* Deferred.make<void>();
+  const stopping = yield* Deferred.make<void>();
   // Upstream's threads, which only report how the bot's turn ended.
   const upstream = WorkflowAgents.of({
     start: () => Effect.die("A bot's step starts through the bot."),
-    result: () => Deferred.await(ended),
+    result: () =>
+      Deferred.succeed(watched, undefined).pipe(
+        Effect.andThen(Deferred.await(ended)),
+        Effect.onInterrupt(() => Deferred.succeed(stopping, undefined)),
+      ),
     interrupt: () => Effect.succeed("ended"),
   });
   const link: ForkWorkflowLink.ForkWorkflowLink["Service"] = { current: undefined };
@@ -100,6 +108,8 @@ const setup = Effect.fn("setup")(function* () {
     turn,
     forkUp,
     ended,
+    watched,
+    stopping,
     workflows: Context.get(gated.context, Workflows.Workflows),
   };
 });
@@ -125,11 +135,12 @@ it.live("a bot's step waits for the fork to be up when workflows come on before 
 
 it.live("the fork going down stops workflows first, and its bot's step resumes unfailed", () =>
   Effect.gen(function* () {
-    const { turn, forkUp, ended, workflows } = yield* setup();
+    const { turn, forkUp, ended, watched, workflows } = yield* setup();
     yield* turn(true);
     const fork = yield* forkUp;
     const { runId } = yield* workflows.start("paso-de-bot", {}, { idempotencyKey: "1" });
-    yield* workflows.waitFor(runId, (run) => run.status === "running");
+    // The bot's turn is under way and the engine waits on it.
+    yield* Deferred.await(watched);
     yield* Scope.close(fork, Exit.void);
     // Nothing runs on with the fork gone.
     expect((yield* Effect.flip(workflows.list())).message).toBe(Workflows.OFF);
@@ -139,5 +150,21 @@ it.live("the fork going down stops workflows first, and its bot's step resumes u
     expect(done.result).toBe("done");
     const steps = (yield* workflows.get(runId)).steps;
     expect(steps.filter((step) => step.status === "failed")).toEqual([]);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.live("settings turned on while the fork goes down leave workflows off", () =>
+  Effect.gen(function* () {
+    const { turn, forkUp, watched, stopping, workflows } = yield* setup();
+    yield* turn(true);
+    const fork = yield* forkUp;
+    yield* workflows.start("paso-de-bot", {}, { idempotencyKey: "1" });
+    yield* Deferred.await(watched);
+    const down = yield* Effect.forkChild(Scope.close(fork, Exit.void));
+    // The engine is stopping for the fork when the settings say on again.
+    yield* Deferred.await(stopping);
+    yield* turn(true);
+    yield* Fiber.join(down);
+    expect((yield* Effect.flip(workflows.list())).message).toBe(Workflows.OFF);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
