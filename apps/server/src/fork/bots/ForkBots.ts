@@ -127,6 +127,13 @@ export class ForkBots extends Context.Service<
       threadId: ThreadId,
       mcpCredentialId: string,
     ) => Effect.Effect<void>;
+    /**
+     * A workflow step's turn in the bot's thread, in the bot's one queue. The thread's modes may
+     * not be above the bot's own: a workflow never borrows what the user raised by hand.
+     */
+    readonly workflowTurn: (
+      input: WorkflowTurnInput,
+    ) => Effect.Effect<{ readonly threadId: ThreadId; readonly turnId: string }, ForkBotsError>;
     /** At the end of a bot's turn, marks or clears `handoffToolsMissing`. */
     readonly noteRunUpdated: (
       run: Pick<OrchestrationV2Run, "id" | "threadId" | "status">,
@@ -141,6 +148,22 @@ export class ForkBots extends Context.Service<
 export type HandoffSender =
   | { readonly kind: "user" }
   | { readonly kind: "agent"; readonly limits: DispatchModes };
+
+export interface WorkflowTurnInput {
+  readonly handle: string;
+  /** Ids derived from the step, so a start asked for again after a crash finds its turn. */
+  readonly commandId: CommandId;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly outputSchema: Readonly<Record<string, Schema.Json>> | undefined;
+}
+
+/** What a workflow turn adds to a delivery: its own ids and the result it asks for. */
+interface DeliveryRequest {
+  readonly commandId: CommandId;
+  readonly messageId: MessageId;
+  readonly outputSchema: Readonly<Record<string, Schema.Json>> | undefined;
+}
 
 /** The calling thread as it is now: a thread moved to another project proposes nothing there. */
 export interface ProposalSender {
@@ -775,6 +798,7 @@ const make = Effect.gen(function* () {
     patch: Partial<Pick<ForkBot, "handoffHops">>,
     limits: DispatchModes | undefined,
     senderIntegrations?: ForkBotIntegrations,
+    request?: DeliveryRequest,
   ) {
     if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
     // A bot never gets done through another what it may not do itself in an outside app.
@@ -835,6 +859,12 @@ const make = Effect.gen(function* () {
     const withMemory = (message: string) =>
       injects ? `${memoryBlock(essentials)}\n\n${message}` : message;
 
+    const by =
+      request === undefined
+        ? ({ createdBy: "user", creationSource: "web" } as const)
+        : ({ createdBy: "system", creationSource: "server" } as const);
+    const outputSchema =
+      request?.outputSchema === undefined ? {} : { outputSchema: request.outputSchema };
     if (existingThread === null) {
       yield* validateConfiguration({
         projectId: bot.projectId,
@@ -842,7 +872,9 @@ const make = Effect.gen(function* () {
         instanceId: bot.modelSelection.instanceId,
         model: bot.modelSelection.model,
       });
-      const commandId = CommandId.make(`fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`);
+      const commandId =
+        request?.commandId ??
+        CommandId.make(`fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`);
       const launched = yield* launches
         .launch({
           commandId,
@@ -853,11 +885,19 @@ const make = Effect.gen(function* () {
           runtimeMode: bot.runtimeMode,
           interactionMode: "default",
           workspaceStrategy: { type: "root" },
-          initialMessage: { text: withMemory(initialBotMessage(bot, text)), attachments: [] },
-          createdBy: "user",
-          creationSource: "web",
+          initialMessage: {
+            ...(request === undefined ? {} : { messageId: request.messageId }),
+            text: withMemory(initialBotMessage(bot, text)),
+            attachments: [],
+            ...outputSchema,
+          },
+          ...by,
         })
         .pipe(Effect.mapError(() => dispatchFailed("Could not create the bot thread.")));
+      const firstRun =
+        request === undefined
+          ? undefined
+          : launched.projection.runs.find((run) => run.userMessageId === request.messageId);
       // The thread already exists and holds the message; failing here would make a retry
       // launch a duplicate, so a lost link only means the next message starts another thread.
       const linked = yield* recordDelivery(bot, {
@@ -865,21 +905,27 @@ const make = Effect.gen(function* () {
         memoryHash: hash,
         ...patch,
       });
-      return { bot: linked, threadId: launched.threadId, queued: false };
+      return {
+        bot: linked,
+        threadId: launched.threadId,
+        queued: false,
+        turnId: firstRun?.id ?? null,
+      };
     }
 
-    const messageId = MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
+    const messageId =
+      request?.messageId ?? MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
     const send = threads
       .sendToThread({
         projectId: bot.projectId,
-        commandId: CommandId.make(messageId),
+        commandId: request?.commandId ?? CommandId.make(messageId),
         threadId: existingThread,
         messageId,
         text: withMemory(text),
         attachments: [],
         mode: "queue",
-        createdBy: "user",
-        creationSource: "web",
+        ...outputSchema,
+        ...by,
       })
       .pipe(Effect.mapError(() => dispatchFailed("Could not send the bot message.")));
     // The orchestrator rechecks the modes under its lock, in case they rose after the check above.
@@ -892,7 +938,37 @@ const make = Effect.gen(function* () {
     };
     // A lost hash only means the next message repeats the same block.
     const delivered = Object.keys(changes).length > 0 ? yield* recordDelivery(bot, changes) : bot;
-    return { bot: delivered, threadId: existingThread, queued: sent.delivery === "queued" };
+    return {
+      bot: delivered,
+      threadId: existingThread,
+      queued: sent.delivery === "queued",
+      turnId: request === undefined ? null : (sent.run.id as string),
+    };
+  });
+
+  const workflowTurn = Effect.fn("ForkBots.workflowTurn")(function* (input: WorkflowTurnInput) {
+    const target = (yield* storeLock.withPermits(1)(fileStore.read())).bots.find(
+      (bot) => bot.handle.toLowerCase() === input.handle.replace(/^@/, "").toLowerCase(),
+    );
+    if (target === undefined) return yield* notFound(`No bot uses the handle @${input.handle}.`);
+    return yield* botLocks.withLock(
+      target.id,
+      Effect.gen(function* () {
+        const bot = yield* readBot(target.id);
+        const sent = yield* deliver(
+          bot,
+          input.text,
+          {},
+          { runtimeMode: bot.runtimeMode, interactionMode: "default" },
+          undefined,
+          input,
+        );
+        if (sent.turnId === null) {
+          return yield* dispatchFailed("The bot thread started without a turn for the step.");
+        }
+        return { threadId: sent.threadId, turnId: sent.turnId };
+      }),
+    );
   });
 
   const sendMessage = Effect.fn("ForkBots.sendMessage")(function* (input: ForkBotSendMessageInput) {
@@ -1434,6 +1510,7 @@ const make = Effect.gen(function* () {
     sendMessage,
     handoff,
     dismissHandoff,
+    workflowTurn,
     // Untraced: /mcp asks on every request, inside the request's own span.
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);

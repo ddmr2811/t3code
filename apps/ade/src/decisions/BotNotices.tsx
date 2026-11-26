@@ -10,8 +10,9 @@ import {
   type ForkGap,
   type ForkGapInstall,
   type ForkIntegrationRequest,
+  type ThreadId,
 } from "@t3tools/contracts";
-import { type ReactNode, useContext, useState } from "react";
+import { Fragment, type ReactNode, useContext, useState } from "react";
 
 import {
   allBotsAtom,
@@ -32,6 +33,12 @@ import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { environmentProjects, environmentThreadShells, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
+import { readWorkflowQuestion } from "@t3tools/client-runtime/workflows";
+import {
+  type OpenWorkflowQuestion,
+  workflowQuestionKey,
+  workflowQuestionsAtom,
+} from "./workflowQuestions.ts";
 
 type BotNotice = {
   readonly key: string;
@@ -52,6 +59,7 @@ type BotNotice = {
       readonly request: ForkIntegrationRequest;
       readonly from?: ForkBot;
     }
+  | { readonly type: "workflow"; readonly open: OpenWorkflowQuestion; readonly from?: ForkBot }
   // An install nobody can see is one nobody can refuse, so a failed read waits here too.
   | { readonly type: "unreadable"; readonly from?: ForkBot }
 );
@@ -64,6 +72,7 @@ type BotNotice = {
 export function useBotNotices(): ReadonlyArray<BotNotice> {
   const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, gapErrors } = useAtomValue(allBotsAtom);
   const pendingRequests = useAtomValue(pendingIntegrationRequestsAtom);
+  const { questions } = useAtomValue(workflowQuestionsAtom);
   const botOf = (environmentId: EnvironmentId, id: string) =>
     (byEnv.get(environmentId) ?? []).find((bot) => bot.id === id);
   const handoffs = [...handoffsByEnv].flatMap(([environmentId, list]) =>
@@ -138,7 +147,16 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
       ...(from === undefined ? {} : { from }),
     };
   });
-  return [...unreadable, ...installs, ...integrations, ...proposals, ...handoffs];
+  // A workflow's pause for a person waits here, not in a list of its own.
+  const workflows = questions.map((open): BotNotice => ({
+    key: workflowQuestionKey(open),
+    type: "workflow",
+    label: "Flujo",
+    title: readWorkflowQuestion(open.question).title,
+    environmentId: open.environmentId,
+    open,
+  }));
+  return [...unreadable, ...installs, ...integrations, ...workflows, ...proposals, ...handoffs];
 }
 
 /**
@@ -210,6 +228,45 @@ export function BotNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   ),
         };
+        if (notice.type === "workflow") {
+          const { question } = notice.open;
+          const thread = question.thread;
+          return (
+            <WorkflowNotice
+              key={key}
+              {...common}
+              open={notice.open}
+              onOpen={
+                // A thread on another machine than the run's opens nothing here.
+                thread === null ||
+                (thread.environmentId !== null && thread.environmentId !== environmentId)
+                  ? null
+                  : () =>
+                      props.onOpenBackLayer(
+                        scopedThreadKey(scopeThreadRef(environmentId, thread.threadId as ThreadId)),
+                      )
+              }
+              onAnswer={(choice, reason) =>
+                void send(key, environmentId, () =>
+                  runCommand(
+                    registry,
+                    serverEnvironment.answerWorkflowQuestion,
+                    {
+                      environmentId,
+                      input: {
+                        runId: question.runId,
+                        name: question.name,
+                        choice,
+                        ...(reason === "" ? {} : { reason }),
+                      },
+                    },
+                    "No se pudo enviar tu respuesta",
+                  ),
+                )
+              }
+            />
+          );
+        }
         if (notice.type === "integration") {
           return (
             <IntegrationNotice
@@ -607,6 +664,102 @@ function IntegrationNotice(
       <p className="ade-request-note">
         El «sí» vale una sola vez y para estos argumentos: la llamada la hace el servidor, no el
         bot. Un «No» es definitivo y el bot no puede repetir esta misma petición en 24 horas.
+      </p>
+    </NoticeFrame>
+  );
+}
+
+/**
+ * A run's question, answered with one of its choices. Every choice is the user's decision, so
+ * none is pressed by an agent without confirmation. Arguments an integration step will use are
+ * shown exactly, never rendered as markup.
+ */
+function WorkflowNotice(
+  props: NoticeProps & {
+    open: OpenWorkflowQuestion;
+    onAnswer: (choice: string, reason: string) => void;
+  },
+) {
+  const canAnswer = useAtomValue(
+    serverEnvironment.answerWorkflowQuestion.permissionAtom(props.environmentId),
+  );
+  const [reason, setReason] = useState("");
+  const view = readWorkflowQuestion(props.open.question);
+  const data = props.open.question.request as { readonly data?: { readonly arguments?: unknown } };
+  const args = data?.data?.arguments;
+  const disabled = canAnswer !== true || props.sending;
+  const needsReason = view.choices.some((choice) => choice.requireReason);
+  return (
+    <NoticeFrame
+      {...props}
+      label="Flujo"
+      context={props.open.workflow ?? "Workflows"}
+      openLabel="Abrir el hilo del flujo"
+      actions={
+        <>
+          {view.choices.map((choice, index) => (
+            <button
+              key={choice.value}
+              type="button"
+              className={index === 0 ? "ade-button" : "ade-button-quiet"}
+              data-agent-confirm
+              onClick={(event) => {
+                focusTrayFrom(event.currentTarget);
+                props.onAnswer(choice.value, reason.trim());
+              }}
+              disabled={disabled || (choice.requireReason && reason.trim() === "")}
+            >
+              {props.sending && index === 0 ? "Enviando…" : choice.value}
+            </button>
+          ))}
+        </>
+      }
+    >
+      {/* An integration step's body repeats its arguments, shown laid out below instead. */}
+      {view.body === null || args !== undefined ? null : (
+        <p className="ade-request-note">{view.body}</p>
+      )}
+      {args === undefined ? null : (
+        <div className="ade-proposal-instructions">
+          <p className="ade-request-note">Argumentos exactos</p>
+          <pre>{JSON.stringify(args, null, 2)}</pre>
+        </div>
+      )}
+      {view.choices.some((choice) => choice.description !== null) ? (
+        <dl className="ade-proposal-facts">
+          {view.choices
+            .filter((choice) => choice.description !== null)
+            .map((choice) => (
+              <Fragment key={choice.value}>
+                <dt>{choice.value}</dt>
+                <dd>{choice.description}</dd>
+              </Fragment>
+            ))}
+        </dl>
+      ) : null}
+      {view.links.map((link) => (
+        <a
+          key={link.url}
+          className="ade-request-note"
+          href={link.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {link.label}
+        </a>
+      ))}
+      {needsReason ? (
+        <label className="ade-request-note grid gap-1">
+          Motivo (algunas respuestas lo piden)
+          <input
+            className="box-border w-full min-w-0 rounded-sm border border-border bg-background px-2.5 py-2 text-[13px] text-foreground max-[720px]:min-h-11"
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+          />
+        </label>
+      ) : null}
+      <p className="ade-request-note">
+        El flujo está en pausa hasta que respondas; tu respuesta lo reanuda.
       </p>
     </NoticeFrame>
   );

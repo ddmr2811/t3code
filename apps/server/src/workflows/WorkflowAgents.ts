@@ -92,6 +92,8 @@ export class WorkflowAgents extends Context.Service<
       readonly thread: string | undefined;
       /** An issue the thread is about, which it is linked to. */
       readonly issue?: IssueAddress | undefined;
+      /** A fork bot's handle, whose own thread takes the turn. */
+      readonly bot?: string | undefined;
       /** How a new thread starts. Refused with `thread`, which keeps how it started. */
       readonly launch?: AgentLaunch | undefined;
     }) => Effect.Effect<AgentTurn, WorkflowAgentError>;

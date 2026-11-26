@@ -13,6 +13,7 @@ import * as ForkInsights from "./insights/ForkInsights.ts";
 import * as ForkMachines from "./machines/ForkMachines.ts";
 import * as ForkProjectMemory from "./memory/ForkProjectMemory.ts";
 import * as ForkTailnet from "./tailnet/ForkTailnet.ts";
+import * as ForkWorkflowLink from "./workflows/ForkWorkflowLink.ts";
 
 /** Every fork service, one per server; `server.ts` merges this as a single line. */
 export const ForkLayer = Layer.mergeAll(
@@ -36,8 +37,11 @@ export const ForkLayer = Layer.mergeAll(
   // On top, the ladder a bot climbs when it lacks a tool (`<stateDir>/fork/gaps.json`).
   Layer.merge(
     ForkGaps.layer,
-    // Alone holds the outside apps' tokens and the requests waiting for the user.
-    ForkIntegrations.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+    // Alone holds the outside apps' tokens and the requests waiting for the user. Workflows
+    // reach it and the bots through ForkWorkflowLink.
+    ForkWorkflowLink.layerFill.pipe(
+      Layer.provideMerge(ForkIntegrations.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    ),
   ).pipe(
     Layer.provideMerge(ForkBots.layer),
     Layer.provideMerge(Layer.merge(ForkProjectMemory.layer, ForkCoordination.layer)),

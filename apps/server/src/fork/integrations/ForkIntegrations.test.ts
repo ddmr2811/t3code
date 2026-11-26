@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
@@ -46,6 +47,11 @@ import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkBots from "../bots/ForkBots.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
+import { workflow } from "../../workflows/workflow.ts";
+import { WorkflowAgents } from "../../workflows/WorkflowAgents.ts";
+import * as Workflows from "../../workflows/Workflows.ts";
+import { withWorkflowEngine } from "../workflows/engine.testkit.ts";
+import { integration } from "../workflows/integration.ts";
 import * as ForkIntegrations from "./ForkIntegrations.ts";
 
 // The official github-mcp-server release binary. Without it these tests cannot run: they are
@@ -594,6 +600,100 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
             ["PUT", expect.stringContaining("/repos/acme/app/pulls/6/merge")],
           ]);
         }),
+    ),
+  );
+});
+
+/** A triage as the example workflow does it: read, a write the card denies, one it asks for. */
+const asTheBot = workflow(
+  "triaje-como-bot",
+  { version: 1, payload: Schema.Struct({}), returns: Schema.Array(Schema.String) },
+  () =>
+    Effect.gen(function* () {
+      const read = yield* integration("leer", {
+        bot: "ana",
+        app: "github",
+        action: "get_me",
+        arguments: {},
+      });
+      const merge = yield* integration("fusionar", {
+        bot: "ana",
+        app: "github",
+        action: "merge_pull_request",
+        arguments: { owner: "acme", repo: "app", pullNumber: 6 },
+      });
+      const commented = yield* integration("comentar", { bot: "ana", ...comment });
+      return [read.status, merge.status, commented.status];
+    }),
+);
+
+const noAgents = WorkflowAgents.of({
+  start: () => Effect.die("No agent step runs here; only the integration steps reach the bots."),
+  result: () => Effect.die("No agent step runs here."),
+  interrupt: () => Effect.die("No agent step runs here."),
+});
+const withEngine = <A, E>(harness: Harness, use: Effect.Effect<A, E, Workflows.Workflows>) =>
+  withWorkflowEngine(
+    [asTheBot],
+    {
+      workflowTurn: harness.forkBots.workflowTurn,
+      isBotThread: harness.forkBots.isBotThread,
+      callAsBot: harness.service.callAsBot,
+    },
+    noAgents,
+    use,
+  );
+/** An answer given in the ADE: the server stamps the client session it came from. */
+const fromTheApp = { label: "ADE", sessionId: "session-1" };
+
+describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("workflows as a bot", () => {
+  const askedToComment = (harness: Harness) =>
+    Effect.gen(function* () {
+      const workflows = yield* Workflows.Workflows;
+      const { runId } = yield* workflows.start("triaje-como-bot", {}, { idempotencyKey: "1" });
+      yield* workflows.waitFor(runId, (run) => run.status === "waiting");
+      // The comment waits for the user with its exact arguments; the merge was never asked.
+      const questions = yield* workflows.questions;
+      expect(questions.map((question) => question.name)).toEqual(["comentar/pregunta"]);
+      expect(questions[0]?.request).toMatchObject({ data: { arguments: comment.arguments } });
+      expect(writes(harness.github.seen)).toEqual([]);
+      return { workflows, runId };
+    });
+
+  it.live("act within the bot's card and ask in the inbox before a write, which runs on yes", () =>
+    withIntegrations({ github: { read: "allow", comment: "ask" } }, (harness) =>
+      withEngine(
+        harness,
+        Effect.gen(function* () {
+          const { workflows, runId } = yield* askedToComment(harness);
+          yield* workflows.answer(runId, "comentar/pregunta", { choice: "Sí" }, fromTheApp);
+          const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
+          expect(done.result).toEqual(["done", "denied", "done"]);
+          const sent = writes(harness.github.seen);
+          expect(sent).toHaveLength(1);
+          expect(sent[0]?.url).toContain("/issues/7/comments");
+        }),
+      ),
+    ),
+  );
+
+  it.live("a yes sent over MCP or the CLI, as an agent with a terminal can, runs nothing", () =>
+    withIntegrations({ github: { read: "allow", comment: "ask" } }, (harness) =>
+      withEngine(
+        harness,
+        Effect.gen(function* () {
+          const { workflows, runId } = yield* askedToComment(harness);
+          // What `t3 workflow signal` sends: the client's label, no app session.
+          yield* workflows.signal(
+            { runId, wait: "comentar/pregunta" },
+            { choice: "Sí", answeredBySession: "forged" },
+            { id: "signal-1", answeredBy: "thread:bot" },
+          );
+          const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
+          expect(done.result).toEqual(["done", "denied", "denied"]);
+          expect(writes(harness.github.seen)).toEqual([]);
+        }),
+      ),
     ),
   );
 });

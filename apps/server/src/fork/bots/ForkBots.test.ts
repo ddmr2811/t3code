@@ -1,9 +1,11 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   FORK_BOTS_MAX_FILE_BYTES,
   type ForkBotUpsertInput,
+  MessageId,
   ProjectId,
   RunId,
   type RuntimeMode,
@@ -23,6 +25,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -39,6 +42,11 @@ import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettingsService from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
+import { workflow } from "../../workflows/workflow.ts";
+import { agent } from "../../workflows/workflowAgent.ts";
+import { WorkflowAgents } from "../../workflows/WorkflowAgents.ts";
+import * as Workflows from "../../workflows/Workflows.ts";
+import { withWorkflowEngine } from "../workflows/engine.testkit.ts";
 import * as ForkBots from "./ForkBots.ts";
 import { FORK_BOTS_VETOES_PER_PROJECT } from "./store.ts";
 
@@ -172,7 +180,11 @@ const withBots = <A, E, R>(
               threadModels.set(threadId, input.modelSelection);
               threadModes.set(threadId, input.runtimeMode);
               threadProjects.set(threadId, input.projectId);
-              return { threadId } as never;
+              const userMessageId = input.initialMessage?.messageId;
+              return {
+                threadId,
+                projection: { runs: [{ id: `run-${threadId}`, userMessageId }] },
+              } as never;
             });
           },
         }),
@@ -195,11 +207,11 @@ const withBots = <A, E, R>(
                   _tag: "OrchestratorThreadNotFoundError",
                   threadId,
                 } as never)) as ThreadManagement.ThreadManagementServiceShape["getThreadRecords"],
-          sendToThread: ((input: { threadId: ThreadId; text: string }) =>
+          sendToThread: ((input: { threadId: ThreadId; text: string; messageId: string }) =>
             Effect.sync(() => {
               sentTo.push(input.threadId);
               texts.push(input.text);
-              return { delivery: "started" } as never;
+              return { delivery: "started", run: { id: `run-${input.messageId}` } } as never;
             })) as ThreadManagement.ThreadManagementServiceShape["sendToThread"],
         }),
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -307,6 +319,25 @@ const withBots = <A, E, R>(
       }).pipe(Effect.provide(testLayer));
     }),
   );
+
+/** A step for the bot by name, then one that tries to reach its thread by id instead. */
+const byNameOrThread = workflow(
+  "bot-por-nombre-o-hilo",
+  {
+    version: 1,
+    payload: Schema.Struct({ threadId: Schema.String }),
+    returns: Schema.Array(Schema.String),
+  },
+  (payload) =>
+    Effect.gen(function* () {
+      const named = yield* agent.try("por-nombre", { bot: "triaje", brief: "clasifica" });
+      const byId = yield* agent.try("por-hilo", {
+        thread: { threadId: payload.threadId },
+        brief: "hazlo sin pasar por su cola",
+      });
+      return [named.outcome, byId.outcome];
+    }),
+);
 
 const baseBot = {
   handle: "revisor",
@@ -798,6 +829,76 @@ describe("ForkBots", () => {
             .pipe(Effect.flip);
           expect(planMode).toMatchObject({ reason: "permissionDenied" });
           expect(texts.filter((text) => /dos|tres/.test(text))).toEqual([]);
+        }),
+      ),
+    );
+
+    it.effect("runs a workflow step only within the bot's own modes, in its one thread", () =>
+      withBots(({ service, launched, texts, threadModes }) =>
+        Effect.gen(function* () {
+          yield* service.upsert({ ...baseBot, handle: "triaje", runtimeMode: "auto" });
+          const turn = (id: string) =>
+            service.workflowTurn({
+              handle: "@Triaje",
+              commandId: CommandId.make(id),
+              messageId: MessageId.make(id),
+              text: `clasifica (${id})`,
+              outputSchema: undefined,
+            });
+          const first = yield* turn("step-1");
+          expect(threadModes.get(first.threadId)).toBe("auto");
+          expect(first.turnId).not.toBe("");
+          // The user raised the bot's thread by hand; a workflow does not borrow that.
+          threadModes.set(first.threadId, "full-access");
+          expect(yield* turn("step-2").pipe(Effect.flip)).toMatchObject({
+            reason: "permissionDenied",
+          });
+          expect(launched).toEqual([first.threadId]);
+          expect(texts.filter((text) => text.includes("step-2"))).toEqual([]);
+        }),
+      ),
+    );
+
+    it.live("a workflow reaches a bot's thread only by naming the bot", () =>
+      withBots(({ service, launched, sentTo }) =>
+        Effect.gen(function* () {
+          const bot = yield* service.upsert({ ...baseBot, handle: "triaje", runtimeMode: "auto" });
+          const { threadId } = yield* service.sendMessage({ id: bot.id, text: "hola" });
+          // Upstream's threads behind the fork's steps: what reaches them skips the bot's queue.
+          const upstream: Array<string | undefined> = [];
+          const agents = WorkflowAgents.of({
+            start: (input) =>
+              Effect.sync(() => {
+                upstream.push(input.thread);
+                return { threadId: input.thread ?? "nuevo", turnId: input.key };
+              }),
+            result: () => Effect.succeed({ ending: "completed", detail: "", reply: "hecho" }),
+            interrupt: () => Effect.succeed("ended"),
+          });
+          const result = yield* withWorkflowEngine(
+            [byNameOrThread],
+            {
+              workflowTurn: service.workflowTurn,
+              isBotThread: service.isBotThread,
+              callAsBot: () => Effect.die("not used"),
+            },
+            agents,
+            Effect.gen(function* () {
+              const workflows = yield* Workflows.Workflows;
+              const { runId } = yield* workflows.start(
+                "bot-por-nombre-o-hilo",
+                { threadId },
+                { idempotencyKey: "1" },
+              );
+              return (yield* workflows.waitFor(runId, (run) => run.status === "completed")).result;
+            }),
+          );
+          expect(result).toEqual(["done", "failed"]);
+          // The named step went to the bot's one thread through its queue; nothing reached
+          // the thread behind the bot's back.
+          expect(launched).toEqual([threadId]);
+          expect(sentTo).toEqual([threadId]);
+          expect(upstream).toEqual([]);
         }),
       ),
     );

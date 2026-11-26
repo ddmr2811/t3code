@@ -59,6 +59,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import * as WorkflowRuntime from "../workflows/WorkflowRuntime.ts";
+import * as ForkWorkflowLink from "../fork/workflows/ForkWorkflowLink.ts";
 import * as ThreadIssueService from "./ThreadIssueService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
@@ -328,6 +329,8 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   ),
   // Layers memoize by reference, so these are the links Settings and agents use.
   Layer.provide(PeerMcpClient.layer.pipe(Layer.provideMerge(PeerLinks.layer))),
+  // The fork's bots reach the engine through this slot, which `ForkLayer` fills.
+  Layer.provide(ForkWorkflowLink.layer),
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),

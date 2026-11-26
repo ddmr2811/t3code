@@ -122,8 +122,26 @@ export class ForkIntegrations extends Context.Service<
         readonly arguments: Args;
       },
     ) => Effect.Effect<IntegrationCallResult, ForkIntegrationsError>;
+    /**
+     * A workflow's code step acting as bot `handle`, never above what the bot's card allows.
+     * What would ask the user comes back as `ask` until `approved` says a person said yes.
+     */
+    readonly callAsBot: (
+      handle: string,
+      input: {
+        readonly app: ForkIntegrationApp;
+        readonly action: string;
+        readonly arguments: Args;
+      },
+      approved: boolean,
+    ) => Effect.Effect<WorkflowIntegrationResult, ForkIntegrationsError>;
   }
 >()("t3/fork/integrations/ForkIntegrations") {}
+
+export interface WorkflowIntegrationResult {
+  readonly status: "done" | "failed" | "denied" | "ask";
+  readonly text: string;
+}
 
 interface CatalogTool {
   readonly name: string;
@@ -706,7 +724,45 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     return finished ?? decided;
   });
 
-  return ForkIntegrations.of({ list, connect, answer, search, call });
+  const callAsBot: ForkIntegrations["Service"]["callAsBot"] = Effect.fn(
+    "ForkIntegrations.callAsBot",
+  )(function* (handle, input, approved) {
+    const { bots } = yield* forkBots
+      .list({})
+      .pipe(Effect.mapError((error) => fail("unavailable", error.message)));
+    const bot = bots.find(
+      (candidate) => candidate.handle.toLowerCase() === handle.replace(/^@/, "").toLowerCase(),
+    );
+    if (bot === undefined || bot.archived) {
+      return yield* fail("notFound", `No active bot uses the handle @${handle}.`);
+    }
+    const { app, action } = input;
+    const classified = apps[app].classify(action, input.arguments);
+    const level =
+      classified === undefined ? "deny" : integrationLevel(bot.integrations, app, classified.group);
+    if (classified === undefined || level === "deny") {
+      return {
+        status: "denied" as const,
+        text: `@${bot.handle} is not allowed to use ${app}/${action}.`,
+      };
+    }
+    // The same rule as `call`, with the bot's own modes as the caller's.
+    const unasked =
+      level === "allow" &&
+      !classified.alwaysAsk &&
+      (classified.reads ||
+        actsOutsideWithoutApproval({ runtimeMode: bot.runtimeMode, interactionMode: "default" }));
+    if (!unasked && !approved) {
+      const refusal = yield* refusalOf(app, action, input.arguments);
+      if (refusal !== undefined) return { status: "denied" as const, text: refusal };
+      return { status: "ask" as const, text: JSON.stringify(sortKeys(input.arguments)) };
+    }
+    const outcome = yield* run(app, action, input.arguments);
+    if ("refused" in outcome) return { status: "denied" as const, text: outcome.refused };
+    return { status: outcome.failed ? ("failed" as const) : ("done" as const), text: outcome.text };
+  });
+
+  return ForkIntegrations.of({ list, connect, answer, search, call, callAsBot });
 });
 
 export const layerWith = (options: ForkIntegrationsOptions) =>

@@ -48,6 +48,8 @@ export interface AgentOptions<A, I> extends AgentLaunch {
   readonly project?: string;
   readonly environment?: string;
   readonly thread?: AgentThread;
+  /** A bot's handle: the turn runs in its thread, with its model, modes and integrations. */
+  readonly bot?: string;
   /**
    * The issue this job is about. Its thread shows the issue, and the issue's page lists the
    * thread. Only for a thread on this server, not one in a linked `environment`.
@@ -75,6 +77,7 @@ const AGENT_OPTIONS = [
   "project",
   "environment",
   "thread",
+  "bot",
   "issue",
   "timeout",
   "quiet",
@@ -203,6 +206,18 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       );
     }
   }
+  if (options.bot !== undefined) {
+    const shaping = [...NEW_THREAD_OPTIONS, "thread", "issue"].filter(
+      (key) => options[key as keyof typeof options] !== undefined,
+    );
+    if (shaping.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          `agent("${name}") runs in bot @${options.bot}'s thread, which keeps the bot's own settings. Drop ${shaping.map((key) => `\`${key}\``).join(", ")}.`,
+        ),
+      );
+    }
+  }
   const run = yield* claim(name);
   const agents = yield* WorkflowAgents;
   const outputSchema =
@@ -250,6 +265,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         environment: thread === undefined ? options.environment : thread.environment,
         thread: thread?.threadId,
         issue: options.issue,
+        // A bot's thread takes its turns, corrections included, only through the bot's queue.
+        ...(options.bot === undefined ? {} : { bot: options.bot }),
       })
       .pipe(
         Effect.provideContext(touches),

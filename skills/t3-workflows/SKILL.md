@@ -63,6 +63,7 @@ property of `T3`: take what you use at the top of the file, as the quick start d
 - **Definitions & body**: `workflow`, `step`, `agent`, `ask`, `wait`, `sleep`, `title`, `stop`, `skip`, `invoke`, `within`
 - **Inside `step` / `onEnd` only**: `store`, `signal`, `signalAll`, `start`, `runs`, `cancel`
 - **Trackers & hosts**: `issues`, `pullRequests` (triggers, step calls, and `pullRequests.wait` in the body)
+- **Bots' outside apps**: `integration` (in the body; see [Bots](#bots-agent-bot-and-integration))
 - **Triggers**: `every`, `daily`, `webhook`
 - **Schemas**: `Tick`, `WebhookRequest`, `Issue`, `IssueDetail`, `PullRequest`, `PullRequestStanding`
 
@@ -154,21 +155,22 @@ Call these directly in the workflow body with `yield*`. Every named primitive st
 
 ## Agents (`agent` and `agent.try`)
 
-| Option            | Applies to | Meaning                                                                                                                                             |
-| ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `brief`           | All        | Full task instructions. The agent sees only this brief and its project.                                                                             |
-| `project`         | New thread | Project id (from `t3_project_list`) or absolute folder path.                                                                                        |
-| `thread`          | Continue   | `thread` returned by an earlier `agent` step. Continues it as it started, so the New thread options are refused alongside it.                       |
-| `returns`         | All        | Optional `Schema`. Completes only when the agent submits valid data (up to 2 correction prompts).                                                   |
-| `model`           | New thread | `{ instanceId, model, options? }`; `options` is `[{ id, value }]` (e.g. `[{ id: "reasoningEffort", value: "high" }]`). Defaults to project default. |
-| `workspace`       | New thread | `{ type: "root" }` (default) or `{ type: "worktree", baseRef: "origin/main", startFromOrigin: true }`.                                              |
-| `runtimeMode`     | New thread | `"full-access" \| "auto" \| "auto-accept-edits" \| "approval-required"` (waits on thread approvals). Project default if omitted.                    |
-| `interactionMode` | New thread | `"default" \| "plan"`.                                                                                                                              |
-| `title`           | New thread | Thread title. Defaults to `<workflow>: <step>`.                                                                                                     |
-| `environment`     | New thread | Linked environment id (`t3 environment list`). Folder paths not yet registered there are registered automatically.                                  |
-| `issue`           | Local only | `Issue` or `{ project, url }`. Links the thread to that issue (not applied in linked environments).                                                 |
-| `timeout`         | All        | Time limit for each attempt (e.g. `"2 hours"`); an automatic retry or a resume starts a new one. Past it, the turn is stopped and the step fails.   |
-| `quiet`           | All        | Idle grace period (e.g. `"45 minutes"`) for agents that wait across turns before submitting `returns`.                                              |
+| Option            | Applies to | Meaning                                                                                                                                                         |
+| ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `brief`           | All        | Full task instructions. The agent sees only this brief and its project.                                                                                         |
+| `project`         | New thread | Project id (from `t3_project_list`) or absolute folder path.                                                                                                    |
+| `thread`          | Continue   | `thread` returned by an earlier `agent` step. Continues it as it started, so the New thread options are refused alongside it.                                   |
+| `bot`             | Bot        | A bot's handle (`"triaje"`). The turn runs in that bot's thread with its model, modes and outside-app permissions; see [Bots](#bots-agent-bot-and-integration). |
+| `returns`         | All        | Optional `Schema`. Completes only when the agent submits valid data (up to 2 correction prompts).                                                               |
+| `model`           | New thread | `{ instanceId, model, options? }`; `options` is `[{ id, value }]` (e.g. `[{ id: "reasoningEffort", value: "high" }]`). Defaults to project default.             |
+| `workspace`       | New thread | `{ type: "root" }` (default) or `{ type: "worktree", baseRef: "origin/main", startFromOrigin: true }`.                                                          |
+| `runtimeMode`     | New thread | `"full-access" \| "auto" \| "auto-accept-edits" \| "approval-required"` (waits on thread approvals). Project default if omitted.                                |
+| `interactionMode` | New thread | `"default" \| "plan"`.                                                                                                                                          |
+| `title`           | New thread | Thread title. Defaults to `<workflow>: <step>`.                                                                                                                 |
+| `environment`     | New thread | Linked environment id (`t3 environment list`). Folder paths not yet registered there are registered automatically.                                              |
+| `issue`           | Local only | `Issue` or `{ project, url }`. Links the thread to that issue (not applied in linked environments).                                                             |
+| `timeout`         | All        | Time limit for each attempt (e.g. `"2 hours"`); an automatic retry or a resume starts a new one. Past it, the turn is stopped and the step fails.               |
+| `quiet`           | All        | Idle grace period (e.g. `"45 minutes"`) for agents that wait across turns before submitting `returns`.                                                          |
 
 - **Worktrees:** Use a `worktree` workspace whenever two agents can edit the same repo at once (concurrent runs or parallel `agent` calls).
 - **Waiting across turns (`quiet`):** If an agent watches PR checks or background work and ends its turn while waiting to be woken, set `quiet: "45 minutes"` and tell it in `brief` to end waiting turns without submitting. The step prompts for the result only after the thread has been idle for `quiet`. Without `quiet`, it prompts as soon as a turn ends without output. Always set a `timeout` alongside `quiet`.
@@ -186,6 +188,48 @@ Effect.fn(function* () {
 ```
 
 - **Linked environments:** Enable Settings → Labs → Linked environments. The run stays on this server; only the thread runs remotely, bounded by the link's paired access. For a machine per run, create and link it in a `step` (`t3 auth pairing create --json` on the remote, `t3 environment link <url> --pairing-code <code> --access <access>` here), return its id, and delete it in `onEnd`.
+
+## Bots (`agent({ bot })` and `integration`)
+
+The user's bots (ADE → Bots) can do a workflow's work. Give a step to a bot only where it needs judgment; plain reads and writes are code.
+
+- **`agent(name, { bot: "triaje", brief, returns })`** sends the brief to that bot's own thread, in its one queue, with its model and modes. `project`, `model`, `workspace`, `runtimeMode`, `interactionMode`, `environment`, `thread` and `issue` are refused alongside `bot`: the bot keeps its own. A bot's thread is reached only through `bot`; `thread` with a bot's thread is refused. If the user raised the bot's thread above the bot's own mode, the step fails instead of borrowing it.
+- **`integration(name, { bot, app, action, arguments, timeout? })`** calls one action of an outside app (`app: "github"`, actions as the github-mcp-server names them: `list_issues`, `issue_read`, `add_issue_comment`, `issue_write`…) as that bot, in the body, never through `issues.comment`. It returns `{ status: "done" | "failed" | "denied", text }`, where `text` is the app's answer. What the bot's card allows runs at once; what it sends to the user becomes a question in the user's inbox showing these exact arguments, and runs once on "Sí"; what the card denies, a "No" or a `timeout` comes back as `denied`. Never ask again yourself before an `integration` call: it asks when the card says so. Only a yes given in the app counts: one sent with `t3 workflow signal` comes back as `denied`.
+
+```ts
+const { workflow, agent, integration, stop, daily, Tick } = T3;
+
+workflow(
+  "issue-triage",
+  { version: 1, payload: Tick, triggers: [daily("08:00")] },
+  Effect.fn(function* () {
+    const repo = { owner: "acme", repo: "app" };
+    const open = yield* integration("leer", {
+      bot: "triaje",
+      app: "github",
+      action: "list_issues",
+      arguments: { ...repo, state: "OPEN" },
+    });
+    if (open.status !== "done") return yield* stop(`could not read the issues: ${open.text}`);
+    const triage = yield* agent("clasificar", {
+      bot: "triaje",
+      brief: `Classify these open issues. Change nothing.\n${open.text}`,
+      returns: Schema.Struct({
+        issues: Schema.Array(Schema.Struct({ number: Schema.Number, comment: Schema.String })),
+      }),
+    });
+    for (const issue of triage.value.issues) {
+      yield* integration(`comentar-${issue.number}`, {
+        bot: "triaje",
+        app: "github",
+        action: "add_issue_comment",
+        arguments: { ...repo, issue_number: issue.number, body: issue.comment },
+        timeout: "2 days",
+      });
+    }
+  }),
+);
+```
 
 ## Other workflows
 

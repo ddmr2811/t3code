@@ -21,6 +21,7 @@ import {
   pendingAlertsPermissionAtom,
   togglePendingAlerts,
   usePendingTrayNotifications,
+  useWorkflowQuestionNotifications,
 } from "./notifications.ts";
 import { BotNotices, useBotNotices } from "./BotNotices.tsx";
 import { FirstRequest, RequestCards, trayHasFocus } from "./Requests.tsx";
@@ -305,6 +306,7 @@ export function DecisionsPanel() {
 
   // A snoozed decision that comes back, on time or with a new request, alerts as new.
   usePendingTrayNotifications(waitingItems, openBackLayer);
+  useWorkflowQuestionNotifications(() => setOpen(true));
 
   if (!open) return null;
 
