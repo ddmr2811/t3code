@@ -1,7 +1,17 @@
 import { userInputDraftKey } from "@t3tools/client-runtime/state/thread-requests";
 import { describe, expect, it } from "vite-plus/test";
 
-import { approvalChoices, approvalFiles, orphanedAnswerTexts } from "./requests.logic.ts";
+import {
+  approvalChoices,
+  approvalFiles,
+  botQuickAnswer,
+  literalFits,
+  orphanedAnswerTexts,
+  quickAnswer,
+} from "./requests.logic.ts";
+
+const texts = (result: ReturnType<typeof botQuickAnswer>) =>
+  result.kind === "yes-no" ? result.literals.map((literal) => literal.text) : [];
 
 describe("approvalChoices", () => {
   it("offers no grant wider than this request when the server lists no options", () => {
@@ -85,5 +95,169 @@ describe("approvalFiles", () => {
     ["the same native id in another turn", ref("call-1", "codex", "turn-0"), ref("call-1")],
   ])("names nothing for an edit with %s", (_name, changeAt, requestAt) => {
     expect(approvalFiles([change("a.ts", changeAt), request("r1", requestAt)], "r1")).toBeNull();
+  });
+});
+
+describe("quickAnswer", () => {
+  const approval = (
+    overrides: Partial<Parameters<typeof quickAnswer>[0]["approvals"][number]> = {},
+  ) => ({
+    responseCapability: "live" as const,
+    ...overrides,
+  });
+  const option = (label: string) => ({ label, description: label });
+  const question = (
+    overrides: { multiSelect?: boolean; options?: ReadonlyArray<ReturnType<typeof option>> } = {},
+  ) => ({
+    id: "q1",
+    header: "Nombre",
+    question: "¿Qué nombre le ponemos?",
+    options: overrides.options ?? [option("Vega"), option("Nico")],
+    multiSelect: overrides.multiSelect ?? false,
+  });
+  const prompt = (questions: ReadonlyArray<ReturnType<typeof question>>) => ({
+    responseCapability: "live" as const,
+    questions,
+  });
+
+  it("answers the first approval before any question, with «Rechazar» as its «No»", () => {
+    const first = approval();
+    const result = quickAnswer({ approvals: [first], userInputs: [prompt([question()])] });
+    expect(result).toEqual({ kind: "approval", approval: first, no: "decline" });
+  });
+
+  it("takes «Cancelar» as the «No» of an agent that offers no «Rechazar»", () => {
+    const result = quickAnswer({
+      approvals: [
+        approval({
+          options: [
+            { decision: "accept", label: "Allow" },
+            { decision: "cancel", label: "Stop" },
+          ],
+        }),
+      ],
+      userInputs: [],
+    });
+    expect(result).toMatchObject({ kind: "approval", no: "cancel" });
+  });
+
+  it.each([
+    ["one the agent can no longer take", approval({ responseCapability: "not_resumable" })],
+    [
+      "push hooks, whose commands do not fit a line",
+      approval({ pushHooks: { branch: "main", files: [], commands: [] } }),
+    ],
+    [
+      "a full-access override, which needs its reason",
+      approval({ fullAccessOverride: "ask_rule" }),
+    ],
+    ["one with no «No» to give", approval({ options: [{ decision: "accept", label: "Allow" }] })],
+  ])("opens the thread for an approval that is %s", (_, request) => {
+    expect(quickAnswer({ approvals: [request], userInputs: [] })).toEqual({ kind: "open" });
+  });
+
+  it("offers a single question's options as one-tap picks", () => {
+    const only = question();
+    const asked = prompt([only]);
+    expect(quickAnswer({ approvals: [], userInputs: [asked] })).toEqual({
+      kind: "pick",
+      prompt: asked,
+      question: only,
+    });
+  });
+
+  it.each([
+    ["several answers", prompt([question({ multiSelect: true })])],
+    ["no options", prompt([question({ options: [] })])],
+    [
+      "more options than fit",
+      prompt([question({ options: ["a", "b", "c", "d", "e"].map(option) })]),
+    ],
+    ["two questions", prompt([question(), { ...question(), id: "q2" }])],
+  ])("opens the thread for a question with %s", (_, asked) => {
+    expect(quickAnswer({ approvals: [], userInputs: [asked] })).toEqual({ kind: "open" });
+  });
+});
+
+describe("botQuickAnswer", () => {
+  it("answers an install in place, asking twice, beside its exact command and way back", () => {
+    const result = botQuickAnswer({
+      type: "install",
+      install: { command: "pnpm add -D knip", rollback: "pnpm remove knip" },
+    });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: true });
+    expect(texts(result)).toEqual(["pnpm add -D knip", "pnpm remove knip"]);
+  });
+
+  it("answers an outside-app action in place, asking twice, beside the arguments that will run", () => {
+    const sent = '{"text":"Hola <b>mundo</b> **ya**","to":"@ade"}';
+    const result = botQuickAnswer({ type: "integration", request: { arguments: sent } });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: true });
+    const [shown] = texts(result);
+    expect(JSON.parse(shown!)).toEqual(JSON.parse(sent));
+    expect(shown).toContain("Hola <b>mundo</b> **ya**");
+  });
+
+  it("keeps arguments that are not JSON exactly as the bot sent them", () => {
+    expect(texts(botQuickAnswer({ type: "integration", request: { arguments: "{roto" } }))).toEqual(
+      ["{roto"],
+    );
+  });
+
+  it("answers a proposed bot in place with one «Sí», beside its exact instructions", () => {
+    const result = botQuickAnswer({
+      type: "proposal",
+      proposal: { instructions: "Revisa los PR." },
+    });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: false });
+    expect(texts(result)).toEqual(["Revisa los PR."]);
+  });
+
+  it("answers a workflow question with its own choices, asking twice beside an integration step's exact arguments", () => {
+    const args = '{\n  "text": "Publica <b>esto</b>"\n}';
+    const result = botQuickAnswer({
+      type: "workflow",
+      view: {
+        arguments: args,
+        choices: [
+          { value: "Publicar", requireReason: false },
+          { value: "No publicar", requireReason: false },
+        ],
+      },
+    });
+    expect(result).toEqual({
+      kind: "choices",
+      choices: ["Publicar", "No publicar"],
+      confirm: true,
+      literals: [{ label: expect.any(String), text: args }],
+    });
+  });
+
+  it("opens the panel for a workflow question whose choice needs a reason", () => {
+    const result = botQuickAnswer({
+      type: "workflow",
+      view: {
+        arguments: null,
+        choices: [
+          { value: "Sí", requireReason: false },
+          { value: "No", requireReason: true },
+        ],
+      },
+    });
+    expect(result).toEqual({ kind: "open" });
+  });
+
+  it.each(["handoff", "unreadable"] as const)("opens the panel for a %s notice", (type) => {
+    expect(botQuickAnswer({ type })).toEqual({ kind: "open" });
+  });
+});
+
+describe("literalFits", () => {
+  it.each([
+    ["a one-line command", "pnpm add -D knip", true],
+    ["nine lines", Array.from({ length: 9 }, (_, i) => `línea ${i}`).join("\n"), false],
+    ["one very long line", "x".repeat(481), false],
+  ])("%s: %s", (_, text, fits) => {
+    expect(literalFits(text)).toBe(fits);
   });
 });

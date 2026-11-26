@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   buildPendingUserInputAnswers,
@@ -21,7 +22,7 @@ import type {
 import { useShortcut } from "@ui-sdk/react/shortcuts";
 import * as Option from "effect/Option";
 import { Atom, type AtomRegistry } from "effect/reactivity";
-import { useContext, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 
 import { draftAtom, runCommand } from "../composer/Composer.tsx";
 import { shortcutsFree } from "../panels/FloatingPanel.tsx";
@@ -38,6 +39,7 @@ import {
   approvalFiles,
   approvalMayCoverTurn,
   orphanedAnswerTexts,
+  quickAnswer,
 } from "./requests.logic.ts";
 
 const KIND_TEXT: Record<ProviderRequestKind, string> = {
@@ -119,6 +121,24 @@ async function sendOnce(
 const requestKeyOf = (threadRef: ScopedThreadRef, requestId: string) =>
   userInputDraftKey(threadRef.environmentId, threadRef.threadId, requestId);
 
+const respondToApproval = (
+  registry: AtomRegistry.AtomRegistry,
+  threadRef: ScopedThreadRef,
+  requestId: ThreadPendingApproval["requestId"],
+  decision: ProviderApprovalDecision,
+) =>
+  sendOnce(registry, threadRef, requestId, decision, () =>
+    runCommand(
+      registry,
+      threadEnvironment.respondToApproval,
+      {
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, requestId, decision },
+      },
+      "No se pudo responder a la aprobación",
+    ),
+  );
+
 const NO_REQUESTS = Atom.make<PendingThreadRequests | null>(null);
 
 /** Y, N and S act only while focus is inside the one-at-a-time tray, never in a field. */
@@ -167,17 +187,7 @@ function ApprovalCard(props: {
     coversTurn: boolean;
   };
   const respond = (decision: ProviderApprovalDecision) =>
-    sendOnce(registry, threadRef, approval.requestId, decision, () =>
-      runCommand(
-        registry,
-        threadEnvironment.respondToApproval,
-        {
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId, requestId: approval.requestId, decision },
-        },
-        "No se pudo responder a la aprobación",
-      ),
-    );
+    respondToApproval(registry, threadRef, approval.requestId, decision);
   const button = (choice: ApprovalChoice) => (
     <button
       key={choice.decision}
@@ -581,5 +591,137 @@ export function ThreadRequests(props: {
         );
       })}
     </section>
+  );
+}
+
+/**
+ * Inicio's one-line form of a thread's first request. «Sí»/«No» or a pick go out the way the
+ * tray sends them, so one click disables that request everywhere; the rest opens the thread.
+ */
+export function QuickRequest(props: { threadRef: ScopedThreadRef; onOpen: () => void }) {
+  const { threadRef } = props;
+  const registry = useContext(RegistryContext);
+  const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(threadRef));
+  const canAnswer = useCanAnswer(threadRef);
+  const quick = requests === null ? null : quickAnswer(requests);
+  const requestId =
+    quick?.kind === "approval"
+      ? quick.approval.requestId
+      : quick?.kind === "pick"
+        ? quick.prompt.requestId
+        : null;
+  const requestKey = requestId === null ? "" : requestKeyOf(threadRef, requestId);
+  const sent = useAtomValue(sendingAtom, (sending) => sending.get(requestKey) ?? null);
+  const error = useAtomValue(sendErrorsAtom, (errors) => errors.get(requestKey) ?? null);
+  const coversTurn = useAtomValue(
+    environmentThreadDetails.stateAtom(threadRef),
+    (state) =>
+      quick?.kind === "approval" &&
+      approvalMayCoverTurn(Option.getOrNull(state.data)?.turnItems ?? [], quick.approval.requestId),
+  );
+  const [armedFor, setArmedFor] = useState<string | null>(null);
+  const armed = requestId !== null && armedFor === requestId;
+
+  const approval = requests?.approvals[0];
+  const question = requests?.userInputs[0]?.questions[0];
+  const what =
+    approval !== undefined
+      ? KIND_TEXT[approval.requestKind]
+      : (question?.question ?? (requests === null ? "Cargando…" : "Revísalo en el hilo"));
+
+  let answers: ReactNode = null;
+  if (quick?.kind === "approval" && canAnswer) {
+    const yes = () => {
+      if (!REVERSIBLE.has(quick.approval.requestKind) && !armed) {
+        return setArmedFor(quick.approval.requestId);
+      }
+      void respondToApproval(registry, threadRef, quick.approval.requestId, "accept");
+    };
+    answers = (
+      <>
+        <button type="button" className="ade-button" disabled={sent !== null} onClick={yes}>
+          {sent === "accept" ? "Enviando…" : armed ? "Confirmar sí" : "Sí"}
+        </button>
+        <button
+          type="button"
+          className="ade-button-quiet"
+          disabled={sent !== null}
+          onClick={() =>
+            void respondToApproval(registry, threadRef, quick.approval.requestId, quick.no)
+          }
+        >
+          {sent === quick.no ? "Enviando…" : "No"}
+        </button>
+      </>
+    );
+  } else if (quick?.kind === "pick" && canAnswer) {
+    const { prompt, question: asked } = quick;
+    const pick = (value: string) => {
+      const resolved = buildPendingUserInputAnswers(prompt.questions, {
+        [asked.id]: togglePendingUserInputOptionSelection(asked, undefined, value),
+      });
+      if (resolved === null) return;
+      void sendOnce(
+        registry,
+        threadRef,
+        prompt.requestId,
+        "answer",
+        () =>
+          runCommand(
+            registry,
+            threadEnvironment.respondToUserInput,
+            {
+              environmentId: threadRef.environmentId,
+              input: {
+                threadId: threadRef.threadId,
+                requestId: prompt.requestId,
+                answers: resolved,
+              },
+            },
+            "No se pudo enviar la respuesta",
+          ),
+        () => registry.update(answerDraftsAtom, ({ [requestKey]: _sent, ...rest }) => rest),
+      );
+    };
+    answers = asked.options.map((option) => (
+      <button
+        key={option.value ?? option.label}
+        type="button"
+        className="ade-button-quiet"
+        disabled={sent !== null}
+        onClick={() => pick(option.value ?? option.label)}
+      >
+        {option.label}
+      </button>
+    ));
+  }
+
+  return (
+    <>
+      <p className="ade-foryou-what">{what}</p>
+      {approval?.detail ? <code className="ade-foryou-detail">{approval.detail}</code> : null}
+      {answers !== null && coversTurn ? (
+        <p className="ade-foryou-note">
+          Un «Sí» deja pasar también el resto de comandos de este turno.
+        </p>
+      ) : null}
+      {armed && sent === null ? (
+        <p className="ade-foryou-note" role="status">
+          No se puede deshacer desde aquí: pulsa «Confirmar sí».
+        </p>
+      ) : null}
+      <div className="ade-foryou-actions">
+        {answers}
+        <button type="button" className="ade-button-quiet ade-foryou-open" onClick={props.onOpen}>
+          Abrir
+          <ArrowRightIcon size={13} weight="bold" aria-hidden />
+        </button>
+      </div>
+      {error === null ? null : (
+        <p className="ade-error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }

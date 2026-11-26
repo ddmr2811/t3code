@@ -133,3 +133,79 @@ export function overnightSummary(input: {
   ).length;
   return { ranAt, closed };
 }
+
+export type ForYouEntry<N, T> =
+  | { readonly key: string; readonly notice: N }
+  | { readonly key: string; readonly item: T };
+
+/**
+ * «Para ti»: what the decisions panel waits on, in its order (bot notices, then threads), so
+ * the first card is the panel's 1/N. What «Luego» set aside stays in the panel only.
+ */
+export function forYouEntries<
+  N extends { readonly key: string },
+  T extends { readonly key: string },
+>(
+  notices: ReadonlyArray<N>,
+  items: ReadonlyArray<T>,
+  snoozedKeys: ReadonlyArray<string>,
+): ReadonlyArray<ForYouEntry<N, T>> {
+  return [
+    ...notices.map((notice) => ({ key: notice.key, notice })),
+    ...items.map((item) => ({ key: item.key, item })),
+  ].filter((entry) => !snoozedKeys.includes(entry.key));
+}
+
+const NUMBER_WORDS = [
+  "",
+  "Una",
+  "Dos",
+  "Tres",
+  "Cuatro",
+  "Cinco",
+  "Seis",
+  "Siete",
+  "Ocho",
+  "Nueve",
+  "Diez",
+];
+
+export function forYouSentence(count: number): string {
+  if (count === 0) return "Nada pendiente";
+  if (count === 1) return "Una cosa espera tu decisión";
+  return `${NUMBER_WORDS[count] ?? count} cosas esperan tu decisión`;
+}
+
+type ActivityInput = Parameters<typeof threadState>[0] &
+  Pick<
+    EnvironmentThreadShell,
+    "createdAt" | "updatedAt" | "latestUserMessageAt" | "latestUserAuthoredMessageAt"
+  >;
+
+const ACTIVITY_WORKING = 5;
+const ACTIVITY_FINISHED = 3;
+
+/** Inicio's side column: what works now, most recent first, and the last runs that finished well. */
+export function homeActivity<T extends ActivityInput>(
+  threads: ReadonlyArray<T>,
+): { readonly working: ReadonlyArray<T>; readonly finished: ReadonlyArray<T> } {
+  const working = threads
+    .filter((thread) => threadState(thread) === "working")
+    .toSorted(
+      (a, b) => getThreadSortTimestamp(b, "updated_at") - getThreadSortTimestamp(a, "updated_at"),
+    );
+  const finished = threads
+    .filter(
+      (thread) =>
+        threadState(thread) === "done" &&
+        thread.latestRun?.status === "completed" &&
+        thread.latestRun.completedAt != null,
+    )
+    .toSorted(
+      (a, b) => Date.parse(b.latestRun!.completedAt!) - Date.parse(a.latestRun!.completedAt!),
+    );
+  return {
+    working: working.slice(0, ACTIVITY_WORKING),
+    finished: finished.slice(0, ACTIVITY_FINISHED),
+  };
+}

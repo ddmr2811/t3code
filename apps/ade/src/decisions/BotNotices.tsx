@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -12,6 +13,7 @@ import {
   type ForkIntegrationRequest,
   type ThreadId,
 } from "@t3tools/contracts";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import { Fragment, type ReactNode, useContext, useState } from "react";
 
 import {
@@ -33,6 +35,7 @@ import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { environmentProjects, environmentThreadShells, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
+import { botQuickAnswer, literalFits, prettyArguments } from "./requests.logic.ts";
 import { readWorkflowQuestion } from "@t3tools/client-runtime/workflows";
 import {
   type OpenWorkflowQuestion,
@@ -40,7 +43,7 @@ import {
   workflowQuestionsAtom,
 } from "./workflowQuestions.ts";
 
-type BotNotice = {
+export type BotNotice = {
   readonly key: string;
   readonly label: string;
   readonly title: string;
@@ -159,6 +162,112 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
   return [...unreadable, ...installs, ...integrations, ...workflows, ...proposals, ...handoffs];
 }
 
+// What this ADE is sending for each notice and why the last try failed, shared by the decisions
+// panel and Inicio: one click anywhere disables the notice everywhere until the bots refresh.
+const botSendingAtom = Atom.make<ReadonlyMap<string, true>>(new Map()).pipe(Atom.keepAlive);
+const botErrorsAtom = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(Atom.keepAlive);
+
+/** A «Sí» or «No», or a workflow question's choice with its reason ("" for none). */
+type BotAnswer = boolean | { readonly choice: string; readonly reason: string };
+
+const botAnswerRun = (
+  registry: AtomRegistry.AtomRegistry,
+  notice: BotNotice,
+  answer: BotAnswer,
+): (() => Promise<string | null>) | null => {
+  const { environmentId } = notice;
+  if (notice.type === "workflow") {
+    if (typeof answer === "boolean") return null;
+    const { question } = notice.open;
+    return () =>
+      runCommand(
+        registry,
+        serverEnvironment.answerWorkflowQuestion,
+        {
+          environmentId,
+          input: {
+            runId: question.runId,
+            name: question.name,
+            choice: answer.choice,
+            ...(answer.reason === "" ? {} : { reason: answer.reason }),
+          },
+        },
+        "No se pudo enviar tu respuesta",
+      );
+  }
+  if (typeof answer !== "boolean") return null;
+  const yes = answer;
+  switch (notice.type) {
+    case "integration":
+      return () =>
+        runCommand(
+          registry,
+          forkIntegrationsAnswerCommand,
+          { environmentId, input: { id: notice.request.id, answer: yes ? "approve" : "deny" } },
+          yes ? "No se pudo ejecutar" : "No se pudo guardar el «No»",
+        );
+    case "install":
+      return () =>
+        runCommand(
+          registry,
+          forkGapsAnswerInstallCommand,
+          { environmentId, input: { id: notice.install.id, answer: yes ? "approve" : "reject" } },
+          "No se pudo guardar tu respuesta",
+        );
+    case "proposal":
+      return () =>
+        runCommand(
+          registry,
+          forkBotsAnswerProposalCommand,
+          { environmentId, input: { id: notice.proposal.id, answer: yes ? "accept" : "reject" } },
+          yes ? "No se pudo crear el bot" : "No se pudo guardar el «No»",
+        );
+    case "handoff":
+      return yes
+        ? null
+        : () =>
+            runCommand(
+              registry,
+              forkBotsDismissHandoffCommand,
+              { environmentId, input: { id: notice.handoff.id } },
+              "No se pudo descartar el aviso",
+            );
+    default:
+      return null;
+  }
+};
+
+/** Answers a bot notice once, from the panel or Inicio; a failed answer keeps it, with the reason. */
+async function answerBotNotice(
+  registry: AtomRegistry.AtomRegistry,
+  notice: BotNotice,
+  answer: BotAnswer,
+) {
+  const run = botAnswerRun(registry, notice, answer);
+  const { key, environmentId } = notice;
+  if (run === null || registry.get(botSendingAtom).has(key)) return;
+  registry.update(botSendingAtom, (current) => new Map(current).set(key, true));
+  registry.update(botErrorsAtom, (current) => without(current, key));
+  const failure = await run();
+  if (failure !== null) {
+    registry.update(botSendingAtom, (current) => {
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
+    registry.update(botErrorsAtom, (current) => new Map(current).set(key, failure));
+    return;
+  }
+  refreshBots(registry, environmentId);
+  refreshIntegrations(registry, environmentId);
+}
+
+const without = (map: ReadonlyMap<string, string>, key: string) => {
+  const next = new Map(map);
+  next.delete(key);
+  return next;
+};
+
 /**
  * Bot notices wait here until the user answers them or opens the sender's thread. `include`
  * picks the ones to show: the tray's current one, or those not snoozed.
@@ -172,29 +281,11 @@ export function BotNotices(props: {
 }) {
   const registry = useContext(RegistryContext);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const [error, setError] = useState<string | null>(null);
-  // Sent once: the notice leaves when the bots refresh, so a sent key stays disabled.
-  const [sending, setSending] = useState<ReadonlySet<string>>(new Set());
+  const sending = useAtomValue(botSendingAtom);
+  const errors = useAtomValue(botErrorsAtom);
   const notices = useBotNotices().filter((notice) => props.include(notice.key));
   if (notices.length === 0) return null;
-
-  const send = async (
-    key: string,
-    environmentId: EnvironmentId,
-    run: () => Promise<string | null>,
-  ) => {
-    if (sending.has(key)) return;
-    setSending((current) => new Set(current).add(key));
-    setError(null);
-    const failure = await run();
-    // A failed answer keeps its card, so the reason stays beside what it was about.
-    if (failure !== null) {
-      setSending((current) => new Set([...current].filter((sent) => sent !== key)));
-      return setError(failure);
-    }
-    refreshBots(registry, environmentId);
-    refreshIntegrations(registry, environmentId);
-  };
+  const error = notices.map((notice) => errors.get(notice.key)).find((e) => e !== undefined);
 
   return (
     <>
@@ -247,22 +338,7 @@ export function BotNotices(props: {
                       )
               }
               onAnswer={(choice, reason) =>
-                void send(key, environmentId, () =>
-                  runCommand(
-                    registry,
-                    serverEnvironment.answerWorkflowQuestion,
-                    {
-                      environmentId,
-                      input: {
-                        runId: question.runId,
-                        name: question.name,
-                        choice,
-                        ...(reason === "" ? {} : { reason }),
-                      },
-                    },
-                    "No se pudo enviar tu respuesta",
-                  ),
-                )
+                void answerBotNotice(registry, notice, { choice, reason })
               }
             />
           );
@@ -273,16 +349,7 @@ export function BotNotices(props: {
               key={key}
               {...common}
               request={notice.request}
-              onAnswer={(answer) =>
-                void send(key, environmentId, () =>
-                  runCommand(
-                    registry,
-                    forkIntegrationsAnswerCommand,
-                    { environmentId, input: { id: notice.request.id, answer } },
-                    answer === "approve" ? "No se pudo ejecutar" : "No se pudo guardar el «No»",
-                  ),
-                )
-              }
+              onAnswer={(answer) => void answerBotNotice(registry, notice, answer === "approve")}
             />
           );
         }
@@ -313,14 +380,7 @@ export function BotNotices(props: {
         }
         if (notice.type === "install") {
           const answer = (value: "approve" | "reject") =>
-            void send(key, environmentId, () =>
-              runCommand(
-                registry,
-                forkGapsAnswerInstallCommand,
-                { environmentId, input: { id: notice.install.id, answer: value } },
-                "No se pudo guardar tu respuesta",
-              ),
-            );
+            void answerBotNotice(registry, notice, value === "approve");
           return (
             <InstallNotice
               key={key}
@@ -333,14 +393,7 @@ export function BotNotices(props: {
         }
         if (notice.type === "proposal") {
           const answer = (value: "accept" | "reject") =>
-            void send(key, environmentId, () =>
-              runCommand(
-                registry,
-                forkBotsAnswerProposalCommand,
-                { environmentId, input: { id: notice.proposal.id, answer: value } },
-                value === "accept" ? "No se pudo crear el bot" : "No se pudo guardar el «No»",
-              ),
-            );
+            void answerBotNotice(registry, notice, value === "accept");
           return (
             <ProposalNotice
               key={key}
@@ -357,20 +410,11 @@ export function BotNotices(props: {
             {...common}
             preview={notice.handoff.preview}
             hops={notice.handoff.hops}
-            onDismiss={() =>
-              void send(key, environmentId, () =>
-                runCommand(
-                  registry,
-                  forkBotsDismissHandoffCommand,
-                  { environmentId, input: { id: notice.handoff.id } },
-                  "No se pudo descartar el aviso",
-                ),
-              )
-            }
+            onDismiss={() => void answerBotNotice(registry, notice, false)}
           />
         );
       })}
-      {error === null ? null : (
+      {error === undefined ? null : (
         <p className="ade-error" role="alert">
           {error}
         </p>
@@ -760,14 +804,6 @@ function WorkflowNotice(
   );
 }
 
-function prettyArguments(json: string): string {
-  try {
-    return JSON.stringify(JSON.parse(json), null, 2);
-  } catch {
-    return json;
-  }
-}
-
 function HandoffNotice(
   props: NoticeProps & { preview: string; hops: number; onDismiss: () => void },
 ) {
@@ -799,5 +835,210 @@ function HandoffNotice(
         se entregó: «{props.preview}». Si hace falta, pásalo tú desde el chat del bot.
       </p>
     </NoticeFrame>
+  );
+}
+
+const NO_THREAD = Atom.make<{
+  readonly runtime?: { readonly activeRunId?: unknown } | null;
+} | null>(null);
+
+/** A command, arguments or instructions as they will run: plain text, never markup. */
+function Literal(props: { label: string; text: string; open: boolean; onOpen: () => void }) {
+  const clipped = !props.open && !literalFits(props.text);
+  return (
+    <div className="ade-foryou-literal">
+      <p className="ade-foryou-note">{props.label}</p>
+      <pre className="ade-foryou-literal-text" data-clipped={clipped || undefined}>
+        {props.text}
+      </pre>
+      {clipped ? (
+        <button type="button" className="ade-button-quiet" onClick={props.onOpen}>
+          Ver todo
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Inicio's card body for a bot notice: its «Sí»/«No», or a workflow question's choices, beside the
+ * exact text they rest on, sent as the panel sends them. Never an answer while that text hides.
+ */
+export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void }) {
+  const { notice } = props;
+  const { environmentId } = notice;
+  const registry = useContext(RegistryContext);
+  const sending = useAtomValue(botSendingAtom, (sent) => sent.has(notice.key));
+  const error = useAtomValue(botErrorsAtom, (errors) => errors.get(notice.key) ?? null);
+  const permissions = {
+    install: useAtomValue(forkGapsAnswerInstallCommand.permissionAtom(environmentId)),
+    integration: useAtomValue(forkIntegrationsAnswerCommand.permissionAtom(environmentId)),
+    proposal: useAtomValue(forkBotsAnswerProposalCommand.permissionAtom(environmentId)),
+    workflow: useAtomValue(serverEnvironment.answerWorkflowQuestion.permissionAtom(environmentId)),
+  };
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  // The server refuses an install's yes while its bot works, as the panel says.
+  const busy = useAtomValue(
+    notice.type === "install"
+      ? environmentThreadShells.quietThreadShellAtom(
+          scopeThreadRef(environmentId, notice.gap.threadId),
+        )
+      : NO_THREAD,
+    (thread) => thread?.runtime?.activeRunId != null,
+  );
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  // The answer a first click armed, when it asks twice.
+  const [armed, setArmed] = useState<string | null>(null);
+  const view = notice.type === "workflow" ? readWorkflowQuestion(notice.open.question) : null;
+  const quick =
+    notice.type === "workflow"
+      ? botQuickAnswer({ type: "workflow", view: view! })
+      : botQuickAnswer(notice);
+
+  const open = (
+    <button type="button" className="ade-button-quiet ade-foryou-open" onClick={props.onOpen}>
+      Abrir
+      <ArrowRightIcon size={13} weight="bold" aria-hidden />
+    </button>
+  );
+  if (quick.kind === "open" || notice.type === "handoff" || notice.type === "unreadable") {
+    return (
+      <>
+        <p className="ade-foryou-what">{notice.title}</p>
+        <div className="ade-foryou-actions">{open}</div>
+      </>
+    );
+  }
+
+  const facts: ReadonlyArray<readonly [string, string]> =
+    notice.type === "workflow"
+      ? (view?.choices ?? []).flatMap((choice) =>
+          choice.description === null ? [] : [[choice.value, choice.description] as const],
+        )
+      : notice.type === "install"
+        ? [
+            ["Le falta", notice.gap.name],
+            [
+              "Qué toca",
+              notice.install.scope === "system"
+                ? "El sistema de esta máquina, fuera del proyecto"
+                : "Solo el proyecto",
+            ],
+          ]
+        : notice.type === "integration"
+          ? [
+              ["Acción", notice.request.action],
+              ["Permiso", INTEGRATION_GROUP_LABELS[notice.request.group] ?? notice.request.group],
+            ]
+          : [
+              ["Rol", notice.proposal.role],
+              ["Rutina", notice.proposal.routine],
+              [
+                "Modelo",
+                (() => {
+                  const { instanceId, model } = notice.proposal.modelSelection;
+                  const option = availableMachineModelOptions(config).find(
+                    (candidate) => candidate.instanceId === instanceId && candidate.model === model,
+                  );
+                  return option === undefined
+                    ? model
+                    : `${option.providerLabel} · ${option.modelName}`;
+                })(),
+              ],
+              ["Permisos", RUNTIME_MODE_TEXT[notice.proposal.runtimeMode]],
+            ];
+  const allShown = quick.literals.every(
+    (literal) => opened.has(literal.label) || literalFits(literal.text),
+  );
+  const disabled = permissions[notice.type] !== true || sending || !allShown;
+  const choose = (armedAs: string, answer: BotAnswer) => {
+    if (!allShown) return;
+    if (quick.confirm && armed !== armedAs) return setArmed(armedAs);
+    void answerBotNotice(registry, notice, answer);
+  };
+
+  return (
+    <>
+      <p className="ade-foryou-what">{notice.title}</p>
+      {view?.body == null ? null : <p className="ade-foryou-note">{view.body}</p>}
+      {facts.length === 0 ? null : (
+        <dl className="ade-proposal-facts">
+          {facts.map(([term, value]) => (
+            <Fragment key={term}>
+              <dt>{term}</dt>
+              <dd>{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {quick.literals.map((literal) => (
+        <Literal
+          key={literal.label}
+          label={literal.label}
+          text={literal.text}
+          open={opened.has(literal.label)}
+          onOpen={() => setOpened((current) => new Set(current).add(literal.label))}
+        />
+      ))}
+      {notice.type === "install" ? (
+        <p className="ade-foryou-note">
+          {notice.install.runtimeMode === "approval-required"
+            ? "Vale una vez. El bot te pedirá permiso otra vez al ejecutarlo."
+            : `Vale una vez. El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[notice.install.runtimeMode]}».`}
+        </p>
+      ) : null}
+      {allShown ? null : <p className="ade-foryou-note">Abre «Ver todo» para poder contestar.</p>}
+      {armed !== null && !sending ? (
+        <p className="ade-foryou-note" role="status">
+          No se puede deshacer desde aquí: pulsa otra vez para confirmar.
+        </p>
+      ) : null}
+      <div className="ade-foryou-actions">
+        {quick.kind === "choices" ? (
+          quick.choices.map((choice, index) => (
+            <button
+              key={choice}
+              type="button"
+              className={index === 0 ? "ade-button" : "ade-button-quiet"}
+              disabled={disabled}
+              onClick={() => choose(choice, { choice, reason: "" })}
+            >
+              {sending ? "Enviando…" : armed === choice ? `Confirmar «${choice}»` : choice}
+            </button>
+          ))
+        ) : (
+          <>
+            <button
+              type="button"
+              className="ade-button"
+              disabled={disabled || busy}
+              onClick={() => choose("sí", true)}
+            >
+              {sending
+                ? "Enviando…"
+                : busy
+                  ? "Espera a que el bot termine"
+                  : armed === "sí"
+                    ? "Confirmar sí"
+                    : "Sí"}
+            </button>
+            <button
+              type="button"
+              className="ade-button-quiet"
+              disabled={permissions[notice.type] !== true || sending}
+              onClick={() => void answerBotNotice(registry, notice, false)}
+            >
+              No
+            </button>
+          </>
+        )}
+        {open}
+      </div>
+      {error === null ? null : (
+        <p className="ade-error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }

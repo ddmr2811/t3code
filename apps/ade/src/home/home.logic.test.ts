@@ -1,7 +1,18 @@
-import { EnvironmentId, type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationProjectShell,
+  ProjectId,
+  RunId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveInitialThreadTitle, homeChips, homeProjects } from "./home.logic.ts";
+import {
+  deriveInitialThreadTitle,
+  forYouEntries,
+  homeActivity,
+  homeChips,
+  homeProjects,
+} from "./home.logic.ts";
 
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");
@@ -95,5 +106,75 @@ describe("deriveInitialThreadTitle", () => {
     const derived = deriveInitialThreadTitle(long);
     expect(derived.length).toBe(80);
     expect(derived.endsWith("…")).toBe(true);
+  });
+});
+
+describe("forYouEntries", () => {
+  it("lists bot notices before waiting threads, as the decisions panel does, without the snoozed", () => {
+    const entries = forYouEntries(
+      [{ key: "proposal:a" }, { key: "handoff:b" }],
+      [{ key: "thread:1" }, { key: "thread:2" }, { key: "thread:3" }],
+      ["handoff:b", "thread:2"],
+    );
+    expect(entries.map((entry) => entry.key)).toEqual(["proposal:a", "thread:1", "thread:3"]);
+  });
+});
+
+describe("homeActivity", () => {
+  type Input = Parameters<typeof homeActivity>[0][number];
+  const thread = (
+    id: string,
+    status: "running" | "completed" | "failed" | "interrupted",
+    at: string,
+    overrides: Partial<Input> = {},
+  ): Input & { id: string } => ({
+    id,
+    archivedAt: null,
+    deletedAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingGuestMessageCount: 0,
+    interactionMode: "default",
+    hasActionableProposedPlan: false,
+    pendingSubagentRequest: null,
+    lastVisitedAt: at,
+    createdAt: at,
+    updatedAt: at,
+    latestUserMessageAt: at,
+    latestUserAuthoredMessageAt: at,
+    latestRun: {
+      runId: RunId.make(`run-${id}`),
+      status,
+      requestedAt: at,
+      startedAt: at,
+      completedAt: status === "running" ? null : at,
+      assistantMessageId: null,
+    },
+    runtime: {
+      status: status === "running" ? "running" : "idle",
+      activeRunId: status === "running" ? RunId.make(`run-${id}`) : null,
+    } as Input["runtime"],
+    ...overrides,
+  });
+
+  it("keeps a running thread that waits on you out of «En marcha»: it is a decision", () => {
+    const { working } = homeActivity([
+      thread("busy", "running", "2026-11-26T10:00:00.000Z"),
+      thread("asks", "running", "2026-11-26T11:00:00.000Z", { hasPendingApprovals: true }),
+    ]);
+    expect(working.map((item) => item.id)).toEqual(["busy"]);
+  });
+
+  it("lists as finished only runs that completed, latest first", () => {
+    const { finished } = homeActivity([
+      thread("old", "completed", "2026-11-26T08:00:00.000Z"),
+      thread("broke", "failed", "2026-11-26T12:00:00.000Z", {
+        settledAt: "2026-11-26T12:01:00.000Z",
+      }),
+      thread("stopped", "interrupted", "2026-11-26T11:00:00.000Z"),
+      thread("new", "completed", "2026-11-26T10:00:00.000Z"),
+      thread("busy", "running", "2026-11-26T13:00:00.000Z"),
+    ]);
+    expect(finished.map((item) => item.id)).toEqual(["new", "old"]);
   });
 });

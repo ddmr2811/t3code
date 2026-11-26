@@ -13,8 +13,9 @@ import {
 } from "../sidebar/Sidebar.tsx";
 import { projectAccentColor, projectMonogram } from "../sidebar/sidebar.logic.ts";
 import { environmentProjects, threadEnvironment } from "../state.ts";
+import { ForYou, HomeActivity } from "./ForYou.tsx";
 import { Overnight } from "./Overnight.tsx";
-import { homeChips, homeProjects, workingThreadCount } from "./home.logic.ts";
+import { forYouSentence, homeChips, homeProjects } from "./home.logic.ts";
 
 export const homeProjectsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
@@ -35,10 +36,6 @@ export const homeProjectsAtom = Atom.make((get) => {
   };
 }).pipe(Atom.withLabel("ade-home-projects"));
 
-const workingCountAtom = Atom.make((get) => workingThreadCount(get(listedThreadsAtom))).pipe(
-  Atom.withLabel("ade-home-working-count"),
-);
-
 // Kept in memory only so leaving Inicio and returning remembers the picked project without touching localStorage.
 export const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
   Atom.keepAlive,
@@ -47,12 +44,7 @@ export const selectedHomeProjectKeyAtom = Atom.make<string | null>(null).pipe(
 
 export function Home() {
   const { projects, machineCount, loading } = useAtomValue(homeProjectsAtom);
-  const workingCount = useAtomValue(workingCountAtom);
-  const {
-    count: needsYouCount,
-    open: decisionsOpen,
-    setOpen: setDecisionsOpen,
-  } = useDecisionsPanel();
+  const { count: needsYouCount } = useDecisionsPanel();
   const [selectedKey, setSelectedKey] = useAtom(selectedHomeProjectKeyAtom);
   const openThread = useAtomSet(selectedThreadKeyAtom);
   const openSearch = useAtomSet(searchOpenAtom);
@@ -63,32 +55,21 @@ export function Home() {
     null;
   const chips = homeChips(projects, selected);
   const multipleMachines = machineCount > 1;
-  const needsYouText = needsYouCount === 1 ? "1 te necesita" : `${needsYouCount} te necesitan`;
 
   return (
     <section className="ade-home" aria-label="Inicio">
       <span className="ade-home-art" aria-hidden />
       <div className="ade-home-scroll">
-        <header className="ade-home-greeting">
-          <h1>¿En qué trabajamos?</h1>
-          <p className="ade-home-stats">
-            <span>{workingCount === 1 ? "1 en marcha" : `${workingCount} en marcha`}</span>
-            <span className="ade-home-stat-sep" aria-hidden />
-            {needsYouCount > 0 ? (
-              <button
-                type="button"
-                className="ade-home-needs-you"
-                aria-expanded={decisionsOpen}
-                aria-controls="ade-decisions"
-                onClick={() => setDecisionsOpen(!decisionsOpen)}
-              >
-                {needsYouText}
-              </button>
-            ) : (
-              <span>{needsYouText}</span>
-            )}
-          </p>
-        </header>
+        <div className="ade-home-top">
+          <header className="ade-home-greeting">
+            <h1>¿En qué trabajamos?</h1>
+            <p className="ade-home-sentence" data-pending={needsYouCount > 0 || undefined}>
+              {forYouSentence(needsYouCount)}
+            </p>
+          </header>
+          <ForYou onOpenThread={openThread} />
+          <HomeActivity multipleMachines={multipleMachines} />
+        </div>
         <div className="ade-home-inner">
           <Overnight needsYouCount={needsYouCount} />
           {selected === null ? (

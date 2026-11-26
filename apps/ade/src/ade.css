@@ -3053,13 +3053,21 @@ button.ade-subagent:hover .ade-subagent-open {
   display: block;
 }
 
-.ade-home-greeting {
+/* The question, its sentence and «Para ti» stay together in the free space above the composer. */
+.ade-home-top {
   display: grid;
   flex: 1 0 auto;
   align-content: center;
+  gap: 22px;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 24px 0;
+}
+
+.ade-home-greeting {
+  display: grid;
   justify-items: center;
   gap: 14px;
-  padding: 24px 0;
   text-align: center;
 }
 
@@ -3106,48 +3114,304 @@ button.ade-subagent:hover .ade-subagent-open {
   color: var(--ade-text-muted);
 }
 
-.ade-home-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 0 2px;
-  padding: 2px 8px;
+.ade-home-sentence {
+  margin: 0;
+  padding: 3px 10px;
   border-radius: 6px;
   background: rgb(10 11 14 / 0.75);
   color: #d6d6db;
-  font: 500 11.5px/1.2 var(--ade-font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font: 400 15px/1.35 var(--ade-font-sans);
 }
 
-.ade-home-stat-sep {
-  width: 3px;
-  height: 3px;
+.ade-home-sentence[data-pending] {
+  color: var(--ade-text);
+}
+
+.ade-foryou {
+  display: grid;
+  gap: 10px;
+}
+
+.ade-foryou-head,
+.ade-activity-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ade-foryou-head h2,
+.ade-activity h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 0;
+  padding: 2px 8px;
+  /* The text sits on the cards' edge; only its backing pill reaches past it. */
+  margin-inline-start: -8px;
+  border-radius: 6px;
+  background: rgb(10 11 14 / 0.75);
+  color: var(--ade-text);
+  font: 500 13px/1.3 var(--ade-font-sans);
+}
+
+.ade-foryou-count {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 6px;
   border-radius: 999px;
-  background: currentColor;
-  opacity: 0.65;
+  background: rgb(16 18 23 / 0.92);
+  color: #d6d6db;
+  font: 500 11px/1.4 var(--ade-font-mono);
 }
 
-.ade-home-needs-you {
-  padding: 2px 6px;
-  margin: -2px -6px;
-  border: 0;
-  border-radius: var(--ade-radius-sm);
-  background: none;
+.ade-foryou-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  align-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-foryou-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ade-border);
+  border-radius: 14px;
+  background: rgb(16 18 23 / 0.92);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+.ade-foryou-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.ade-foryou-who svg {
+  flex: none;
   color: var(--ade-accent);
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
+}
+
+.ade-foryou-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ade-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-foryou-machine {
+  flex: none;
+  color: var(--ade-text-muted);
+  font: 400 11px/1 var(--ade-font-mono);
+}
+
+.ade-foryou-who .ade-chip {
+  flex: none;
+  margin-left: auto;
+}
+
+.ade-foryou-what {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ade-text);
+  font: 500 15px/1.35 var(--ade-font-sans);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* The whole command, never cut: it wraps, and only a very long one scrolls. */
+.ade-foryou-detail {
+  display: block;
+  max-height: calc(5 * 1.4em + 12px);
+  padding: 6px 8px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.35);
+  color: #e4e4e8;
+  font: 400 12px/1.4 var(--ade-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+.ade-foryou-literal {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ade-foryou-literal .ade-button-quiet {
+  justify-self: start;
+}
+
+/* Exactly what the «Sí» runs: whole, plain text, wrapped; only past the fit rule is it clipped. */
+.ade-foryou-literal-text {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.35);
+  color: #e4e4e8;
+  font: 400 12px/1.4 var(--ade-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ade-foryou-literal-text[data-clipped] {
+  max-height: calc(6 * 1.4em + 12px);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 65%, transparent);
+}
+
+.ade-foryou-card .ade-proposal-facts {
+  font-size: 12.5px;
+}
+
+.ade-foryou-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ade-foryou-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.ade-foryou-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ade-activity-row:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 2px;
+}
+
+.ade-activity {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--ade-border);
+  border-radius: 14px;
+  background: rgb(16 18 23 / 0.92);
+}
+
+.ade-activity h2 {
+  margin: 0;
+  padding: 0;
+  background: none;
+}
+
+.ade-activity ul {
+  display: grid;
+  gap: 2px;
+  margin: 0 -6px;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-activity-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 2px 10px;
+  width: 100%;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ade-text);
+  font: 400 13px/1.3 var(--ade-font-sans);
+  text-align: left;
   cursor: pointer;
 }
 
-.ade-home-needs-you:hover,
-.ade-home-needs-you:focus-visible {
-  background: var(--ade-accent);
-  color: var(--ade-ink);
-  outline: 2px solid var(--ade-accent);
-  outline-offset: 2px;
+.ade-activity-row:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.ade-activity-mark {
+  grid-row: span 2;
+  margin-top: 2px;
+  color: var(--ade-accent);
+}
+
+.ade-activity-title,
+.ade-activity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-activity-meta {
+  grid-column: 2;
+  color: var(--ade-text-muted);
+  font: 400 11px/1.3 var(--ade-font-mono);
+}
+
+.ade-activity-empty {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ade-activity-row {
+    transition: background-color 0.15s ease;
+  }
+}
+
+/* A wide Inicio keeps the composer column and puts what works now beside it, its top on the cards'. */
+@container (min-width: 1180px) {
+  .ade-home-top,
+  .ade-home-inner {
+    grid-template-columns: minmax(0, 760px) 280px;
+    column-gap: 40px;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .ade-home-top > *,
+  .ade-home-inner > * {
+    grid-column: 1;
+  }
+
+  .ade-home-top > .ade-foryou {
+    grid-row: 2 / span 2;
+    grid-template-rows: subgrid;
+  }
+
+  .ade-home-top > .ade-activity {
+    grid-row: 3;
+    grid-column: 2;
+    align-self: start;
+  }
+
+  .ade-home-top:not(:has(.ade-foryou)) > .ade-activity {
+    grid-row: 2;
+  }
 }
 
 .ade-composer.ade-composer-home {
@@ -4962,10 +5226,11 @@ button.ade-subagent:hover .ade-subagent-open {
     padding: 6px 14px 6px 8px;
   }
 
-  .ade-home-needs-you {
-    min-height: 36px;
-    padding: 6px 8px;
-    margin: -6px -8px;
+  .ade-activity-row,
+  .ade-foryou-head .ade-button-quiet,
+  .ade-foryou-card .ade-button,
+  .ade-foryou-card .ade-button-quiet {
+    min-height: 44px;
   }
 
   .ade-new-thread-button {

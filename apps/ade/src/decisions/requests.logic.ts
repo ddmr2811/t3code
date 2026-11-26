@@ -1,5 +1,9 @@
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
-import { pruneResolvedUserInputDrafts } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  pruneResolvedUserInputDrafts,
+  type ThreadPendingApproval,
+  type ThreadPendingUserInput,
+} from "@t3tools/client-runtime/state/thread-requests";
 import type {
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
@@ -129,4 +133,151 @@ export function approvalMayCoverTurn(
     request.requestKind === "command" &&
     request.nativeItemRef?.driver === "acpRegistry"
   );
+}
+
+const QUICK_PICK_MAX_OPTIONS = 4;
+
+/**
+ * What Inicio's «Para ti» can answer in one tap, from the request the tray shows first: a plain
+ * one-time «Sí»/«No», or one pick from a short list. Anything that needs more reading than a
+ * line (wider grants, push hooks, a full-access override, several questions) opens the thread.
+ */
+export function quickAnswer<
+  A extends Pick<
+    ThreadPendingApproval,
+    "responseCapability" | "options" | "pushHooks" | "fullAccessOverride"
+  >,
+  Q extends Pick<ThreadPendingUserInput, "responseCapability" | "questions">,
+>(requests: {
+  readonly approvals: ReadonlyArray<A>;
+  readonly userInputs: ReadonlyArray<Q>;
+}):
+  | { readonly kind: "approval"; readonly approval: A; readonly no: ProviderApprovalDecision }
+  | { readonly kind: "pick"; readonly prompt: Q; readonly question: Q["questions"][number] }
+  | { readonly kind: "open" } {
+  const approval = requests.approvals[0];
+  if (approval !== undefined) {
+    const choices = approvalChoices(approval.options);
+    const no =
+      choices.find((choice) => choice.decision === "decline") ??
+      choices.find((choice) => choice.decision === "cancel");
+    const plain =
+      approval.responseCapability === "live" &&
+      approval.pushHooks === undefined &&
+      approval.fullAccessOverride === undefined &&
+      choices.some((choice) => choice.decision === "accept") &&
+      no !== undefined;
+    return plain ? { kind: "approval", approval, no: no.decision } : { kind: "open" };
+  }
+  const prompt = requests.userInputs[0];
+  const question = prompt?.questions.length === 1 ? prompt.questions[0] : undefined;
+  if (
+    prompt === undefined ||
+    question === undefined ||
+    prompt.responseCapability === "not_resumable" ||
+    question.multiSelect ||
+    question.options.length === 0 ||
+    question.options.length > QUICK_PICK_MAX_OPTIONS
+  ) {
+    return { kind: "open" };
+  }
+  return { kind: "pick", prompt, question };
+}
+
+/** The arguments as they will run, indented when they are JSON; anything else exactly as sent. */
+export function prettyArguments(json: string): string {
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2);
+  } catch {
+    return json;
+  }
+}
+
+const LITERAL_MAX_LINES = 8;
+const LITERAL_MAX_CHARS = 480;
+
+/**
+ * Whether a command or arguments show whole in a «Para ti» card. Past this the card shows the
+ * start with «Ver todo», and its «Sí» waits until the whole text is open.
+ */
+export function literalFits(text: string): boolean {
+  return text.length <= LITERAL_MAX_CHARS && text.split("\n").length <= LITERAL_MAX_LINES;
+}
+
+type BotNoticeInput =
+  | {
+      readonly type: "install";
+      readonly install: { readonly command: string; readonly rollback: string };
+    }
+  | { readonly type: "integration"; readonly request: { readonly arguments: string } }
+  | { readonly type: "proposal"; readonly proposal: { readonly instructions: string } }
+  | {
+      readonly type: "workflow";
+      readonly view: {
+        readonly arguments: string | null;
+        readonly choices: ReadonlyArray<{
+          readonly value: string;
+          readonly requireReason: boolean;
+        }>;
+      };
+    }
+  | { readonly type: "handoff" | "unreadable" };
+
+/**
+ * What a notice's answer rests on, shown literally beside it. Installs, outside-app actions and a
+ * workflow step with arguments cannot be undone from the ADE, so they ask twice; a bot can be
+ * archived. A choice that needs a reason, a cut handoff or an unreadable list opens the panel.
+ */
+export function botQuickAnswer(notice: BotNoticeInput):
+  | {
+      readonly kind: "yes-no";
+      readonly confirm: boolean;
+      readonly literals: ReadonlyArray<{ readonly label: string; readonly text: string }>;
+    }
+  | {
+      readonly kind: "choices";
+      readonly choices: ReadonlyArray<string>;
+      readonly confirm: boolean;
+      readonly literals: ReadonlyArray<{ readonly label: string; readonly text: string }>;
+    }
+  | { readonly kind: "open" } {
+  switch (notice.type) {
+    case "workflow": {
+      const { choices, arguments: args } = notice.view;
+      if (choices.length === 0 || choices.some((choice) => choice.requireReason)) {
+        return { kind: "open" };
+      }
+      return {
+        kind: "choices",
+        choices: choices.map((choice) => choice.value),
+        confirm: args !== null,
+        literals: args === null ? [] : [{ label: "Argumentos exactos", text: args }],
+      };
+    }
+    case "install":
+      return {
+        kind: "yes-no",
+        confirm: true,
+        literals: [
+          { label: "Comando", text: notice.install.command },
+          { label: "Vuelta atrás", text: notice.install.rollback },
+        ],
+      };
+    case "integration":
+      return {
+        kind: "yes-no",
+        confirm: true,
+        literals: [
+          { label: "Argumentos exactos", text: prettyArguments(notice.request.arguments) },
+        ],
+      };
+    case "proposal":
+      return {
+        kind: "yes-no",
+        confirm: false,
+        literals: [{ label: "Instrucciones exactas", text: notice.proposal.instructions }],
+      };
+    default:
+      return { kind: "open" };
+  }
 }
