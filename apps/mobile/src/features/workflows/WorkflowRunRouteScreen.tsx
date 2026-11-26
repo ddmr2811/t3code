@@ -111,6 +111,11 @@ function QuestionCard(props: {
       {view.body === null ? null : (
         <Text className="text-sm text-foreground-secondary">{plain(view.body)}</Text>
       )}
+      {view.arguments === null ? null : (
+        <Text selectable className="font-mono text-xs text-foreground">
+          {view.arguments}
+        </Text>
+      )}
       {view.links.map((link) => (
         <Button
           key={`${link.label}:${link.url}`}

@@ -211,12 +211,22 @@ type BotNoticeInput =
     }
   | { readonly type: "integration"; readonly request: { readonly arguments: string } }
   | { readonly type: "proposal"; readonly proposal: { readonly instructions: string } }
+  | {
+      readonly type: "workflow";
+      readonly view: {
+        readonly arguments: string | null;
+        readonly choices: ReadonlyArray<{
+          readonly value: string;
+          readonly requireReason: boolean;
+        }>;
+      };
+    }
   | { readonly type: "handoff" | "unreadable" };
 
 /**
- * What a bot notice's «Sí» rests on, shown literally beside it. An install and an outside-app
- * action cannot be taken back from the ADE, so their «Sí» asks twice; a created bot can be
- * archived. A cut handoff or an unreadable list has no «Sí»: it opens the panel.
+ * What a notice's answer rests on, shown literally beside it. Installs, outside-app actions and a
+ * workflow step with arguments cannot be undone from the ADE, so they ask twice; a bot can be
+ * archived. A choice that needs a reason, a cut handoff or an unreadable list opens the panel.
  */
 export function botQuickAnswer(notice: BotNoticeInput):
   | {
@@ -224,8 +234,26 @@ export function botQuickAnswer(notice: BotNoticeInput):
       readonly confirm: boolean;
       readonly literals: ReadonlyArray<{ readonly label: string; readonly text: string }>;
     }
+  | {
+      readonly kind: "choices";
+      readonly choices: ReadonlyArray<string>;
+      readonly confirm: boolean;
+      readonly literals: ReadonlyArray<{ readonly label: string; readonly text: string }>;
+    }
   | { readonly kind: "open" } {
   switch (notice.type) {
+    case "workflow": {
+      const { choices, arguments: args } = notice.view;
+      if (choices.length === 0 || choices.some((choice) => choice.requireReason)) {
+        return { kind: "open" };
+      }
+      return {
+        kind: "choices",
+        choices: choices.map((choice) => choice.value),
+        confirm: args !== null,
+        literals: args === null ? [] : [{ label: "Argumentos exactos", text: args }],
+      };
+    }
     case "install":
       return {
         kind: "yes-no",

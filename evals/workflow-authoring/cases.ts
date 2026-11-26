@@ -1,3 +1,4 @@
+// @effect-diagnostics globalJsonInEffect:off - the cases compare small literals.
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -16,7 +17,98 @@ const todos = [
 const SUCCEEDED = JSON.stringify({ status: "succeeded", service: "billing" });
 const FAILED = JSON.stringify({ status: "failed", service: "checkout-api" });
 
+const openIssues = JSON.stringify([
+  { number: 12, title: "Crash on save" },
+  { number: 15, title: "Typo in the docs" },
+]);
+
 export const cases: ReadonlyArray<Case> = [
+  {
+    id: "bot-triage-asks-before-commenting",
+    source:
+      "Fork F4 (26-11-2026): GitHub issue triage done by a bot, its writes through the bot's card and the inbox.",
+    task: [
+      "Write a workflow named `issue-triage` that runs every day at 08:00.",
+      "It reads the open issues of the GitHub repository acme/app as the bot `triaje`.",
+      "The bot `triaje` classifies them, without changing anything, as data shaped `{ issues: [{ number: number, comment: string }] }`.",
+      "Then, for each issue, the bot `triaje` comments the text it proposed on that issue on GitHub. Nothing is commented without the user's yes.",
+    ].join("\n"),
+    scenarios: [
+      {
+        name: "classifies and comments as the bot",
+        read: () => openIssues,
+        agent: () => ({
+          output: {
+            issues: [
+              { number: 12, comment: "Bug: needs a repro." },
+              { number: 15, comment: "Docs: good first issue." },
+            ],
+          },
+        }),
+        check: (world) =>
+          world.server(
+            Effect.fn(function* (workflows) {
+              if (defined(world, "issue-triage") === undefined) return missing("issue-triage");
+              const problems: Array<string> = [];
+              const { runId } = yield* workflows.start(
+                "issue-triage",
+                { scheduledAt: "2026-01-05T08:00:00.000Z" },
+                { idempotencyKey: "a" },
+              );
+              // Each of the two comments waits for a yes in the inbox.
+              for (let answered = 0; answered < 2; answered++) {
+                const question = yield* world.asks(workflows, runId);
+                if (Option.isNone(question)) break;
+                yield* workflows.answer(
+                  runId,
+                  question.value,
+                  { choice: "Sí" },
+                  { label: "ADE", sessionId: "session-1" },
+                );
+              }
+              const ended = yield* world.reaches(
+                workflows,
+                runId,
+                "completed",
+                "paused",
+                "stopped",
+              );
+              if (Option.isNone(ended) || ended.value.status !== "completed") {
+                problems.push(
+                  `The run did not complete: ${Option.getOrUndefined(ended)?.detail ?? "never ended"}`,
+                );
+              }
+              const bots = world.turns.map((turn) => turn.bot);
+              if (bots.length === 0 || bots.some((bot) => bot !== "triaje")) {
+                problems.push(
+                  `Its agent turns did not all go to the bot triaje: ${JSON.stringify(bots)}.`,
+                );
+              }
+              if (world.turns.some((turn) => turn.project !== undefined)) {
+                problems.push("It gave a bot step a project as well.");
+              }
+              const read = world.integrations.find(
+                (call) => /issue/.test(call.action) && /^(list|search)_/.test(call.action),
+              );
+              if (read === undefined) problems.push("It did not read the issues as the bot.");
+              const commented = world.integrations
+                .filter((call) => call.approved && call.action === "add_issue_comment")
+                .map((call) => call.arguments.issue_number)
+                .toSorted();
+              if (JSON.stringify(commented) !== "[12,15]") {
+                problems.push(
+                  `It commented on ${JSON.stringify(commented)} as the bot, not on 12 and 15.`,
+                );
+              }
+              if (world.integrations.some((call) => call.bot.replace(/^@/, "") !== "triaje")) {
+                problems.push("It acted in GitHub as someone other than triaje.");
+              }
+              return problems;
+            }),
+          ),
+      },
+    ],
+  },
   {
     id: "scheduled-agent-then-approval",
     source:

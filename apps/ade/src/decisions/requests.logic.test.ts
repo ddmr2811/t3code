@@ -213,6 +213,40 @@ describe("botQuickAnswer", () => {
     expect(texts(result)).toEqual(["Revisa los PR."]);
   });
 
+  it("answers a workflow question with its own choices, asking twice beside an integration step's exact arguments", () => {
+    const args = '{\n  "text": "Publica <b>esto</b>"\n}';
+    const result = botQuickAnswer({
+      type: "workflow",
+      view: {
+        arguments: args,
+        choices: [
+          { value: "Publicar", requireReason: false },
+          { value: "No publicar", requireReason: false },
+        ],
+      },
+    });
+    expect(result).toEqual({
+      kind: "choices",
+      choices: ["Publicar", "No publicar"],
+      confirm: true,
+      literals: [{ label: expect.any(String), text: args }],
+    });
+  });
+
+  it("opens the panel for a workflow question whose choice needs a reason", () => {
+    const result = botQuickAnswer({
+      type: "workflow",
+      view: {
+        arguments: null,
+        choices: [
+          { value: "Sí", requireReason: false },
+          { value: "No", requireReason: true },
+        ],
+      },
+    });
+    expect(result).toEqual({ kind: "open" });
+  });
+
   it.each(["handoff", "unreadable"] as const)("opens the panel for a %s notice", (type) => {
     expect(botQuickAnswer({ type })).toEqual({ kind: "open" });
   });

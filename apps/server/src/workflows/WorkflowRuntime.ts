@@ -35,6 +35,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { engineTag, text, type WorkflowDefinition } from "./workflow.ts";
 import type * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
+import * as ForkWorkflowAgents from "../fork/workflows/ForkWorkflowAgents.ts";
+import * as ForkWorkflowLink from "../fork/workflows/ForkWorkflowLink.ts";
 import * as WorkflowForge from "./WorkflowForge.ts";
 import * as Workflows from "./Workflows.ts";
 
@@ -968,7 +970,11 @@ export const layer = Layer.effectContext(
           (engine) => (definitions) =>
             engine
               .layer(definitions)
-              .pipe(Layer.provide(WorkflowAgentThreads.layer), Layer.provide(forge)),
+              .pipe(
+                Layer.provide(ForkWorkflowAgents.layer),
+                Layer.provide(WorkflowAgentThreads.layer),
+                Layer.provide(forge),
+              ),
         ),
         where,
         sql`SELECT 1 FROM workflow_runs LIMIT 1`.pipe(
@@ -982,10 +988,12 @@ export const layer = Layer.effectContext(
       Effect.map((current) => current.workflowsEnabled),
       Effect.orElseSucceed(() => false),
     );
-    yield* gated.turn(enabled);
+    // Fork: the engine runs only while the fork's bots are up.
+    const turn = yield* ForkWorkflowLink.gateTurn(gated.turn);
+    yield* turn(enabled);
     yield* changes.pipe(
       Stream.map((current) => current.workflowsEnabled),
-      Stream.runForEach(gated.turn),
+      Stream.runForEach(turn),
       Effect.forkScoped,
     );
     return gated.context;

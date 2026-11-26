@@ -97,7 +97,7 @@ export function ForYou(props: { onOpenThread: (threadKey: string) => void }) {
               <li key={entry.key} className="ade-foryou-card">
                 <Who
                   bot={notice.from?.handle ?? null}
-                  name="Bots"
+                  name={notice.type === "workflow" ? (notice.open.workflow ?? "Flujo") : "Bots"}
                   machine={machineOf(notice.environmentId)}
                   chip={notice.label}
                   kind="approval"

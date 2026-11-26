@@ -6,6 +6,8 @@ import { useContext, useEffect, useRef } from "react";
 
 import { environmentShell } from "../connection/runtime.ts";
 import { operableEnvironmentIdsAtom } from "../state.ts";
+import { workflowQuestionKey, workflowQuestionsAtom } from "./workflowQuestions.ts";
+import { readWorkflowQuestion } from "@t3tools/client-runtime/workflows";
 import {
   advancePendingNotificationState,
   buildPendingNotificationEvent,
@@ -134,42 +136,88 @@ export function usePendingTrayNotifications(
     seenByEnvRef.current = nextSeenByEnv;
     const event = buildPendingNotificationEvent(newlyPending);
     if (event === null) return;
-
-    for (const listener of listeners) {
-      try {
-        listener(event);
-      } catch {
-        // One failing subscriber must not break the tray or other listeners.
-      }
-    }
-
-    if (
-      alertsEnabled &&
-      typeof window !== "undefined" &&
-      typeof window.Notification !== "undefined" &&
-      window.Notification.permission === "granted"
-    ) {
-      try {
-        const notification = new window.Notification(event.title, {
-          body: event.body,
-          tag: "ade-pending-tray",
-        });
-        const targetKey = event.threadKeys[0];
-        if (targetKey !== undefined) {
-          notification.onclick = () => {
-            window.focus();
-            onFocusRef.current?.(targetKey);
-            notification.close();
-          };
-        }
-      } catch {
-        // Mobile browsers such as Android Chrome reject direct `new Notification()` without a SW.
-        registry.set(pendingAlertsEnabledAtom, false);
-        registry.set(
-          pendingAlertsErrorAtom,
-          "Este navegador no permite notificaciones directas desde la pestaña.",
-        );
-      }
-    }
+    sendAlert(registry, alertsEnabled, event, () => {
+      const targetKey = event.threadKeys[0];
+      if (targetKey !== undefined) onFocusRef.current?.(targetKey);
+    });
   }, [alertsEnabled, hydratedEnvironmentIds, items, registry]);
+}
+
+/** Tells the listeners, and the browser when the user opted in. */
+function sendAlert(
+  registry: AtomRegistry.AtomRegistry,
+  alertsEnabled: boolean,
+  event: PendingTrayNotificationEvent,
+  onClick: () => void,
+) {
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch {
+      // One failing subscriber must not break the tray or other listeners.
+    }
+  }
+
+  if (
+    alertsEnabled &&
+    typeof window !== "undefined" &&
+    typeof window.Notification !== "undefined" &&
+    window.Notification.permission === "granted"
+  ) {
+    try {
+      const notification = new window.Notification(event.title, {
+        body: event.body,
+        tag: "ade-pending-tray",
+      });
+      notification.onclick = () => {
+        window.focus();
+        onClick();
+        notification.close();
+      };
+    } catch {
+      // Mobile browsers such as Android Chrome reject direct `new Notification()` without a SW.
+      registry.set(pendingAlertsEnabledAtom, false);
+      registry.set(
+        pendingAlertsErrorAtom,
+        "Este navegador no permite notificaciones directas desde la pestaña.",
+      );
+    }
+  }
+}
+
+/**
+ * A workflow run that pauses for a person alerts like a thread that waits, once its machine's
+ * list has arrived. `onOpen` brings up the tray, where the question is answered.
+ */
+export function useWorkflowQuestionNotifications(onOpen: () => void) {
+  const registry = useContext(RegistryContext);
+  const alertsEnabled = useAtomValue(pendingAlertsEnabledAtom);
+  const { questions, loaded } = useAtomValue(workflowQuestionsAtom);
+  const seenByEnvRef = useRef<PendingSeenByEnvironment>(new Map());
+  const onOpenRef = useRef(onOpen);
+
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
+
+  useEffect(() => {
+    const { nextSeenByEnv, newlyPending } = advancePendingNotificationState(seenByEnvRef.current, {
+      items: questions.map((open) => ({ ...open, key: workflowQuestionKey(open) })),
+      hydratedEnvironmentIds: loaded,
+    });
+    seenByEnvRef.current = nextSeenByEnv;
+    const first = newlyPending[0];
+    if (first === undefined) return;
+    const event: PendingTrayNotificationEvent = {
+      id: newlyPending.map((item) => item.key).join("|"),
+      count: newlyPending.length,
+      title:
+        newlyPending.length === 1
+          ? "Un flujo espera tu respuesta"
+          : `${newlyPending.length} flujos esperan tu respuesta`,
+      body: readWorkflowQuestion(first.question).title,
+      threadKeys: [],
+    };
+    sendAlert(registry, alertsEnabled, event, () => onOpenRef.current());
+  }, [alertsEnabled, loaded, questions, registry]);
 }

@@ -25,3 +25,5 @@ export {
   workflow,
 } from "./workflow.ts";
 export { agent, ask } from "./workflowAgent.ts";
+// Fork: a code step that acts in an outside app as one of the bots.
+export { integration } from "../fork/workflows/integration.ts";

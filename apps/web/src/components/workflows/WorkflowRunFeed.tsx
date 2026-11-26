@@ -1968,6 +1968,11 @@ function WorkflowQuestionCard({
       {view.body ? (
         <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-sm" />
       ) : null}
+      {view.arguments === null ? null : (
+        <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted px-2 py-1.5 font-mono text-xs">
+          {view.arguments}
+        </pre>
+      )}
       {view.links.length === 0 ? null : (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {view.links.map((link) => (

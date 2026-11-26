@@ -25,8 +25,18 @@ import * as WorkflowEngine from "../../apps/server/src/workflows/WorkflowEngine.
 import { loadDefinitions } from "../../apps/server/src/workflows/WorkflowRuntime.ts";
 import * as Workflows from "../../apps/server/src/workflows/Workflows.ts";
 import type { WorkflowRun } from "../../apps/server/src/workflows/WorkflowStore.ts";
+import { ForkWorkflowLink } from "../../apps/server/src/fork/workflows/ForkWorkflowLink.ts";
 
 export type AgentTurnInput = Parameters<WorkflowAgents["Service"]["start"]>[0];
+
+/** An outside-app call a workflow made as a bot, and whether a person had said yes to it. */
+export interface IntegrationCall {
+  readonly bot: string;
+  readonly app: string;
+  readonly action: string;
+  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly approved: boolean;
+}
 
 /**
  * One server holding the file's workflows. Each `server` call is one lifetime of it: the file
@@ -36,6 +46,8 @@ export interface World {
   readonly definitions: ReadonlyArray<WorkflowDefinition>;
   /** Every agent turn the workflows asked for, in order. */
   readonly turns: ReadonlyArray<AgentTurnInput>;
+  /** Every outside-app call made as a bot. Reads run; writes ask the user first. */
+  readonly integrations: ReadonlyArray<IntegrationCall>;
   readonly server: <A>(
     use: (workflows: Workflows.Workflows["Service"]) => Effect.Effect<A, Workflows.WorkflowError>,
   ) => Effect.Effect<A, Workflows.WorkflowError>;
@@ -61,6 +73,8 @@ export interface Case {
   readonly scenarios: ReadonlyArray<{
     readonly name: string;
     readonly agent: (turn: AgentTurnInput) => Partial<AgentResult>;
+    /** What a read through `integration` answers. */
+    readonly read?: (call: IntegrationCall) => string;
     /** The problems found. None is a pass. */
     readonly check: (world: World) => Effect.Effect<ReadonlyArray<string>, Workflows.WorkflowError>;
   }>;
@@ -73,6 +87,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   file: string,
   definitions: ReadonlyArray<WorkflowDefinition>,
   agent: (turn: AgentTurnInput) => Partial<AgentResult>,
+  read: (call: IntegrationCall) => string = () => "[]",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -113,9 +128,30 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
       return yield* Effect.succeed("ended" as const);
     }),
   });
+  const integrations: Array<IntegrationCall> = [];
+  const link = Layer.succeed(ForkWorkflowLink, {
+    current: {
+      workflowTurn: () => Effect.die("Bot turns go through WorkflowAgents in this eval."),
+      wasBotThread: () => Effect.succeed(false),
+      // A bot's id here is its handle, so a yes names the same bot its question did.
+      callAsBot: (who, input, approved) =>
+        Effect.sync(() => {
+          const bot = "id" in who ? who.id : who.handle;
+          const { app, action } = input;
+          const call = { bot, app, action, arguments: input.arguments, approved };
+          integrations.push(call);
+          const reads = /^(get|list|search)_|_read$/.test(input.action);
+          if (reads) return { status: "done" as const, text: read(call) };
+          return approved
+            ? { status: "done" as const, text: "{}" }
+            : { status: "ask" as const, text: "{}", botId: bot };
+        }),
+    },
+  });
   const engine = (loaded: ReadonlyArray<WorkflowDefinition>) =>
     WorkflowEngine.layer(loaded).pipe(
       Layer.provide(Layer.succeed(WorkflowAgents, agents)),
+      Layer.provide(link),
       Layer.provide(database),
       Layer.provide(NodeCrypto.layer),
       Layer.orDie,
@@ -123,6 +159,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   return {
     definitions,
     turns,
+    integrations,
     server: (use) =>
       loadDefinitions(file, ++lifetimes).pipe(
         Effect.orDie,
@@ -156,7 +193,7 @@ const problemsWith = Effect.fn("gradeWorkflow.problemsWith")(function* (file: st
   }
   const problems: Array<string> = [];
   for (const scenario of entry.scenarios) {
-    const found = yield* world(file, loaded.success, scenario.agent).pipe(
+    const found = yield* world(file, loaded.success, scenario.agent, scenario.read).pipe(
       Effect.flatMap(scenario.check),
       Effect.scoped,
       Effect.catch((error) => Effect.succeed([error.message])),

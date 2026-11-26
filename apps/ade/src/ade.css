@@ -5218,6 +5218,7 @@ button.ade-subagent:hover .ade-subagent-open {
   }
 
   .ade-activity-row,
+  .ade-foryou-head .ade-button-quiet,
   .ade-foryou-card .ade-button,
   .ade-foryou-card .ade-button-quiet {
     min-height: 44px;

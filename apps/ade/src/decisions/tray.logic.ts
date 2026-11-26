@@ -110,17 +110,19 @@ export function filterPendingItems<T extends PendingThreadInput>(
  * Tracks initial hydration independently per enabled machine: a machine's first snapshot seeds its
  * baseline without emitting notifications, and only keys arriving after that snapshot trigger alerts.
  */
-export function advancePendingNotificationState<T extends PendingThreadInput>(
+export function advancePendingNotificationState<
+  I extends { readonly key: string; readonly environmentId: EnvironmentId },
+>(
   seenByEnv: PendingSeenByEnvironment,
   input: {
-    readonly items: ReadonlyArray<PendingTrayItem<T>>;
+    readonly items: ReadonlyArray<I>;
     readonly hydratedEnvironmentIds: ReadonlySet<EnvironmentId>;
   },
 ): {
   readonly nextSeenByEnv: PendingSeenByEnvironment;
-  readonly newlyPending: ReadonlyArray<PendingTrayItem<T>>;
+  readonly newlyPending: ReadonlyArray<I>;
 } {
-  const itemsByEnv = new Map<EnvironmentId, PendingTrayItem<T>[]>();
+  const itemsByEnv = new Map<EnvironmentId, I[]>();
   for (const item of input.items) {
     const list = itemsByEnv.get(item.environmentId);
     if (list === undefined) itemsByEnv.set(item.environmentId, [item]);
@@ -128,7 +130,7 @@ export function advancePendingNotificationState<T extends PendingThreadInput>(
   }
 
   const nextSeenByEnv = new Map<EnvironmentId, ReadonlySet<string>>();
-  const newlyPending: PendingTrayItem<T>[] = [];
+  const newlyPending: I[] = [];
 
   for (const environmentId of input.hydratedEnvironmentIds) {
     const currentItems = itemsByEnv.get(environmentId) ?? [];

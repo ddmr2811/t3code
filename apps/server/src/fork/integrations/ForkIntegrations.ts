@@ -21,6 +21,7 @@ import {
   MessageId,
   type ThreadId,
   integrationLevel,
+  isRuntimeModeAbove,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -41,6 +42,7 @@ import {
   type DispatchModes,
 } from "../../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkBots from "../bots/ForkBots.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
 import {
@@ -122,8 +124,29 @@ export class ForkIntegrations extends Context.Service<
         readonly arguments: Args;
       },
     ) => Effect.Effect<IntegrationCallResult, ForkIntegrationsError>;
+    /**
+     * A workflow's code step acting as a bot, never above what its card and the managed ceiling
+     * allow. What would ask the user comes back as `ask` until `approved` says a person said yes;
+     * a yes names the bot by the id its question was asked for, never by a handle reassigned since.
+     */
+    readonly callAsBot: (
+      bot: { readonly handle: string } | { readonly id: string },
+      input: {
+        readonly app: ForkIntegrationApp;
+        readonly action: string;
+        readonly arguments: Args;
+      },
+      approved: boolean,
+    ) => Effect.Effect<WorkflowIntegrationResult, ForkIntegrationsError>;
   }
 >()("t3/fork/integrations/ForkIntegrations") {}
+
+export interface WorkflowIntegrationResult {
+  readonly status: "done" | "failed" | "denied" | "ask";
+  readonly text: string;
+  /** On `ask`: the bot the question is for. */
+  readonly botId?: string;
+}
 
 interface CatalogTool {
   readonly name: string;
@@ -152,7 +175,7 @@ const fail = (reason: ForkIntegrationsError["reason"], message: string) =>
   new ForkIntegrationsError({ reason, message });
 
 /** The same arguments always give the same text, whatever order their keys came in. */
-function sortKeys(value: unknown): unknown {
+export function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
@@ -213,6 +236,7 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
   };
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const forkBots = yield* ForkBots.ForkBots;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const store = yield* makeForkJsonFileStore({
@@ -706,7 +730,59 @@ const make = Effect.fn("ForkIntegrations.make")(function* (options: ForkIntegrat
     return finished ?? decided;
   });
 
-  return ForkIntegrations.of({ list, connect, answer, search, call });
+  const callAsBot: ForkIntegrations["Service"]["callAsBot"] = Effect.fn(
+    "ForkIntegrations.callAsBot",
+  )(function* (who, input, approved) {
+    const { bots } = yield* forkBots
+      .list({})
+      .pipe(Effect.mapError((error) => fail("unavailable", error.message)));
+    const bot = bots.find((candidate) =>
+      "id" in who
+        ? candidate.id === who.id
+        : candidate.handle.toLowerCase() === who.handle.replace(/^@/, "").toLowerCase(),
+    );
+    if (bot === undefined || bot.archived) {
+      if ("id" in who) {
+        return { status: "denied" as const, text: "The bot that asked is gone, so nothing ran." };
+      }
+      return yield* fail("notFound", `No active bot uses the handle @${who.handle}.`);
+    }
+    const { app, action } = input;
+    const classified = apps[app].classify(action, input.arguments);
+    const level =
+      classified === undefined ? "deny" : integrationLevel(bot.integrations, app, classified.group);
+    if (classified === undefined || level === "deny") {
+      return {
+        status: "denied" as const,
+        text: `@${bot.handle} is not allowed to use ${app}/${action}.`,
+      };
+    }
+    // The same rule as `call`, with the bot's own modes as the caller's. A card saved before the
+    // administrator lowered the ceiling is read under it.
+    const ceiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
+    const runtimeMode =
+      ceiling !== undefined && isRuntimeModeAbove(bot.runtimeMode, ceiling)
+        ? ceiling
+        : bot.runtimeMode;
+    const unasked =
+      level === "allow" &&
+      !classified.alwaysAsk &&
+      (classified.reads || actsOutsideWithoutApproval({ runtimeMode, interactionMode: "default" }));
+    if (!unasked && !approved) {
+      const refusal = yield* refusalOf(app, action, input.arguments);
+      if (refusal !== undefined) return { status: "denied" as const, text: refusal };
+      return {
+        status: "ask" as const,
+        text: JSON.stringify(sortKeys(input.arguments)),
+        botId: bot.id,
+      };
+    }
+    const outcome = yield* run(app, action, input.arguments);
+    if ("refused" in outcome) return { status: "denied" as const, text: outcome.refused };
+    return { status: outcome.failed ? ("failed" as const) : ("done" as const), text: outcome.text };
+  });
+
+  return ForkIntegrations.of({ list, connect, answer, search, call, callAsBot });
 });
 
 export const layerWith = (options: ForkIntegrationsOptions) =>

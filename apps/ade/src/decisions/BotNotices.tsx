@@ -11,6 +11,7 @@ import {
   type ForkGap,
   type ForkGapInstall,
   type ForkIntegrationRequest,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { Fragment, type ReactNode, useContext, useState } from "react";
@@ -35,6 +36,12 @@ import { availableMachineModelOptions } from "../failover/failover.logic.ts";
 import { environmentProjects, environmentThreadShells, serverEnvironment } from "../state.ts";
 import { focusTrayFrom } from "./Requests.tsx";
 import { botQuickAnswer, literalFits, prettyArguments } from "./requests.logic.ts";
+import { readWorkflowQuestion } from "@t3tools/client-runtime/workflows";
+import {
+  type OpenWorkflowQuestion,
+  workflowQuestionKey,
+  workflowQuestionsAtom,
+} from "./workflowQuestions.ts";
 
 export type BotNotice = {
   readonly key: string;
@@ -55,6 +62,7 @@ export type BotNotice = {
       readonly request: ForkIntegrationRequest;
       readonly from?: ForkBot;
     }
+  | { readonly type: "workflow"; readonly open: OpenWorkflowQuestion; readonly from?: ForkBot }
   // An install nobody can see is one nobody can refuse, so a failed read waits here too.
   | { readonly type: "unreadable"; readonly from?: ForkBot }
 );
@@ -67,6 +75,7 @@ export type BotNotice = {
 export function useBotNotices(): ReadonlyArray<BotNotice> {
   const { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, gapErrors } = useAtomValue(allBotsAtom);
   const pendingRequests = useAtomValue(pendingIntegrationRequestsAtom);
+  const { questions } = useAtomValue(workflowQuestionsAtom);
   const botOf = (environmentId: EnvironmentId, id: string) =>
     (byEnv.get(environmentId) ?? []).find((bot) => bot.id === id);
   const handoffs = [...handoffsByEnv].flatMap(([environmentId, list]) =>
@@ -141,7 +150,16 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
       ...(from === undefined ? {} : { from }),
     };
   });
-  return [...unreadable, ...installs, ...integrations, ...proposals, ...handoffs];
+  // A workflow's pause for a person waits here, not in a list of its own.
+  const workflows = questions.map((open): BotNotice => ({
+    key: workflowQuestionKey(open),
+    type: "workflow",
+    label: "Flujo",
+    title: readWorkflowQuestion(open.question).title,
+    environmentId: open.environmentId,
+    open,
+  }));
+  return [...unreadable, ...installs, ...integrations, ...workflows, ...proposals, ...handoffs];
 }
 
 // What this ADE is sending for each notice and why the last try failed, shared by the decisions
@@ -149,12 +167,36 @@ export function useBotNotices(): ReadonlyArray<BotNotice> {
 const botSendingAtom = Atom.make<ReadonlyMap<string, true>>(new Map()).pipe(Atom.keepAlive);
 const botErrorsAtom = Atom.make<ReadonlyMap<string, string>>(new Map()).pipe(Atom.keepAlive);
 
+/** A «Sí» or «No», or a workflow question's choice with its reason ("" for none). */
+type BotAnswer = boolean | { readonly choice: string; readonly reason: string };
+
 const botAnswerRun = (
   registry: AtomRegistry.AtomRegistry,
   notice: BotNotice,
-  yes: boolean,
+  answer: BotAnswer,
 ): (() => Promise<string | null>) | null => {
   const { environmentId } = notice;
+  if (notice.type === "workflow") {
+    if (typeof answer === "boolean") return null;
+    const { question } = notice.open;
+    return () =>
+      runCommand(
+        registry,
+        serverEnvironment.answerWorkflowQuestion,
+        {
+          environmentId,
+          input: {
+            runId: question.runId,
+            name: question.name,
+            choice: answer.choice,
+            ...(answer.reason === "" ? {} : { reason: answer.reason }),
+          },
+        },
+        "No se pudo enviar tu respuesta",
+      );
+  }
+  if (typeof answer !== "boolean") return null;
+  const yes = answer;
   switch (notice.type) {
     case "integration":
       return () =>
@@ -199,9 +241,9 @@ const botAnswerRun = (
 async function answerBotNotice(
   registry: AtomRegistry.AtomRegistry,
   notice: BotNotice,
-  yes: boolean,
+  answer: BotAnswer,
 ) {
-  const run = botAnswerRun(registry, notice, yes);
+  const run = botAnswerRun(registry, notice, answer);
   const { key, environmentId } = notice;
   if (run === null || registry.get(botSendingAtom).has(key)) return;
   registry.update(botSendingAtom, (current) => new Map(current).set(key, true));
@@ -277,6 +319,30 @@ export function BotNotices(props: {
                     scopedThreadKey(scopeThreadRef(environmentId, from.threadId!)),
                   ),
         };
+        if (notice.type === "workflow") {
+          const { question } = notice.open;
+          const thread = question.thread;
+          return (
+            <WorkflowNotice
+              key={key}
+              {...common}
+              open={notice.open}
+              onOpen={
+                // A thread on another machine than the run's opens nothing here.
+                thread === null ||
+                (thread.environmentId !== null && thread.environmentId !== environmentId)
+                  ? null
+                  : () =>
+                      props.onOpenBackLayer(
+                        scopedThreadKey(scopeThreadRef(environmentId, thread.threadId as ThreadId)),
+                      )
+              }
+              onAnswer={(choice, reason) =>
+                void answerBotNotice(registry, notice, { choice, reason })
+              }
+            />
+          );
+        }
         if (notice.type === "integration") {
           return (
             <IntegrationNotice
@@ -647,6 +713,97 @@ function IntegrationNotice(
   );
 }
 
+/**
+ * A run's question, answered with one of its choices. Every choice is the user's decision, so
+ * none is pressed by an agent without confirmation. Arguments an integration step will use are
+ * shown exactly, never rendered as markup.
+ */
+function WorkflowNotice(
+  props: NoticeProps & {
+    open: OpenWorkflowQuestion;
+    onAnswer: (choice: string, reason: string) => void;
+  },
+) {
+  const canAnswer = useAtomValue(
+    serverEnvironment.answerWorkflowQuestion.permissionAtom(props.environmentId),
+  );
+  const [reason, setReason] = useState("");
+  const view = readWorkflowQuestion(props.open.question);
+  const disabled = canAnswer !== true || props.sending;
+  const needsReason = view.choices.some((choice) => choice.requireReason);
+  return (
+    <NoticeFrame
+      {...props}
+      label="Flujo"
+      context={props.open.workflow ?? "Workflows"}
+      openLabel="Abrir el hilo del flujo"
+      actions={
+        <>
+          {view.choices.map((choice, index) => (
+            <button
+              key={choice.value}
+              type="button"
+              className={index === 0 ? "ade-button" : "ade-button-quiet"}
+              data-agent-confirm
+              onClick={(event) => {
+                focusTrayFrom(event.currentTarget);
+                props.onAnswer(choice.value, reason.trim());
+              }}
+              disabled={disabled || (choice.requireReason && reason.trim() === "")}
+            >
+              {props.sending && index === 0 ? "Enviando…" : choice.value}
+            </button>
+          ))}
+        </>
+      }
+    >
+      {view.body === null ? null : <p className="ade-request-note">{view.body}</p>}
+      {view.arguments === null ? null : (
+        <div className="ade-proposal-instructions">
+          <p className="ade-request-note">Argumentos exactos</p>
+          <pre>{view.arguments}</pre>
+        </div>
+      )}
+      {view.choices.some((choice) => choice.description !== null) ? (
+        <dl className="ade-proposal-facts">
+          {view.choices
+            .filter((choice) => choice.description !== null)
+            .map((choice) => (
+              <Fragment key={choice.value}>
+                <dt>{choice.value}</dt>
+                <dd>{choice.description}</dd>
+              </Fragment>
+            ))}
+        </dl>
+      ) : null}
+      {view.links.map((link) => (
+        <a
+          key={link.url}
+          className="ade-request-note"
+          href={link.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {link.label}
+        </a>
+      ))}
+      {needsReason ? (
+        <label className="ade-request-note grid gap-1">
+          Motivo (algunas respuestas lo piden)
+          <input
+            className="box-border w-full min-w-0 rounded-sm border border-border bg-background px-2.5 py-2 text-[13px] text-foreground max-[720px]:min-h-11"
+            value={reason}
+            onChange={(event) => setReason(event.currentTarget.value)}
+          />
+        </label>
+      ) : null}
+      <p className="ade-request-note">
+        El flujo está en pausa hasta que respondas; tu respuesta lo reanuda.
+      </p>
+    </NoticeFrame>
+  );
+}
+
 function HandoffNotice(
   props: NoticeProps & { preview: string; hops: number; onDismiss: () => void },
 ) {
@@ -704,8 +861,8 @@ function Literal(props: { label: string; text: string; open: boolean; onOpen: ()
 }
 
 /**
- * Inicio's card body for a bot notice: «Sí»/«No» beside the exact text its «Sí» rests on, sent
- * as the panel sends it. Never a «Sí» while part of that text is hidden.
+ * Inicio's card body for a bot notice: its «Sí»/«No», or a workflow question's choices, beside the
+ * exact text they rest on, sent as the panel sends them. Never an answer while that text hides.
  */
 export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void }) {
   const { notice } = props;
@@ -717,6 +874,7 @@ export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void })
     install: useAtomValue(forkGapsAnswerInstallCommand.permissionAtom(environmentId)),
     integration: useAtomValue(forkIntegrationsAnswerCommand.permissionAtom(environmentId)),
     proposal: useAtomValue(forkBotsAnswerProposalCommand.permissionAtom(environmentId)),
+    workflow: useAtomValue(serverEnvironment.answerWorkflowQuestion.permissionAtom(environmentId)),
   };
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   // The server refuses an install's yes while its bot works, as the panel says.
@@ -729,8 +887,13 @@ export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void })
     (thread) => thread?.runtime?.activeRunId != null,
   );
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
-  const [armed, setArmed] = useState(false);
-  const quick = botQuickAnswer(notice);
+  // The answer a first click armed, when it asks twice.
+  const [armed, setArmed] = useState<string | null>(null);
+  const view = notice.type === "workflow" ? readWorkflowQuestion(notice.open.question) : null;
+  const quick =
+    notice.type === "workflow"
+      ? botQuickAnswer({ type: "workflow", view: view! })
+      : botQuickAnswer(notice);
 
   const open = (
     <button type="button" className="ade-button-quiet ade-foryou-open" onClick={props.onOpen}>
@@ -748,59 +911,66 @@ export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void })
   }
 
   const facts: ReadonlyArray<readonly [string, string]> =
-    notice.type === "install"
-      ? [
-          ["Le falta", notice.gap.name],
-          [
-            "Qué toca",
-            notice.install.scope === "system"
-              ? "El sistema de esta máquina, fuera del proyecto"
-              : "Solo el proyecto",
-          ],
-        ]
-      : notice.type === "integration"
+    notice.type === "workflow"
+      ? (view?.choices ?? []).flatMap((choice) =>
+          choice.description === null ? [] : [[choice.value, choice.description] as const],
+        )
+      : notice.type === "install"
         ? [
-            ["Acción", notice.request.action],
-            ["Permiso", INTEGRATION_GROUP_LABELS[notice.request.group] ?? notice.request.group],
-          ]
-        : [
-            ["Rol", notice.proposal.role],
-            ["Rutina", notice.proposal.routine],
+            ["Le falta", notice.gap.name],
             [
-              "Modelo",
-              (() => {
-                const { instanceId, model } = notice.proposal.modelSelection;
-                const option = availableMachineModelOptions(config).find(
-                  (candidate) => candidate.instanceId === instanceId && candidate.model === model,
-                );
-                return option === undefined
-                  ? model
-                  : `${option.providerLabel} · ${option.modelName}`;
-              })(),
+              "Qué toca",
+              notice.install.scope === "system"
+                ? "El sistema de esta máquina, fuera del proyecto"
+                : "Solo el proyecto",
             ],
-            ["Permisos", RUNTIME_MODE_TEXT[notice.proposal.runtimeMode]],
-          ];
+          ]
+        : notice.type === "integration"
+          ? [
+              ["Acción", notice.request.action],
+              ["Permiso", INTEGRATION_GROUP_LABELS[notice.request.group] ?? notice.request.group],
+            ]
+          : [
+              ["Rol", notice.proposal.role],
+              ["Rutina", notice.proposal.routine],
+              [
+                "Modelo",
+                (() => {
+                  const { instanceId, model } = notice.proposal.modelSelection;
+                  const option = availableMachineModelOptions(config).find(
+                    (candidate) => candidate.instanceId === instanceId && candidate.model === model,
+                  );
+                  return option === undefined
+                    ? model
+                    : `${option.providerLabel} · ${option.modelName}`;
+                })(),
+              ],
+              ["Permisos", RUNTIME_MODE_TEXT[notice.proposal.runtimeMode]],
+            ];
   const allShown = quick.literals.every(
     (literal) => opened.has(literal.label) || literalFits(literal.text),
   );
-  const disabled = permissions[notice.type] !== true || sending;
-  const yes = () => {
+  const disabled = permissions[notice.type] !== true || sending || !allShown;
+  const choose = (armedAs: string, answer: BotAnswer) => {
     if (!allShown) return;
-    if (quick.confirm && !armed) return setArmed(true);
-    void answerBotNotice(registry, notice, true);
+    if (quick.confirm && armed !== armedAs) return setArmed(armedAs);
+    void answerBotNotice(registry, notice, answer);
   };
 
   return (
     <>
       <p className="ade-foryou-what">{notice.title}</p>
-      <dl className="ade-proposal-facts">
-        {facts.map(([term, value]) => (
-          <Fragment key={term}>
-            <dt>{term}</dt>
-            <dd>{value}</dd>
-          </Fragment>
-        ))}
-      </dl>
+      {view?.body == null ? null : <p className="ade-foryou-note">{view.body}</p>}
+      {facts.length === 0 ? null : (
+        <dl className="ade-proposal-facts">
+          {facts.map(([term, value]) => (
+            <Fragment key={term}>
+              <dt>{term}</dt>
+              <dd>{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
       {quick.literals.map((literal) => (
         <Literal
           key={literal.label}
@@ -817,37 +987,51 @@ export function QuickBotNotice(props: { notice: BotNotice; onOpen: () => void })
             : `Vale una vez. El bot lo ejecutará sin volver a preguntar: su hilo va en «${RUNTIME_MODE_TEXT[notice.install.runtimeMode]}».`}
         </p>
       ) : null}
-      {allShown ? null : (
-        <p className="ade-foryou-note">Abre «Ver todo» para poder decir que sí.</p>
-      )}
-      {armed && !sending ? (
+      {allShown ? null : <p className="ade-foryou-note">Abre «Ver todo» para poder contestar.</p>}
+      {armed !== null && !sending ? (
         <p className="ade-foryou-note" role="status">
-          No se puede deshacer desde aquí: pulsa «Confirmar sí».
+          No se puede deshacer desde aquí: pulsa otra vez para confirmar.
         </p>
       ) : null}
       <div className="ade-foryou-actions">
-        <button
-          type="button"
-          className="ade-button"
-          disabled={disabled || !allShown || busy}
-          onClick={yes}
-        >
-          {sending
-            ? "Enviando…"
-            : busy
-              ? "Espera a que el bot termine"
-              : armed
-                ? "Confirmar sí"
-                : "Sí"}
-        </button>
-        <button
-          type="button"
-          className="ade-button-quiet"
-          disabled={disabled}
-          onClick={() => void answerBotNotice(registry, notice, false)}
-        >
-          No
-        </button>
+        {quick.kind === "choices" ? (
+          quick.choices.map((choice, index) => (
+            <button
+              key={choice}
+              type="button"
+              className={index === 0 ? "ade-button" : "ade-button-quiet"}
+              disabled={disabled}
+              onClick={() => choose(choice, { choice, reason: "" })}
+            >
+              {sending ? "Enviando…" : armed === choice ? `Confirmar «${choice}»` : choice}
+            </button>
+          ))
+        ) : (
+          <>
+            <button
+              type="button"
+              className="ade-button"
+              disabled={disabled || busy}
+              onClick={() => choose("sí", true)}
+            >
+              {sending
+                ? "Enviando…"
+                : busy
+                  ? "Espera a que el bot termine"
+                  : armed === "sí"
+                    ? "Confirmar sí"
+                    : "Sí"}
+            </button>
+            <button
+              type="button"
+              className="ade-button-quiet"
+              disabled={permissions[notice.type] !== true || sending}
+              onClick={() => void answerBotNotice(registry, notice, false)}
+            >
+              No
+            </button>
+          </>
+        )}
         {open}
       </div>
       {error === null ? null : (
