@@ -273,10 +273,30 @@ export function acpReadLeavesRoots(
   readRoots: ReadonlyArray<string>,
 ): boolean {
   const kind = request.toolCall.kind;
-  return (
+  if (
     (kind === "read" || kind === "search") &&
     !acpPathsStayWithinRoots(runtimePolicy, readRoots, acpChangedPathsOfToolCall(request.toolCall))
-  );
+  ) {
+    return true;
+  }
+  // A copy reads its source, which its changed paths leave out.
+  const copied = acpCopySourcesOfToolCall(request.toolCall);
+  return copied.length > 0 && !acpPathsStayWithinRoots(runtimePolicy, readRoots, copied);
+}
+
+/** The sources of a tool call's copies; one policy cannot check makes them all unknown. */
+function acpCopySourcesOfToolCall(toolCall: { readonly content?: unknown }): AcpChangedPaths {
+  if (!Array.isArray(toolCall.content)) return [];
+  const sources = toolCall.content.flatMap((value) => {
+    const changes = unknownRecord(value)?.changes;
+    return Array.isArray(changes)
+      ? changes.flatMap((change) => {
+          const record = unknownRecord(change);
+          return record?.operation === "copy" ? [acpCheckablePath(record.oldPath)] : [];
+        })
+      : [];
+  });
+  return sources.every((source) => source !== undefined) ? sources : "unknown";
 }
 
 function acpOperationDisposition(

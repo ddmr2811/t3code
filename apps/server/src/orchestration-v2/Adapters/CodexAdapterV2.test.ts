@@ -4798,6 +4798,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "session-approval-turn-1",
         "session-approval-turn-2",
         "session-approval-turn-3",
+        "session-approval-turn-4",
       ];
       const turnPolicies = {
         "approval-required": {
@@ -4810,8 +4811,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
         },
+        // Fork: a delegated task runs read-only and never asks.
+        delegated: {
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+          sandboxPolicy: { type: "readOnly" },
+        },
       } as const;
-      const turnModes = ["approval-required", "full-access", "approval-required"] as const;
+      const turnModes = [
+        "approval-required",
+        "full-access",
+        "approval-required",
+        "approval-required",
+      ] as const;
+      const turnPolicyOf = (index: number) =>
+        turnPolicies[index === 3 ? "delegated" : turnModes[index]!];
       const turnText = (index: number) => `Review round ${index + 1}.`;
       const startTurn = (index: number): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
         {
@@ -4825,7 +4839,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               input: [{ type: "text", text: turnText(index) }],
               cwd: "/workspace",
               model: "gpt-5.4",
-              ...turnPolicies[turnModes[index]!],
+              ...turnPolicyOf(index),
               summary: "auto",
               collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
             },
@@ -4927,7 +4941,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             turnId: turnIds[2]!,
             kind: "commandExecution",
             itemId: "third-command",
-            decision: "accept",
+            decision: "acceptForSession",
           }),
           ...approval({
             id: 104,
@@ -4937,6 +4951,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             decision: "accept",
           }),
           turnEvent("turn/completed", turnIds[2]!),
+          // Fork: a delegated turn on the same thread does not inherit the person's grant.
+          ...startTurn(3),
+          ...approval({
+            id: 105,
+            turnId: turnIds[3]!,
+            kind: "commandExecution",
+            itemId: "delegated-command",
+            decision: "decline",
+          }),
+          turnEvent("turn/completed", turnIds[3]!),
         ],
       });
       const harness = yield* makeCodexReplayHarness(transcript);
@@ -4961,16 +4985,33 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
         });
 
-      const runTurn = (index: number) =>
+      const runTurn = (
+        index: number,
+        delegatedBy?: { readonly createdBy: "agent"; readonly creationSource: "mcp" },
+      ) =>
         Effect.gen(function* () {
+          const turnInput = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`session-approvals-${index + 1}`),
+            text: turnText(index),
+          });
           yield* harness.runtime.startTurn({
-            ...makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make(`session-approvals-${index + 1}`),
-              text: turnText(index),
-            }),
+            ...turnInput,
+            ...(delegatedBy === undefined
+              ? {}
+              : {
+                  message: { ...turnInput.message, ...delegatedBy },
+                  appThread: {
+                    ...turnInput.appThread,
+                    lineage: {
+                      ...turnInput.appThread.lineage,
+                      parentThreadId: ThreadId.make("delegating-parent"),
+                      relationshipToParent: "subagent",
+                    },
+                  },
+                }),
             runOrdinal: index + 1,
             providerTurnOrdinal: index + 1,
             runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: turnModes[index]! },
@@ -4985,10 +5026,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* answer(2, "file-change", "acceptForSession");
       yield* harness.awaitTerminal(2);
       yield* runTurn(2);
-      yield* answer(3, "command", "accept");
+      yield* answer(3, "command", "acceptForSession");
       yield* answer(4, "file-change", "accept");
       yield* harness.awaitTerminal(3);
-      assert.lengthOf(requests(), 4);
+      yield* runTurn(3, { createdBy: "agent", creationSource: "mcp" });
+      yield* harness.awaitTerminal(4);
+      assert.deepEqual(
+        requests()
+          .map((request) => [request.kind, request.status, request.decision])
+          .at(-1),
+        ["command", "resolved", "decline"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

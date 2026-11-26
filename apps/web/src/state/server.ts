@@ -84,11 +84,12 @@ export const primaryServerConfigAtom = Atom.make(
 ).pipe(Atom.withLabel("web-primary-server-config"));
 
 // The config cache can outlive the session and predate an opt-out.
+// Fork: tracing is opt-in, so a server that does not say allows nothing.
 export const primaryRelayTracingAllowedAtom = Atom.make((get): boolean | null => {
   const environmentId = get(primaryEnvironmentIdAtom);
   const config =
     environmentId === null ? null : get(environmentSession.initialConfigValueAtom(environmentId));
-  return config === null ? null : config.observability.relayTracingAllowed !== false;
+  return config === null ? null : config.observability.relayTracingAllowed === true;
 }).pipe(Atom.withLabel("web-primary-relay-tracing-allowed"));
 
 export const primaryServerConfigEventAtom = Atom.make(

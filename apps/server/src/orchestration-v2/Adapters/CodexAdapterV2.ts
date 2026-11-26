@@ -2615,6 +2615,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           nativeThreadId: string,
           context: ActiveCodexTurnContext,
         ): Set<ProviderRequestKind> => {
+          // Fork: a delegated turn has nobody to answer, so no person's earlier grant applies.
+          if (asksForDelegatedTask(context)) return new Set();
           const runtimeMode = context.input.runtimePolicy.runtimeMode;
           const allowed = sessionApprovals.get(nativeThreadId);
           if (allowed?.runtimeMode === runtimeMode) return allowed.kinds;

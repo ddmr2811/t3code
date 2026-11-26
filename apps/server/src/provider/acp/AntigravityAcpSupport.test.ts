@@ -245,6 +245,26 @@ describe("Antigravity read requests", () => {
         ),
       ).toBe("ask");
 
+      // A copy reads its source: one from outside asks even where the edit itself is allowed.
+      const copy = (oldPath: string) =>
+        ({
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-2",
+            title: "Copy",
+            kind: "edit",
+            content: [
+              {
+                type: "diff",
+                changes: [{ operation: "copy", oldPath, path: NodePath.join(cwd, "copy.txt") }],
+              },
+            ],
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        }) as unknown as EffectAcpSchema.RequestPermissionRequest;
+      expect(disposition(copy(NodePath.join(cwd, "file.txt")), "auto-accept-edits")).toBe("allow");
+      expect(disposition(copy(NodePath.join(store, "file.txt")), "auto-accept-edits")).toBe("ask");
+
       // Full access answers for the user; the sandbox is what limits the agent there.
       expect(disposition(read("read", [NodePath.join(store, "file.txt")]), "full-access")).toBe(
         "allow",

@@ -161,6 +161,9 @@ it("clears relay tracing permission when the primary session ends", () => {
 
   registry.set(sessionConfig, null);
   registry.set(sessionConfig, config([], false));
+  // Fork: a server that does not say is no consent.
+  registry.set(sessionConfig, config([], true));
+  registry.set(sessionConfig, config([]));
 
-  expect(answers).toEqual([true, null, false]);
+  expect(answers).toEqual([true, null, false, true, false]);
 });
