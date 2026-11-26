@@ -183,3 +183,73 @@ export function quickAnswer<
   }
   return { kind: "pick", prompt, question };
 }
+
+/** The arguments as they will run, indented when they are JSON; anything else exactly as sent. */
+export function prettyArguments(json: string): string {
+  try {
+    return JSON.stringify(JSON.parse(json), null, 2);
+  } catch {
+    return json;
+  }
+}
+
+const LITERAL_MAX_LINES = 8;
+const LITERAL_MAX_CHARS = 480;
+
+/**
+ * Whether a command or arguments show whole in a «Para ti» card. Past this the card shows the
+ * start with «Ver todo», and its «Sí» waits until the whole text is open.
+ */
+export function literalFits(text: string): boolean {
+  return text.length <= LITERAL_MAX_CHARS && text.split("\n").length <= LITERAL_MAX_LINES;
+}
+
+type BotNoticeInput =
+  | {
+      readonly type: "install";
+      readonly install: { readonly command: string; readonly rollback: string };
+    }
+  | { readonly type: "integration"; readonly request: { readonly arguments: string } }
+  | { readonly type: "proposal"; readonly proposal: { readonly instructions: string } }
+  | { readonly type: "handoff" | "unreadable" };
+
+/**
+ * What a bot notice's «Sí» rests on, shown literally beside it. An install and an outside-app
+ * action cannot be taken back from the ADE, so their «Sí» asks twice; a created bot can be
+ * archived. A cut handoff or an unreadable list has no «Sí»: it opens the panel.
+ */
+export function botQuickAnswer(notice: BotNoticeInput):
+  | {
+      readonly kind: "yes-no";
+      readonly confirm: boolean;
+      readonly literals: ReadonlyArray<{ readonly label: string; readonly text: string }>;
+    }
+  | { readonly kind: "open" } {
+  switch (notice.type) {
+    case "install":
+      return {
+        kind: "yes-no",
+        confirm: true,
+        literals: [
+          { label: "Comando", text: notice.install.command },
+          { label: "Vuelta atrás", text: notice.install.rollback },
+        ],
+      };
+    case "integration":
+      return {
+        kind: "yes-no",
+        confirm: true,
+        literals: [
+          { label: "Argumentos exactos", text: prettyArguments(notice.request.arguments) },
+        ],
+      };
+    case "proposal":
+      return {
+        kind: "yes-no",
+        confirm: false,
+        literals: [{ label: "Instrucciones exactas", text: notice.proposal.instructions }],
+      };
+    default:
+      return { kind: "open" };
+  }
+}

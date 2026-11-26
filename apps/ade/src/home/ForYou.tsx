@@ -12,7 +12,7 @@ import { Atom } from "effect/reactivity";
 import { allBotsAtom } from "../bots/bots.state.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { formatUpdatedShort } from "../coordination/ProjectBoard.tsx";
-import { useBotNotices } from "../decisions/BotNotices.tsx";
+import { QuickBotNotice, useBotNotices } from "../decisions/BotNotices.tsx";
 import { KIND_LABELS } from "../decisions/DecisionsPanel.tsx";
 import { QuickRequest } from "../decisions/Requests.tsx";
 import { buildPendingTrayItems } from "../decisions/tray.logic.ts";
@@ -102,17 +102,7 @@ export function ForYou(props: { onOpenThread: (threadKey: string) => void }) {
                   chip={notice.label}
                   kind="approval"
                 />
-                <p className="ade-foryou-what">{notice.title}</p>
-                <div className="ade-foryou-actions">
-                  <button
-                    type="button"
-                    className="ade-button-quiet ade-foryou-open"
-                    onClick={() => setOpen(true)}
-                  >
-                    Abrir
-                    <ArrowRightIcon size={13} weight="bold" aria-hidden />
-                  </button>
-                </div>
+                <QuickBotNotice notice={notice} onOpen={() => setOpen(true)} />
               </li>
             );
           }

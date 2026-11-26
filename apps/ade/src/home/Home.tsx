@@ -60,90 +60,88 @@ export function Home() {
     <section className="ade-home" aria-label="Inicio">
       <span className="ade-home-art" aria-hidden />
       <div className="ade-home-scroll">
-        <div className="ade-home-main">
-          <div className="ade-home-top">
-            <header className="ade-home-greeting">
-              <h1>¿En qué trabajamos?</h1>
-              <p className="ade-home-sentence" data-pending={needsYouCount > 0 || undefined}>
-                {forYouSentence(needsYouCount)}
-              </p>
-            </header>
-            <ForYou onOpenThread={openThread} />
-          </div>
-          <div className="ade-home-inner">
-            <Overnight needsYouCount={needsYouCount} />
-            {selected === null ? (
-              <p className="ade-home-empty" role="status">
-                {loading
-                  ? "Cargando proyectos…"
-                  : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
-              </p>
-            ) : (
-              <>
-                <ToggleGroup
-                  value={[selected.key]}
-                  deselectable={false}
-                  onValueChange={(values) => {
-                    const next = values[0];
-                    if (next !== undefined) setSelectedKey(next);
-                  }}
-                  aria-label="Proyecto donde empezar el hilo"
-                  className="ade-home-projects"
-                >
-                  {chips.map((target) => (
-                    <Toggle
-                      key={target.key}
-                      value={target.key}
-                      className="ade-home-project-chip"
-                      aria-label={
-                        multipleMachines
-                          ? `${target.project.title} · ${target.machineLabel}`
-                          : target.project.title
-                      }
-                    >
-                      <span
-                        className="ade-home-project-mark"
-                        style={
-                          { "--ade-project-color": projectAccentColor(target.key) } as Record<
-                            string,
-                            string
-                          >
-                        }
-                        aria-hidden
-                      >
-                        {projectMonogram(target.project.title)}
-                      </span>
-                      <span className="ade-home-project-name">{target.project.title}</span>
-                      {multipleMachines ? (
-                        <span className="ade-home-project-machine">{target.machineLabel}</span>
-                      ) : null}
-                    </Toggle>
-                  ))}
-                  {projects.length > chips.length ? (
-                    <button
-                      type="button"
-                      className="ade-home-project-chip ade-home-project-more"
-                      aria-haspopup="dialog"
-                      onClick={() => openSearch("proyectos")}
-                    >
-                      Más…
-                    </button>
-                  ) : null}
-                </ToggleGroup>
-                <NewThreadComposer
-                  environmentId={selected.environmentId}
-                  machineLabel={selected.machineLabel}
-                  project={selected.project}
-                  onEngage={() => {
-                    if (selectedKey === null) setSelectedKey(selected.key);
-                  }}
-                  onThreadCreated={openThread}
-                />
-              </>
-            )}
-          </div>
+        <div className="ade-home-top">
+          <header className="ade-home-greeting">
+            <h1>¿En qué trabajamos?</h1>
+            <p className="ade-home-sentence" data-pending={needsYouCount > 0 || undefined}>
+              {forYouSentence(needsYouCount)}
+            </p>
+          </header>
+          <ForYou onOpenThread={openThread} />
+          <HomeActivity multipleMachines={multipleMachines} />
         </div>
-        <HomeActivity multipleMachines={multipleMachines} />
+        <div className="ade-home-inner">
+          <Overnight needsYouCount={needsYouCount} />
+          {selected === null ? (
+            <p className="ade-home-empty" role="status">
+              {loading
+                ? "Cargando proyectos…"
+                : "No hay proyectos en las máquinas conectadas. Añade un proyecto en T3 Code para empezar un hilo."}
+            </p>
+          ) : (
+            <>
+              <ToggleGroup
+                value={[selected.key]}
+                deselectable={false}
+                onValueChange={(values) => {
+                  const next = values[0];
+                  if (next !== undefined) setSelectedKey(next);
+                }}
+                aria-label="Proyecto donde empezar el hilo"
+                className="ade-home-projects"
+              >
+                {chips.map((target) => (
+                  <Toggle
+                    key={target.key}
+                    value={target.key}
+                    className="ade-home-project-chip"
+                    aria-label={
+                      multipleMachines
+                        ? `${target.project.title} · ${target.machineLabel}`
+                        : target.project.title
+                    }
+                  >
+                    <span
+                      className="ade-home-project-mark"
+                      style={
+                        { "--ade-project-color": projectAccentColor(target.key) } as Record<
+                          string,
+                          string
+                        >
+                      }
+                      aria-hidden
+                    >
+                      {projectMonogram(target.project.title)}
+                    </span>
+                    <span className="ade-home-project-name">{target.project.title}</span>
+                    {multipleMachines ? (
+                      <span className="ade-home-project-machine">{target.machineLabel}</span>
+                    ) : null}
+                  </Toggle>
+                ))}
+                {projects.length > chips.length ? (
+                  <button
+                    type="button"
+                    className="ade-home-project-chip ade-home-project-more"
+                    aria-haspopup="dialog"
+                    onClick={() => openSearch("proyectos")}
+                  >
+                    Más…
+                  </button>
+                ) : null}
+              </ToggleGroup>
+              <NewThreadComposer
+                environmentId={selected.environmentId}
+                machineLabel={selected.machineLabel}
+                project={selected.project}
+                onEngage={() => {
+                  if (selectedKey === null) setSelectedKey(selected.key);
+                }}
+                onThreadCreated={openThread}
+              />
+            </>
+          )}
+        </div>
       </div>
     </section>
   );

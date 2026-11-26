@@ -4,9 +4,14 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   approvalChoices,
   approvalFiles,
+  botQuickAnswer,
+  literalFits,
   orphanedAnswerTexts,
   quickAnswer,
 } from "./requests.logic.ts";
+
+const texts = (result: ReturnType<typeof botQuickAnswer>) =>
+  result.kind === "yes-no" ? result.literals.map((literal) => literal.text) : [];
 
 describe("approvalChoices", () => {
   it("offers no grant wider than this request when the server lists no options", () => {
@@ -171,5 +176,54 @@ describe("quickAnswer", () => {
     ["two questions", prompt([question(), { ...question(), id: "q2" }])],
   ])("opens the thread for a question with %s", (_, asked) => {
     expect(quickAnswer({ approvals: [], userInputs: [asked] })).toEqual({ kind: "open" });
+  });
+});
+
+describe("botQuickAnswer", () => {
+  it("answers an install in place, asking twice, beside its exact command and way back", () => {
+    const result = botQuickAnswer({
+      type: "install",
+      install: { command: "pnpm add -D knip", rollback: "pnpm remove knip" },
+    });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: true });
+    expect(texts(result)).toEqual(["pnpm add -D knip", "pnpm remove knip"]);
+  });
+
+  it("answers an outside-app action in place, asking twice, beside the arguments that will run", () => {
+    const sent = '{"text":"Hola <b>mundo</b> **ya**","to":"@ade"}';
+    const result = botQuickAnswer({ type: "integration", request: { arguments: sent } });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: true });
+    const [shown] = texts(result);
+    expect(JSON.parse(shown!)).toEqual(JSON.parse(sent));
+    expect(shown).toContain("Hola <b>mundo</b> **ya**");
+  });
+
+  it("keeps arguments that are not JSON exactly as the bot sent them", () => {
+    expect(texts(botQuickAnswer({ type: "integration", request: { arguments: "{roto" } }))).toEqual(
+      ["{roto"],
+    );
+  });
+
+  it("answers a proposed bot in place with one «Sí», beside its exact instructions", () => {
+    const result = botQuickAnswer({
+      type: "proposal",
+      proposal: { instructions: "Revisa los PR." },
+    });
+    expect(result).toMatchObject({ kind: "yes-no", confirm: false });
+    expect(texts(result)).toEqual(["Revisa los PR."]);
+  });
+
+  it.each(["handoff", "unreadable"] as const)("opens the panel for a %s notice", (type) => {
+    expect(botQuickAnswer({ type })).toEqual({ kind: "open" });
+  });
+});
+
+describe("literalFits", () => {
+  it.each([
+    ["a one-line command", "pnpm add -D knip", true],
+    ["nine lines", Array.from({ length: 9 }, (_, i) => `línea ${i}`).join("\n"), false],
+    ["one very long line", "x".repeat(481), false],
+  ])("%s: %s", (_, text, fits) => {
+    expect(literalFits(text)).toBe(fits);
   });
 });

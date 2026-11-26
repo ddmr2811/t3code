@@ -3045,13 +3045,6 @@ button.ade-subagent:hover .ade-subagent-open {
   display: block;
 }
 
-.ade-home-main {
-  display: flex;
-  flex: 1 0 auto;
-  flex-direction: column;
-  min-width: 0;
-}
-
 /* The question, its sentence and «Para ti» stay together in the free space above the composer. */
 .ade-home-top {
   display: grid;
@@ -3246,6 +3239,38 @@ button.ade-subagent:hover .ade-subagent-open {
   scrollbar-width: thin;
 }
 
+.ade-foryou-literal {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ade-foryou-literal .ade-button-quiet {
+  justify-self: start;
+}
+
+/* Exactly what the «Sí» runs: whole, plain text, wrapped; only past the fit rule is it clipped. */
+.ade-foryou-literal-text {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.35);
+  color: #e4e4e8;
+  font: 400 12px/1.4 var(--ade-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ade-foryou-literal-text[data-clipped] {
+  max-height: calc(6 * 1.4em + 12px);
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 65%, transparent);
+}
+
+.ade-foryou-card .ade-proposal-facts {
+  font-size: 12.5px;
+}
+
 .ade-foryou-note {
   margin: 0;
   color: var(--ade-text-muted);
@@ -3278,8 +3303,7 @@ button.ade-subagent:hover .ade-subagent-open {
   display: grid;
   align-content: start;
   gap: 10px;
-  width: min(760px, 100%);
-  margin: 24px auto 0;
+  min-width: 0;
   padding: 14px;
   border: 1px solid var(--ade-border);
   border-radius: 14px;
@@ -3350,22 +3374,34 @@ button.ade-subagent:hover .ade-subagent-open {
   }
 }
 
-/* A wide Inicio keeps the composer column and puts what works now beside it. */
+/* A wide Inicio keeps the composer column and puts what works now beside it, its top on the cards'. */
 @container (min-width: 1180px) {
-  .ade-home-scroll {
-    flex-direction: row;
+  .ade-home-top,
+  .ade-home-inner {
+    grid-template-columns: minmax(0, 760px) 280px;
+    column-gap: 40px;
     justify-content: center;
-    gap: 40px;
+    width: 100%;
   }
 
-  .ade-home-main {
-    flex: 0 1 760px;
+  .ade-home-top > *,
+  .ade-home-inner > * {
+    grid-column: 1;
   }
 
-  .ade-activity {
-    flex: 0 0 280px;
-    align-self: center;
-    margin: 0;
+  .ade-home-top > .ade-foryou {
+    grid-row: 2 / span 2;
+    grid-template-rows: subgrid;
+  }
+
+  .ade-home-top > .ade-activity {
+    grid-row: 3;
+    grid-column: 2;
+    align-self: start;
+  }
+
+  .ade-home-top:not(:has(.ade-foryou)) > .ade-activity {
+    grid-row: 2;
   }
 }
 
