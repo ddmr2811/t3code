@@ -3161,6 +3161,7 @@ button.ade-subagent:hover .ade-subagent-open {
 .ade-foryou-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  align-items: start;
   gap: 10px;
   margin: 0;
   padding: 0;
