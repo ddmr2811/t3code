@@ -10,11 +10,14 @@ import {
   ForkMemoryNote,
   type ForkMemoryNoteId,
   type ForkMemoryOrigin,
+  ForkMemoryPrevious,
   ForkMemoryRemoveInput,
   type ForkMemoryRemoveResult,
+  ForkMemoryRestoreInput,
   ForkMemoryUpsertInput,
   IsoDateTime,
-  type ProjectId,
+  NonNegativeInt,
+  ProjectId,
   forkMemoryEssentialBytes,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -63,6 +66,24 @@ export class ForkProjectMemory extends Context.Service<
     readonly essentials: (
       projectId: ProjectId,
     ) => Effect.Effect<ReadonlyArray<ForkMemoryNote>, ForkMemoryError>;
+    /**
+     * Keeps the project's notes as they are now, replacing the version kept before, if the
+     * project is still at `revision`. `undo` puts the version kept before back while nothing
+     * else changed, for a correction that never reached its coordinator.
+     */
+    readonly checkpoint: (
+      projectId: ProjectId,
+      correction: string,
+      revision: number,
+    ) => Effect.Effect<
+      { readonly previous: ForkMemoryPrevious; readonly undo: Effect.Effect<void> },
+      ForkMemoryError
+    >;
+    /** Swaps the notes with the kept version, which becomes the notes left behind; ForkBots
+     * first checks no coordinator turn is still applying a correction. */
+    readonly restore: (
+      input: ForkMemoryRestoreInput,
+    ) => Effect.Effect<ForkMemoryListResult, ForkMemoryError>;
   }
 >()("t3/fork/memory/ForkProjectMemory") {}
 
@@ -72,12 +93,52 @@ const uniqueIds = Schema.makeFilter(
   { expected: "unique memory note ids" },
 );
 
+const ProjectState = Schema.Struct({
+  revision: NonNegativeInt,
+  updatedAt: IsoDateTime,
+  previous: Schema.optionalKey(ForkMemoryPrevious),
+});
+type ProjectState = typeof ProjectState.Type;
+
 const StoredMemory = Schema.Struct({
   version: Schema.Literal(FORK_MEMORY_PROTOCOL_VERSION),
   updatedAt: Schema.NullOr(IsoDateTime),
   notes: Schema.Array(ForkMemoryNote).check(uniqueIds),
+  // Optional, so a file from before revisions still reads.
+  projects: Schema.optionalKey(Schema.Record(Schema.String, ProjectState)),
 });
 type StoredMemory = typeof StoredMemory.Type;
+
+/** A project saved before revisions starts at 1 if it has notes. */
+function stateOf(memory: StoredMemory, projectId: ProjectId): ProjectState | undefined {
+  const stored =
+    memory.projects !== undefined && Object.hasOwn(memory.projects, projectId)
+      ? memory.projects[projectId]
+      : undefined;
+  if (stored !== undefined) return stored;
+  const notes = memory.notes.filter((note) => note.projectId === projectId);
+  if (notes.length === 0) return undefined;
+  const updatedAt = notes.map((note) => note.updatedAt).reduce((a, b) => (a > b ? a : b));
+  return { revision: 1, updatedAt };
+}
+
+/** Every change to a project's notes goes through here, so its revision counts it. */
+function withChange(
+  memory: StoredMemory,
+  projectId: ProjectId,
+  notes: ReadonlyArray<ForkMemoryNote>,
+  now: string,
+  previous?: ForkMemoryPrevious,
+): StoredMemory {
+  const state = stateOf(memory, projectId);
+  const kept = previous ?? state?.previous;
+  const next: ProjectState = {
+    revision: (state?.revision ?? 0) + 1,
+    updatedAt: now,
+    ...(kept === undefined ? {} : { previous: kept }),
+  };
+  return { ...memory, notes, updatedAt: now, projects: { ...memory.projects, [projectId]: next } };
+}
 
 const EMPTY_MEMORY: StoredMemory = {
   version: FORK_MEMORY_PROTOCOL_VERSION,
@@ -89,10 +150,16 @@ const decodeStoredMemory = Schema.decodeUnknownEffect(Schema.fromJsonString(Stor
 const decodeListInput = Schema.decodeUnknownEffect(ForkMemoryListInput);
 const decodeUpsertInput = Schema.decodeUnknownEffect(ForkMemoryUpsertInput);
 const decodeRemoveInput = Schema.decodeUnknownEffect(ForkMemoryRemoveInput);
+const decodeRestoreInput = Schema.decodeUnknownEffect(ForkMemoryRestoreInput);
 
 const invalidInput = (message: string) => new ForkMemoryError({ reason: "invalidInput", message });
 const limitExceeded = (message: string) =>
   new ForkMemoryError({ reason: "limitExceeded", message });
+const staleRevision = (projectId: ProjectId, revision: number) =>
+  new ForkMemoryError({
+    reason: "conflict",
+    message: `The memory of project ${projectId} changed after revision ${revision}; read it again.`,
+  });
 
 const byNewest = (left: ForkMemoryNote, right: ForkMemoryNote) =>
   right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id);
@@ -115,11 +182,35 @@ const make = Effect.gen(function* () {
       .withPermits(1)(store.read())
       .pipe(Effect.map((memory) => memory.notes.filter((note) => note.projectId === projectId)));
 
+  const nowIso = Clock.currentTimeMillis.pipe(
+    Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
+  );
+  const snapshotOf = (
+    memory: StoredMemory,
+    projectId: ProjectId,
+    includePrevious: boolean,
+  ): ForkMemoryListResult => {
+    const state = stateOf(memory, projectId);
+    return {
+      notes: memory.notes.filter((note) => note.projectId === projectId).toSorted(byNewest),
+      ...(state === undefined
+        ? {}
+        : {
+            revision: state.revision,
+            updatedAt: state.updatedAt,
+            ...(state.previous === undefined || !includePrevious
+              ? {}
+              : { previous: state.previous }),
+          }),
+    };
+  };
+
   const list = Effect.fn("ForkProjectMemory.list")(function* (input: ForkMemoryListInput) {
     const parsed = yield* decodeListInput(input).pipe(
       Effect.mapError(() => invalidInput("Invalid memory filter.")),
     );
-    return { notes: (yield* projectNotes(parsed.projectId)).toSorted(byNewest) };
+    const memory = yield* lock.withPermits(1)(store.read());
+    return snapshotOf(memory, parsed.projectId, parsed.includePrevious === true);
   });
 
   const upsert = Effect.fn("ForkProjectMemory.upsert")(function* (
@@ -174,7 +265,7 @@ const make = Effect.gen(function* () {
             });
           }
         }
-        const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        const now = yield* nowIso;
         const note: ForkMemoryNote = {
           id: existing?.id ?? `mem:${SecureRandom.uuidV4Unsafe()}`,
           projectId: parsed.projectId,
@@ -201,7 +292,7 @@ const make = Effect.gen(function* () {
             `Essential notes of project ${parsed.projectId} may total at most ${FORK_MEMORY_ESSENTIAL_MAX_BYTES} bytes. Save it as searchable, or make another essential note searchable first.`,
           );
         }
-        yield* store.write({ ...memory, notes, updatedAt: now });
+        yield* store.write(withChange(memory, parsed.projectId, notes, now));
         return note;
       }),
     );
@@ -218,8 +309,7 @@ const make = Effect.gen(function* () {
           (note) => note.id !== parsed.id || note.projectId !== parsed.projectId,
         );
         if (notes.length === memory.notes.length) return { id: parsed.id, removed: false };
-        const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
-        yield* store.write({ ...memory, notes, updatedAt: now });
+        yield* store.write(withChange(memory, parsed.projectId, notes, yield* nowIso));
         return { id: parsed.id, removed: true };
       }),
     );
@@ -245,7 +335,114 @@ const make = Effect.gen(function* () {
       .toSorted(byOldest);
   });
 
-  return ForkProjectMemory.of({ list, upsert, remove, search, essentials });
+  const checkpoint = Effect.fn("ForkProjectMemory.checkpoint")(function* (
+    projectId: ProjectId,
+    correction: string,
+    revision: number,
+  ) {
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const memory = yield* store.read();
+        const state = stateOf(memory, projectId);
+        if ((state?.revision ?? 0) !== revision) return yield* staleRevision(projectId, revision);
+        const now = yield* nowIso;
+        const previous: ForkMemoryPrevious = {
+          revision,
+          savedAt: now,
+          reason: "correction",
+          correction,
+          notes: memory.notes.filter((note) => note.projectId === projectId),
+        };
+        // A new copy is a change too, so a repeated or stale send finds the revision moved.
+        const kept: ProjectState = { revision: revision + 1, updatedAt: now, previous };
+        const others = { ...memory.projects };
+        // Copies of deleted projects would hold the file's room for ever.
+        for (const id of Object.keys(others)) {
+          const found = yield* projects.getById(ProjectId.make(id)).pipe(Effect.option);
+          if (Option.isSome(found) && Option.isNone(found.value)) delete others[id];
+        }
+        yield* store.write({ ...memory, projects: { ...others, [projectId]: kept } });
+        const undo = lock
+          .withPermits(1)(
+            Effect.gen(function* () {
+              const latest = yield* store.read();
+              const current = stateOf(latest, projectId);
+              // Another copy was kept since; this one is no longer the user's way back.
+              if (current?.previous?.savedAt !== previous.savedAt) return;
+              const rest = Object.fromEntries(
+                Object.entries(latest.projects ?? {}).filter(([id]) => id !== projectId),
+              );
+              // Untouched since, the copy goes; after another change, only the earlier copy returns.
+              const back =
+                current.revision === kept.revision
+                  ? state
+                  : {
+                      revision: current.revision,
+                      updatedAt: current.updatedAt,
+                      ...(state?.previous === undefined ? {} : { previous: state.previous }),
+                    };
+              yield* store.write({
+                ...latest,
+                projects: back === undefined ? rest : { ...rest, [projectId]: back },
+              });
+            }),
+          )
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("fork memory could not drop an undelivered copy", {
+                projectId,
+                reason: error.reason,
+              }),
+            ),
+          );
+        return { previous, undo };
+      }),
+    );
+  });
+
+  const restore = Effect.fn("ForkProjectMemory.restore")(function* (input: ForkMemoryRestoreInput) {
+    const parsed = yield* decodeRestoreInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid memory version.")),
+    );
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const memory = yield* store.read();
+        const state = stateOf(memory, parsed.projectId);
+        const kept = state?.previous;
+        if (state === undefined || state.revision !== parsed.revision) {
+          return yield* staleRevision(parsed.projectId, parsed.revision);
+        }
+        if (kept === undefined) {
+          return yield* new ForkMemoryError({
+            reason: "notFound",
+            message: `Project ${parsed.projectId} keeps no earlier version.`,
+          });
+        }
+        const now = yield* nowIso;
+        const current = memory.notes.filter((note) => note.projectId === parsed.projectId);
+        const others = memory.notes.filter((note) => note.projectId !== parsed.projectId);
+        const left: ForkMemoryPrevious = {
+          revision: state.revision,
+          savedAt: now,
+          reason: "restore",
+          notes: current,
+        };
+        const next = withChange(memory, parsed.projectId, [...others, ...kept.notes], now, left);
+        yield* store.write(next);
+        return snapshotOf(next, parsed.projectId, true);
+      }),
+    );
+  });
+
+  return ForkProjectMemory.of({
+    list,
+    upsert,
+    remove,
+    search,
+    essentials,
+    checkpoint,
+    restore,
+  });
 });
 
 export const layer = Layer.effect(ForkProjectMemory, make);

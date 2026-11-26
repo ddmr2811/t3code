@@ -162,6 +162,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.forkBotsDraft,
       WS_METHODS.forkMemoryUpsert,
       WS_METHODS.forkMemoryRemove,
+      WS_METHODS.forkMemoryCorrect,
+      WS_METHODS.forkMemoryRestore,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }

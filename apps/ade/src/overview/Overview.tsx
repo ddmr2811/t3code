@@ -1,5 +1,6 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
+import { BookOpenTextIcon } from "@phosphor-icons/react/dist/csr/BookOpenText";
 import { ChartBarIcon } from "@phosphor-icons/react/dist/csr/ChartBar";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
@@ -27,6 +28,7 @@ import { FailoverPanel } from "../failover/FailoverPanel.tsx";
 import { Home } from "../home/Home.tsx";
 import { Missions } from "../missions/Missions.tsx";
 import { useMachineStatus } from "../Machines.tsx";
+import { MemoryView } from "../memory/MemoryView.tsx";
 import {
   closePanelsOnPhone,
   listedThreadsAtom,
@@ -49,7 +51,8 @@ export type View =
   | "tablero"
   | "misiones"
   | "respaldo"
-  | "bots";
+  | "bots"
+  | "memoria";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
@@ -62,7 +65,8 @@ const readView = (): View => {
     value === "misiones" ||
     value === "proyectos" ||
     value === "respaldo" ||
-    value === "bots"
+    value === "bots" ||
+    value === "memoria"
   )
     return value;
   return "inicio";
@@ -132,6 +136,7 @@ export const VIEW_LINKS = [
   { target: "tablero", label: "Tablero", Icon: KanbanIcon },
   { target: "misiones", label: "Misiones", Icon: TargetIcon },
   { target: "bots", label: "Bots", Icon: UserCircleIcon },
+  { target: "memoria", label: "Memoria", Icon: BookOpenTextIcon },
   { target: "respaldo", label: "Respaldo", Icon: ArrowsLeftRightIcon },
 ] as const;
 
@@ -549,6 +554,7 @@ export function Overview() {
   if (view === "inicio") return <Home />;
   if (view === "proyectos") return <ProjectBoard />;
   if (view === "bots") return <BotsView />;
+  if (view === "memoria") return <MemoryView />;
   if (view === "respaldo") return <FailoverPanel />;
   if (view === "gasto") return <GastoView />;
   if (view === "misiones") return <Missions />;

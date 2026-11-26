@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Fork: per-project memory notes shared by the project's coordinator and its threads. */
 export const FORK_MEMORY_PROTOCOL_VERSION = 1;
@@ -26,6 +32,16 @@ export const ForkMemoryText = TrimmedNonEmptyString.check(
   }),
 );
 
+/**
+ * What a user or agent may write: also no Unicode line breaks, which a model reads as new lines.
+ * Stored notes keep the looser check, so a file saved before it still reads.
+ */
+export const ForkMemoryInputText = ForkMemoryText.check(
+  Schema.makeFilter((value: string) => !/[\u0085\u2028\u2029]/.test(value), {
+    expected: "one line of text without line breaks",
+  }),
+);
+
 export const ForkMemoryInclusion = Schema.Literals(["essential", "searchable"]);
 export type ForkMemoryInclusion = typeof ForkMemoryInclusion.Type;
 
@@ -43,18 +59,69 @@ export const ForkMemoryNote = Schema.Struct({
 });
 export type ForkMemoryNote = typeof ForkMemoryNote.Type;
 
-export const ForkMemoryListInput = Schema.Struct({ projectId: ProjectId });
+export const ForkMemoryListInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Only the Memoria view shows the kept version, so only it pays for sending it. */
+  includePrevious: Schema.optionalKey(Schema.Boolean),
+});
 export type ForkMemoryListInput = typeof ForkMemoryListInput.Type;
 
+const ProjectNotes = Schema.Array(ForkMemoryNote).check(
+  Schema.isMaxLength(FORK_MEMORY_MAX_NOTES_PER_PROJECT),
+);
+
+/** The one earlier version of a project's notes the server keeps, so a correction can be undone. */
+export const ForkMemoryPrevious = Schema.Struct({
+  /** The revision these notes were at. */
+  revision: NonNegativeInt,
+  savedAt: IsoDateTime,
+  /** Kept before a correction was sent, or left behind by going back to the version before. */
+  reason: Schema.Literals(["correction", "restore"]),
+  correction: Schema.optionalKey(ForkMemoryText),
+  notes: ProjectNotes,
+});
+export type ForkMemoryPrevious = typeof ForkMemoryPrevious.Type;
+
 export const ForkMemoryListResult = Schema.Struct({
-  notes: Schema.Array(ForkMemoryNote).check(Schema.isMaxLength(FORK_MEMORY_MAX_NOTES_PER_PROJECT)),
+  notes: ProjectNotes,
+  // Optional: servers before revisions answer with the notes alone.
+  /** Counts every change to this project's notes. */
+  revision: Schema.optionalKey(NonNegativeInt),
+  updatedAt: Schema.optionalKey(IsoDateTime),
+  previous: Schema.optionalKey(ForkMemoryPrevious),
 });
 export type ForkMemoryListResult = typeof ForkMemoryListResult.Type;
+
+/** One sentence the project's coordinator applies to the memory, after the server keeps a copy. */
+export const ForkMemoryCorrectInput = Schema.Struct({
+  projectId: ProjectId,
+  text: ForkMemoryInputText,
+  /** The revision the screen showed; a stale or repeated send is refused. */
+  revision: NonNegativeInt,
+});
+export type ForkMemoryCorrectInput = typeof ForkMemoryCorrectInput.Type;
+
+export const ForkMemoryCorrectResult = Schema.Struct({
+  threadId: ThreadId,
+  /** The coordinator was busy; the correction waits in its thread. */
+  queued: Schema.Boolean,
+  handle: Schema.String,
+  previous: ForkMemoryPrevious,
+});
+export type ForkMemoryCorrectResult = typeof ForkMemoryCorrectResult.Type;
+
+/** Swaps the notes with the kept version, so going back can itself be undone. */
+export const ForkMemoryRestoreInput = Schema.Struct({
+  projectId: ProjectId,
+  /** The revision the screen showed; anything saved since makes the server refuse. */
+  revision: NonNegativeInt,
+});
+export type ForkMemoryRestoreInput = typeof ForkMemoryRestoreInput.Type;
 
 export const ForkMemoryUpsertInput = Schema.Struct({
   id: Schema.optionalKey(ForkMemoryNoteId),
   projectId: ProjectId,
-  text: ForkMemoryText,
+  text: ForkMemoryInputText,
   inclusion: ForkMemoryInclusion,
 });
 export type ForkMemoryUpsertInput = typeof ForkMemoryUpsertInput.Type;
@@ -73,6 +140,10 @@ export const ForkMemoryErrorReason = Schema.Literals([
   "limitExceeded",
   "notFound",
   "storageFailed",
+  /** The memory changed since the screen read it. */
+  "conflict",
+  /** The coordinator's turn is still running or queued. */
+  "busy",
 ]);
 export type ForkMemoryErrorReason = typeof ForkMemoryErrorReason.Type;
 

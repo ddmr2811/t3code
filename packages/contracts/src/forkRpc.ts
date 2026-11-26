@@ -74,12 +74,15 @@ import {
   ForkUninstallInput,
 } from "./forkExtensions.ts";
 import {
+  ForkMemoryCorrectInput,
+  ForkMemoryCorrectResult,
   ForkMemoryError,
   ForkMemoryListInput,
   ForkMemoryListResult,
   ForkMemoryNote,
   ForkMemoryRemoveInput,
   ForkMemoryRemoveResult,
+  ForkMemoryRestoreInput,
   ForkMemoryUpsertInput,
 } from "./forkMemory.ts";
 import { ForkTailnetStatus, ForkTailnetStatusInput } from "./forkTailnet.ts";
@@ -140,6 +143,8 @@ export const FORK_WS_METHODS = {
   forkMemoryList: "forkMemory.list",
   forkMemoryUpsert: "forkMemory.upsert",
   forkMemoryRemove: "forkMemory.remove",
+  forkMemoryCorrect: "forkMemory.correct",
+  forkMemoryRestore: "forkMemory.restore",
   // Fork: outside apps the bots act on through the server.
   forkIntegrationsList: "forkIntegrations.list",
   forkIntegrationsConnect: "forkIntegrations.connect",
@@ -412,6 +417,19 @@ const WsForkMemoryRemoveRpc = Rpc.make(FORK_WS_METHODS.forkMemoryRemove, {
   error: ForkMemoryRpcError,
 });
 
+// The coordinator applies it, so it fails as a bot does.
+const WsForkMemoryCorrectRpc = Rpc.make(FORK_WS_METHODS.forkMemoryCorrect, {
+  payload: ForkMemoryCorrectInput,
+  success: ForkMemoryCorrectResult,
+  error: ForkBotsRpcError,
+});
+
+const WsForkMemoryRestoreRpc = Rpc.make(FORK_WS_METHODS.forkMemoryRestore, {
+  payload: ForkMemoryRestoreInput,
+  success: ForkMemoryListResult,
+  error: ForkMemoryRpcError,
+});
+
 // Fork: integrations with outside apps.
 const ForkIntegrationsRpcError = Schema.Union([
   ForkIntegrationsError,
@@ -473,6 +491,8 @@ export const FORK_RPCS = [
   WsForkMemoryListRpc,
   WsForkMemoryUpsertRpc,
   WsForkMemoryRemoveRpc,
+  WsForkMemoryCorrectRpc,
+  WsForkMemoryRestoreRpc,
   WsForkIntegrationsListRpc,
   WsForkIntegrationsConnectRpc,
   WsForkIntegrationsAnswerRpc,
@@ -500,6 +520,8 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkGapsAnswerInstall]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkMemoryCorrect]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkMemoryRestore]: AuthOrchestrationOperateScope,
   // Storing a credential is an environment setting, as for the issue trackers.
   [FORK_WS_METHODS.forkIntegrationsConnect]: AuthSettingsWriteScope,
   [FORK_WS_METHODS.forkIntegrationsAnswer]: AuthOrchestrationOperateScope,

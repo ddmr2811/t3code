@@ -86,6 +86,8 @@ export const forkRpcHandlers = Effect.fn("forkRpcHandlers")(function* (
     [WS_METHODS.forkMemoryList]: (input) => forkMemory.list(input),
     [WS_METHODS.forkMemoryUpsert]: (input) => forkMemory.upsert(input, "user"),
     [WS_METHODS.forkMemoryRemove]: (input) => forkMemory.remove(input),
+    [WS_METHODS.forkMemoryCorrect]: (input) => forkBots.correctMemory(input),
+    [WS_METHODS.forkMemoryRestore]: (input) => forkBots.restoreMemory(input),
     // Outside apps: the token goes in and never comes back out.
     [WS_METHODS.forkIntegrationsList]: () => forkIntegrations.list,
     [WS_METHODS.forkIntegrationsConnect]: (input) => forkIntegrations.connect(input),

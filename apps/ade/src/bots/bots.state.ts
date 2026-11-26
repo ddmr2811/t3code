@@ -10,6 +10,7 @@ import {
   type ForkBotHandoff,
   type ForkBotProposal,
   type ForkGap,
+  type ProjectId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -91,6 +92,8 @@ export const forkMemoryListQuery = createEnvironmentRpcQueryAtomFamily(connectio
   tag: WS_METHODS.forkMemoryList,
   staleTimeMs: 15_000,
   idleTtlMs: 60_000,
+  // The coordinator saves from its own turn, with no ADE action to refresh after.
+  refreshIntervalMs: 15_000,
 });
 
 export const forkMemoryUpsertCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -102,6 +105,28 @@ export const forkMemoryRemoveCommand = createEnvironmentRpcCommand(connectionAto
   label: "ade:fork-memory:remove",
   tag: WS_METHODS.forkMemoryRemove,
 });
+
+export const forkMemoryCorrectCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:correct",
+  tag: WS_METHODS.forkMemoryCorrect,
+});
+
+export const forkMemoryRestoreCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-memory:restore",
+  tag: WS_METHODS.forkMemoryRestore,
+});
+
+/** The Memoria view and the Bots tab read the same notes under two keys; a change refreshes both. */
+export function refreshMemory(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+) {
+  registry.refresh(forkMemoryListQuery({ environmentId, input: { projectId } }));
+  registry.refresh(
+    forkMemoryListQuery({ environmentId, input: { projectId, includePrevious: true } }),
+  );
+}
 
 export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   registry.refresh(forkBotsListQuery({ environmentId, input: {} }));
