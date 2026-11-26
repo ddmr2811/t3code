@@ -227,6 +227,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     threadId: command.threadId,
     request: { type: "preview.cleanup" },
   });
+  // Fork: the thread's attachment folder goes too, even when it named no attachment.
   effects.push({
     id: `effect:${command.commandId}:attachment.cleanup`,
     commandId: command.commandId,
@@ -236,6 +237,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       attachmentIds: Array.from(new Set(input.attachmentIds)),
       removeThreadFolder: true,
     },
+  });
+  effects.push({
+    id: `effect:${command.commandId}:thread-content.purge`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "thread-content.purge" },
   });
   return { events, effects };
 });

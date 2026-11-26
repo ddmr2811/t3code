@@ -40,7 +40,7 @@ describe("web runtime relay telemetry policy", () => {
       exports: false,
     },
     {
-      surface: "ordinary browser without the build opt-in",
+      surface: "browser before its server has answered",
       desktopBridge: undefined,
       exports: false,
     },
@@ -49,6 +49,25 @@ describe("web runtime relay telemetry policy", () => {
       desktopBridge: undefined,
       buildOptIn: "true",
       exports: true,
+    },
+    {
+      surface: "browser whose server opted out",
+      desktopBridge: undefined,
+      server: false,
+      exports: false,
+    },
+    {
+      surface: "browser whose server opted in",
+      desktopBridge: undefined,
+      server: true,
+      exports: true,
+    },
+    {
+      // Fork: the hosted app is served by no T3 server, so it stays off without the build opt-in.
+      surface: "hosted app",
+      desktopBridge: undefined,
+      location: new URL("https://app.example.test/"),
+      exports: false,
     },
   ])("applies $surface before the first relay span", async (surface) => {
     const { desktopBridge, exports } = surface;
@@ -60,12 +79,19 @@ describe("web runtime relay telemetry policy", () => {
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_URL", "https://telemetry.example.test/v1/traces");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_DATASET", "relay-test");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_TOKEN", "test-token");
-    vi.stubGlobal("window", { desktopBridge });
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://app.example.test");
+    vi.stubGlobal("window", {
+      desktopBridge,
+      location: "location" in surface ? surface.location : undefined,
+    });
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
     vi.stubGlobal("fetch", fetchFn);
     // Re-import after setting runtime policy: static initialization creates the exporter layer.
     const { runtime: freshRuntime } = await import("./runtime");
     const { setDelegate } = await import("../observability/clientTracer");
+    if ("server" in surface) {
+      (await import("../cloud/publicConfig")).setServerRelayTelemetry(surface.server);
+    }
     const userSpans: Array<string> = [];
 
     try {
