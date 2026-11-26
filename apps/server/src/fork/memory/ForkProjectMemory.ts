@@ -69,22 +69,15 @@ export class ForkProjectMemory extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<ForkMemoryNote>, ForkMemoryError>;
     /**
      * Keeps the project's notes as they are now, replacing the version kept before, if the
-     * project is still at `revision`. `undo` puts the version kept before back, for a
-     * correction that never reached its coordinator; `attach` records the thread it reached.
+     * project is still at `revision`. `threadId` is where the correction is about to go. The
+     * copy is never taken back: once the turn may be under way, the copy is the way back.
      */
     readonly checkpoint: (
       projectId: ProjectId,
       correction: string,
       revision: number,
-    ) => Effect.Effect<
-      {
-        readonly previous: ForkMemoryPrevious;
-        readonly undo: Effect.Effect<void>;
-        /** False when the thread could not be noted, so no caller claims it was. */
-        readonly attach: (threadId: ThreadId) => Effect.Effect<boolean>;
-      },
-      ForkMemoryError
-    >;
+      threadId: ThreadId,
+    ) => Effect.Effect<ForkMemoryPrevious, ForkMemoryError>;
     /** Swaps the notes with the kept version, which becomes the notes left behind; ForkBots
      * first checks no coordinator turn is still applying a correction. */
     readonly restore: (
@@ -345,6 +338,7 @@ const make = Effect.gen(function* () {
     projectId: ProjectId,
     correction: string,
     revision: number,
+    threadId: ThreadId,
   ) {
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
@@ -357,6 +351,7 @@ const make = Effect.gen(function* () {
           savedAt: now,
           reason: "correction",
           correction,
+          threadId,
           notes: memory.notes.filter((note) => note.projectId === projectId),
         };
         // A new copy is a change too, so a repeated or stale send finds the revision moved.
@@ -368,69 +363,7 @@ const make = Effect.gen(function* () {
           if (Option.isSome(found) && Option.isNone(found.value)) delete others[id];
         }
         yield* store.write({ ...memory, projects: { ...others, [projectId]: kept } });
-        const isOurs = (kept: ForkMemoryPrevious | undefined) =>
-          kept?.savedAt === previous.savedAt &&
-          kept.revision === previous.revision &&
-          kept.correction === previous.correction;
-        const attach = (threadId: ThreadId) =>
-          lock
-            .withPermits(1)(
-              Effect.gen(function* () {
-                const latest = yield* store.read();
-                const current = stateOf(latest, projectId);
-                if (current === undefined || !isOurs(current.previous)) return false;
-                yield* store.write({
-                  ...latest,
-                  projects: {
-                    ...latest.projects,
-                    [projectId]: { ...current, previous: { ...previous, threadId } },
-                  },
-                });
-                return true;
-              }),
-            )
-            .pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("fork memory could not note the correction's thread", {
-                  projectId,
-                  reason: error.reason,
-                }).pipe(Effect.as(false)),
-              ),
-            );
-        const undo = lock
-          .withPermits(1)(
-            Effect.gen(function* () {
-              const latest = yield* store.read();
-              const current = stateOf(latest, projectId);
-              // Another copy was kept since; this one is no longer the user's way back.
-              if (current === undefined || !isOurs(current.previous)) return;
-              const rest = Object.fromEntries(
-                Object.entries(latest.projects ?? {}).filter(([id]) => id !== projectId),
-              );
-              // Untouched since, the copy goes; after another change, only the earlier copy returns.
-              const back =
-                current.revision === kept.revision
-                  ? state
-                  : {
-                      revision: current.revision,
-                      updatedAt: current.updatedAt,
-                      ...(state?.previous === undefined ? {} : { previous: state.previous }),
-                    };
-              yield* store.write({
-                ...latest,
-                projects: back === undefined ? rest : { ...rest, [projectId]: back },
-              });
-            }),
-          )
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("fork memory could not drop an undelivered copy", {
-                projectId,
-                reason: error.reason,
-              }),
-            ),
-          );
-        return { previous, undo, attach };
+        return previous;
       }),
     );
   });

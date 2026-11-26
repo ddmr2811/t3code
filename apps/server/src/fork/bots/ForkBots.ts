@@ -22,6 +22,7 @@ import {
   ForkMemoryCorrectInput,
   ForkMemoryError,
   type ForkMemoryListResult,
+  type ForkMemoryPrevious,
   type ForkMemoryRestoreInput,
   type ForkMemoryCorrectResult,
   type ForkMemoryNote,
@@ -350,12 +351,16 @@ const THREAD_NOT_FOUND_TAGS = new Set([
   "ThreadManagementThreadNotFoundError",
 ]);
 
-/** The orchestrator wraps a missing projection in OrchestratorProjectionError's `cause`. */
+const tagOf = (value: unknown) =>
+  typeof value === "object" && value !== null ? (value as { _tag?: unknown })._tag : undefined;
+
+/** The orchestrator wraps a missing projection, one level deep, in OrchestratorProjectionError. */
 function isThreadNotFoundError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const tag = (error as { _tag?: unknown })._tag;
+  const tag = tagOf(error);
   if (typeof tag === "string" && THREAD_NOT_FOUND_TAGS.has(tag)) return true;
-  return "cause" in error && error.cause !== error && isThreadNotFoundError(error.cause);
+  if (tag !== "OrchestratorProjectionError") return false;
+  const causeTag = tagOf((error as { cause?: unknown }).cause);
+  return typeof causeTag === "string" && THREAD_NOT_FOUND_TAGS.has(causeTag);
 }
 
 const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
@@ -837,6 +842,8 @@ const make = Effect.gen(function* () {
     limits: DispatchModes | undefined,
     senderIntegrations?: ForkBotIntegrations,
     request?: DeliveryRequest,
+    /** Runs once the target thread is known, after every check, right before the turn is sent. */
+    beforeSend?: (threadId: ThreadId) => Effect.Effect<void, ForkBotsError>,
   ) {
     if (bot.archived) return yield* invalidInput("Restore the bot before sending a message.");
     // A bot never gets done through another what it may not do itself in an outside app.
@@ -913,10 +920,12 @@ const make = Effect.gen(function* () {
       const commandId =
         request?.commandId ??
         CommandId.make(`fork-bot-launch:${bot.id}:${SecureRandom.uuidV4Unsafe()}`);
+      const threadId = ThreadId.make(`${BOT_THREAD_PREFIX}${commandId}`);
+      if (beforeSend !== undefined) yield* beforeSend(threadId);
       const launched = yield* launches
         .launch({
           commandId,
-          threadId: ThreadId.make(`${BOT_THREAD_PREFIX}${commandId}`),
+          threadId,
           projectId: bot.projectId,
           title: bot.name,
           generateTitle: false,
@@ -952,6 +961,7 @@ const make = Effect.gen(function* () {
       };
     }
 
+    if (beforeSend !== undefined) yield* beforeSend(existingThread);
     const messageId =
       request?.messageId ?? MessageId.make(`fork-bot-message:${SecureRandom.uuidV4Unsafe()}`);
     const send = threads
@@ -1048,32 +1058,30 @@ const make = Effect.gen(function* () {
             message: `The coordinator of project ${parsed.projectId} changed; try again.`,
           });
         }
-        // Kept before the coordinator can touch a note, so going back undoes all of it.
-        const { previous, undo, attach } = yield* memory
-          .checkpoint(parsed.projectId, parsed.text, parsed.revision)
-          .pipe(
-            Effect.mapError((error) =>
-              error.reason === "conflict"
-                ? new ForkBotsError({ reason: "conflict", message: error.message })
-                : unavailable(error.message),
-            ),
-          );
+        // Kept once every check passed and the thread is known, right before the turn is sent,
+        // so going back undoes all of it. A failure after that keeps the copy: the turn may run.
+        let previous: ForkMemoryPrevious | undefined;
         const sent = yield* deliver(
           bot,
           memoryCorrectionMessage(parsed.text),
           { handoffHops: 0 },
           undefined,
-          // Only a typed failure: an interruption may come after the turn was committed, and
-          // undoing then would leave the correction applied with no way back.
-        ).pipe(Effect.tapError(() => undo));
-        // Under this lock, so a restore waiting on it already sees the thread to watch.
-        const attached = yield* attach(sent.threadId);
-        return {
-          threadId: sent.threadId,
-          queued: sent.queued,
-          handle: bot.handle,
-          previous: attached ? { ...previous, threadId: sent.threadId } : previous,
-        };
+          undefined,
+          undefined,
+          (threadId) =>
+            memory.checkpoint(parsed.projectId, parsed.text, parsed.revision, threadId).pipe(
+              Effect.mapError((error) =>
+                error.reason === "conflict"
+                  ? new ForkBotsError({ reason: "conflict", message: error.message })
+                  : unavailable(error.message),
+              ),
+              Effect.map((kept) => {
+                previous = kept;
+              }),
+            ),
+        );
+        if (previous === undefined) return yield* unavailable("The memory copy was not kept.");
+        return { threadId: sent.threadId, queued: sent.queued, handle: bot.handle, previous };
       }),
     );
   });
