@@ -141,6 +141,53 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
   );
 });
 
+it.layer(layerTest)("DispatchModeLimit on a queued run", (it) => {
+  it.effect("cancels a limited sender's queued run once its user raised the thread", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:limit-queued");
+      yield* createThread(threadId);
+      const send = (
+        key: string,
+        dispatchMode: { readonly type: "start_immediately" | "queue_after_active" },
+      ) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`limit-queued-${key}`),
+          threadId,
+          messageId: MessageId.make(`limit-queued-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection: { instanceId, model: "gpt-5" },
+          dispatchMode,
+          createdBy: "agent",
+          creationSource: "server",
+        });
+      yield* send("active", { type: "start_immediately" });
+      yield* send("queued", { type: "queue_after_active" }).pipe(
+        Effect.provideService(DispatchModeLimit, supervised),
+      );
+      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.equal(queued?.status, "queued");
+      // The user raises the thread while the sender's run waits, then the active one ends.
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("limit-queued-raise"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("limit-queued-interrupt"),
+        threadId,
+        runId: active!.id,
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === queued!.id)?.status, "cancelled");
+    }),
+  );
+});
+
 const layerPolicyDatabase = SqlitePersistence.layerMemory;
 const layerWithCeiling = Layer.mergeAll(
   layerPolicyDatabase,

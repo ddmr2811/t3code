@@ -86,6 +86,7 @@ import {
   EMPTY_BOT_DIRECTORY,
   FORK_BOTS_PROPOSALS_MAX_BYTES,
   FORK_BOTS_VETOES_PER_PROJECT,
+  FORMER_THREADS_KEPT,
   listBots,
   type StoredBotDirectory,
 } from "./store.ts";
@@ -122,6 +123,8 @@ export class ForkBots extends Context.Service<
     ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Whether a thread is a bot's current one; answered from memory. */
     readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** A bot's thread now or one a bot has left: a workflow continues neither by id. */
+    readonly wasBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
     /** A bot thread was served a tool list with bot_handoff under this MCP credential. */
     readonly noteHandoffToolsListed: (
       threadId: ThreadId,
@@ -355,22 +358,40 @@ const make = Effect.gen(function* () {
   });
   // MCP asks on every request whether the caller is a bot's thread, so the answer stays in memory.
   const botThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  // Those and the threads bots have left, which keep the modes the bot had there.
+  const everBotThreads = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
   // The MCP credential (one per provider session) that last listed bot_handoff, per bot thread.
   const handoffListedBy = new Map<ThreadId, string>();
+  const threadsOf = (directory: StoredBotDirectory) =>
+    new Set(directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId])));
   const remember = (directory: StoredBotDirectory) =>
     Effect.suspend(() => {
-      const threads = new Set(
-        directory.bots.flatMap((bot) => (bot.threadId === null ? [] : [bot.threadId])),
-      );
+      const threads = threadsOf(directory);
       for (const threadId of handoffListedBy.keys()) {
         if (!threads.has(threadId)) handoffListedBy.delete(threadId);
       }
-      return Ref.set(botThreads, threads);
+      return Ref.set(botThreads, threads).pipe(
+        Effect.andThen(Ref.set(everBotThreads, new Set([...directory.formerThreads, ...threads]))),
+      );
     });
   const fileStore = {
     read: () => rawStore.read().pipe(Effect.tap(remember)),
-    write: (directory: StoredBotDirectory) =>
-      rawStore.write(directory).pipe(Effect.andThen(remember(directory))),
+    // Every write follows a read, so `botThreads` holds the threads the file had until now.
+    write: Effect.fn("ForkBots.writeStore")(function* (directory: StoredBotDirectory) {
+      const kept = threadsOf(directory);
+      const left = [...(yield* Ref.get(botThreads))].filter(
+        (threadId) => !kept.has(threadId) && !directory.formerThreads.includes(threadId),
+      );
+      const next =
+        left.length === 0
+          ? directory
+          : {
+              ...directory,
+              formerThreads: [...directory.formerThreads, ...left].slice(-FORMER_THREADS_KEPT),
+            };
+      yield* rawStore.write(next);
+      yield* remember(next);
+    }),
   };
   // A handoff still `pending` at start was cut short by a stop; it may be sent again.
   yield* fileStore.read().pipe(
@@ -1514,6 +1535,9 @@ const make = Effect.gen(function* () {
     // Untraced: /mcp asks on every request, inside the request's own span.
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);
+    }),
+    wasBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
+      return (yield* Ref.get(everBotThreads)).has(threadId);
     }),
     // Untraced: /mcp calls it on every tool list a bot's thread asks for.
     noteHandoffToolsListed: Effect.fnUntraced(function* (

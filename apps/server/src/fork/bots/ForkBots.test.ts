@@ -339,6 +339,20 @@ const byNameOrThread = workflow(
     }),
 );
 
+/** A step that continues a thread by its id. */
+const byThread = workflow(
+  "por-hilo",
+  { version: 1, payload: Schema.Struct({ threadId: Schema.String }), returns: Schema.String },
+  (payload) =>
+    Effect.gen(function* () {
+      const continued = yield* agent.try("seguir", {
+        thread: { threadId: payload.threadId },
+        brief: "sigue donde lo dejó el bot",
+      });
+      return continued.outcome;
+    }),
+);
+
 const baseBot = {
   handle: "revisor",
   name: "Revisor",
@@ -879,7 +893,7 @@ describe("ForkBots", () => {
             [byNameOrThread],
             {
               workflowTurn: service.workflowTurn,
-              isBotThread: service.isBotThread,
+              wasBotThread: service.wasBotThread,
               callAsBot: () => Effect.die("not used"),
             },
             agents,
@@ -898,6 +912,52 @@ describe("ForkBots", () => {
           // the thread behind the bot's back.
           expect(launched).toEqual([threadId]);
           expect(sentTo).toEqual([threadId]);
+          expect(upstream).toEqual([]);
+        }),
+      ),
+    );
+
+    it.live("a workflow does not continue by id a thread the bot has left", () =>
+      withBots(({ service }) =>
+        Effect.gen(function* () {
+          const bot = yield* service.upsert({ ...baseBot, handle: "triaje", runtimeMode: "auto" });
+          const { threadId } = yield* service.sendMessage({ id: bot.id, text: "hola" });
+          // Lowering the bot's mode leaves that thread in the mode it had.
+          yield* service.upsert({
+            ...baseBot,
+            id: bot.id,
+            handle: "triaje",
+            runtimeMode: "approval-required",
+          });
+          const upstream: Array<string | undefined> = [];
+          const agents = WorkflowAgents.of({
+            start: (input) =>
+              Effect.sync(() => {
+                upstream.push(input.thread);
+                return { threadId: input.thread ?? "nuevo", turnId: input.key };
+              }),
+            result: () => Effect.succeed({ ending: "completed", detail: "", reply: "hecho" }),
+            interrupt: () => Effect.succeed("ended"),
+          });
+          const result = yield* withWorkflowEngine(
+            [byThread],
+            {
+              workflowTurn: service.workflowTurn,
+              wasBotThread: service.wasBotThread,
+              callAsBot: () => Effect.die("not used"),
+            },
+            agents,
+            Effect.gen(function* () {
+              const workflows = yield* Workflows.Workflows;
+              const { runId } = yield* workflows.start(
+                "por-hilo",
+                { threadId },
+                { idempotencyKey: "1" },
+              );
+              return (yield* workflows.waitFor(runId, (run) => run.status === "completed")).result;
+            }),
+          );
+          expect(result).toBe("failed");
           expect(upstream).toEqual([]);
         }),
       ),

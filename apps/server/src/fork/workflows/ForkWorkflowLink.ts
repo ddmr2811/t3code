@@ -10,7 +10,7 @@ import * as ForkIntegrations from "../integrations/ForkIntegrations.ts";
 
 export interface ForkWorkflowHooks {
   readonly workflowTurn: ForkBots.ForkBots["Service"]["workflowTurn"];
-  readonly isBotThread: ForkBots.ForkBots["Service"]["isBotThread"];
+  readonly wasBotThread: ForkBots.ForkBots["Service"]["wasBotThread"];
   readonly callAsBot: ForkIntegrations.ForkIntegrations["Service"]["callAsBot"];
 }
 
@@ -30,7 +30,7 @@ export const layerFill = Layer.effectDiscard(
     const integrations = yield* ForkIntegrations.ForkIntegrations;
     link.current = {
       workflowTurn: bots.workflowTurn,
-      isBotThread: bots.isBotThread,
+      wasBotThread: bots.wasBotThread,
       callAsBot: integrations.callAsBot,
     };
     yield* Effect.addFinalizer(() =>

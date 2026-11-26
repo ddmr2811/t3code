@@ -8,6 +8,7 @@ import {
   type ForkBotListResult,
   IsoDateTime,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -32,6 +33,9 @@ export const FORK_BOTS_VETOES_PER_PROJECT = 20;
 /** Pending proposals stop here, in UTF-8 bytes as saved, so bots added by hand keep room. */
 export const FORK_BOTS_PROPOSALS_MAX_BYTES = 512 * 1024;
 
+/** Threads left behind that are still remembered, about 60 KB at most. */
+export const FORMER_THREADS_KEPT = 1000;
+
 /** A «No» to a proposed bot. Never sent to clients. */
 const StoredVeto = Schema.Struct({
   projectId: ProjectId,
@@ -50,6 +54,8 @@ export const StoredBotDirectory = Schema.Struct({
   /** Oldest first: every pending one and each project's last answered, for the weekly wait. */
   proposals: Schema.Array(ForkBotProposal).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   vetoes: Schema.Array(StoredVeto).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Threads a bot has left, oldest first: a workflow reaches none of them by id. */
+  formerThreads: Schema.Array(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type StoredBotDirectory = typeof StoredBotDirectory.Type;
 
@@ -60,6 +66,7 @@ export const EMPTY_BOT_DIRECTORY: StoredBotDirectory = {
   handoffs: [],
   proposals: [],
   vetoes: [],
+  formerThreads: [],
 };
 
 export const decodeStoredBotDirectory = Schema.decodeUnknownEffect(

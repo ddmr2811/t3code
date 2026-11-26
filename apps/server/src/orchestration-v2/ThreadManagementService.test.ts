@@ -1307,3 +1307,55 @@ it.effect(
       }).pipe(Effect.provide(layerTest));
     }),
 );
+
+it.effect("interrupts a queued run that started before its cancel reached it", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:cancel-started");
+    const threadId = ThreadId.make("thread:thread-management:cancel-started");
+    const runId = RunId.make("run:cancel-started");
+    // Queued when read; started by the time the cancel is dispatched.
+    let status = "queued";
+    const dispatched: Array<string> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [{ id: runId, ordinal: 1, status }],
+              providerTurns: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: (command) =>
+            Effect.suspend(() => {
+              dispatched.push(command.type);
+              if (command.type !== "queued-run.cancel") {
+                return Effect.succeed({ sequence: 1, storedEvents: [] } as never);
+              }
+              status = "running";
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: `Run ${runId} is not queued.`,
+                }),
+              );
+            }),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const result = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* service.interruptThread({
+        projectId,
+        threadId,
+        runId,
+        commandId: CommandId.make("command:thread-management:cancel-started"),
+      });
+    }).pipe(Effect.provide(layerTest));
+    expect(result.type).toBe("interrupt_requested");
+    expect(dispatched).toEqual(["queued-run.cancel", "run.interrupt"]);
+  }),
+);

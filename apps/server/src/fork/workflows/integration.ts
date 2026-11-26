@@ -1,26 +1,42 @@
 // A code step that acts in an outside app as one of the fork's bots, within the bot's card.
-import type { ForkIntegrationApp } from "@t3tools/contracts";
+import { ForkIntegrationApp } from "@t3tools/contracts";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { checkOptions } from "../../workflows/options.ts";
-import { step } from "../../workflows/workflow.ts";
+import { RunContext, step } from "../../workflows/workflow.ts";
 import { ask } from "../../workflows/workflowAgent.ts";
+import { sortKeys } from "../integrations/ForkIntegrations.ts";
 import { hooks } from "./ForkWorkflowLink.ts";
 
+/** The exact call a question puts to the user, kept with the step so a yes runs only this. */
+const Asked = Schema.Struct({
+  botId: Schema.String,
+  bot: Schema.String,
+  app: ForkIntegrationApp,
+  action: Schema.String,
+  arguments: Schema.Record(Schema.String, Schema.Json),
+});
+
 const Outcome = Schema.Struct({
-  status: Schema.Literals(["done", "failed", "denied", "ask"]),
+  status: Schema.Literals(["done", "failed", "denied", "ask", "unknown"]),
   text: Schema.String,
+  asked: Schema.optional(Asked),
 });
 
 export interface IntegrationResult {
-  readonly status: "done" | "failed" | "denied";
+  /** `unknown`: the yes was sent once and its answer was lost, so it is not sent again. */
+  readonly status: "done" | "failed" | "denied" | "unknown";
   readonly text: string;
 }
 
 const APP_LABELS: Record<ForkIntegrationApp, string> = { github: "GitHub" };
+
+const bare = (handle: string) => handle.replace(/^@/, "").toLowerCase();
+const callText = (call: Omit<typeof Asked.Type, "botId">) =>
+  JSON.stringify(sortKeys([bare(call.bot), call.app, call.action, call.arguments]));
 
 /**
  * Runs `action` in `app` as bot `bot`. What its card allows runs at once; what it sends to the user
@@ -40,26 +56,31 @@ export const integration = Effect.fn("workflow.integration")(function* (
 ) {
   checkOptions(`integration("${name}")`, options, ["bot", "app", "action", "arguments", "timeout"]);
   const input = { app: options.app, action: options.action, arguments: options.arguments };
+  const call = { bot: options.bot, ...input };
   // Read in the body: a step's code sees only the step's own services.
   const fork = yield* Effect.orDie(hooks);
-  const callAs = (approved: boolean) =>
-    fork.callAsBot(options.bot, input, approved).pipe(Effect.mapError((error) => error.message));
-  const first = yield* step(name, { returns: Outcome }, callAs(false));
-  if (first.status !== "ask") return first as IntegrationResult;
-  const app = APP_LABELS[options.app];
+  const run = yield* RunContext;
+  const first = yield* step(
+    name,
+    { returns: Outcome },
+    fork.callAsBot({ handle: options.bot }, input, false).pipe(
+      Effect.map(({ status, text, botId }) =>
+        status === "ask" && botId !== undefined
+          ? { status, text, asked: { ...call, botId } }
+          : { status, text },
+      ),
+      Effect.mapError((error) => error.message),
+    ),
+  );
+  if (first.status !== "ask" || first.asked === undefined) return first as IntegrationResult;
+  const asked = first.asked;
   const answer = yield* ask(`${name}/pregunta`, {
-    title: `¿Dejo que @${options.bot} haga ${options.action} en ${app}?`,
+    title: `¿Dejo que @${asked.bot} haga ${asked.action} en ${APP_LABELS[asked.app]}?`,
     choices: [
       { value: "Sí", description: "Una sola vez, con estos argumentos exactos." },
       { value: "No", description: "El flujo sigue sin hacerlo." },
     ],
-    data: {
-      body: `Argumentos exactos: ${first.text}`,
-      bot: options.bot,
-      app: options.app,
-      action: options.action,
-      arguments: options.arguments,
-    },
+    data: { bot: asked.bot, app: asked.app, action: asked.action, arguments: asked.arguments },
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
   });
   if (Option.isNone(answer) || answer.value.choice !== "Sí") {
@@ -73,6 +94,30 @@ export const integration = Effect.fn("workflow.integration")(function* (
       text: "The yes did not come from the user's app, so nothing ran.",
     } satisfies IntegrationResult;
   }
+  // A definition edited while the question waited asks for something the user never saw.
+  if (callText(call) !== callText(asked)) {
+    return {
+      status: "denied",
+      text: "The step changed after the question was asked, so nothing ran.",
+    } satisfies IntegrationResult;
+  }
+  // Counted before GitHub is called: a step resumed after a lost answer must not send it again.
+  const yes = Effect.gen(function* () {
+    if ((yield* run.store.mark(run.runId, `${name}/si/enviado`)) > 1) {
+      return {
+        status: "unknown",
+        text: "The yes was already sent once and its answer was lost; check the app before asking again.",
+      } satisfies IntegrationResult;
+    }
+    const { status, text } = yield* fork
+      .callAsBot(
+        { id: asked.botId },
+        { app: asked.app, action: asked.action, arguments: asked.arguments },
+        true,
+      )
+      .pipe(Effect.mapError((error) => error.message));
+    return { status, text };
+  });
   // Checked again on the yes: a card lowered to deny since the question still refuses.
-  return (yield* step(`${name}/si`, { returns: Outcome }, callAs(true))) as IntegrationResult;
+  return (yield* step(`${name}/si`, { returns: Outcome }, yes)) as IntegrationResult;
 });

@@ -11,6 +11,7 @@ import {
   EnvironmentId,
   type ForkBot,
   type ForkBotIntegrations,
+  ForkIntegrationsError,
   ProjectId,
   type ProviderInteractionMode,
   ProviderInstanceId,
@@ -152,6 +153,8 @@ interface Harness {
   >;
   readonly logs: Array<string>;
   readonly stateFiles: Effect.Effect<string>;
+  /** The administrator's policy, which a test may lower as a new one read at a restart would. */
+  readonly policy: { limits?: { maxRuntimeMode?: RuntimeMode } };
 }
 
 /**
@@ -170,6 +173,10 @@ const withIntegrations = <A, E, R>(
       const logs: Array<string> = [];
       const threadModes: Harness["threadModes"] = new Map();
       const threadProjects = new Map<ThreadId, ProjectId>();
+      const policy = { organization: "Acme", lockedSettings: [] } as Harness["policy"] & {
+        organization: string;
+        lockedSettings: Array<string>;
+      };
       const shellOf = (threadId: ThreadId) => ({
         ...liveThreadShell(threadId, threadModes.get(threadId)),
         projectId: threadProjects.get(threadId) ?? projectA,
@@ -208,12 +215,16 @@ const withIntegrations = <A, E, R>(
         ProviderInstallationGate.layer,
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          managedPolicy: policy,
         }),
         Layer.mock(ScheduledTasks.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] } as never),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
-        Layer.mock(McpProviderSessions.McpProviderSessions)({ read: () => Effect.undefined }),
+        Layer.mock(McpProviderSessions.McpProviderSessions)({
+          read: () => Effect.undefined,
+          toolResultEpoch: () => Effect.succeed(0),
+        }),
       );
       const layer = ForkIntegrations.layerWith({
         githubCommand: binary ?? "",
@@ -271,6 +282,7 @@ const withIntegrations = <A, E, R>(
           threadModes,
           logs,
           stateFiles,
+          policy,
         });
       }).pipe(Effect.provide(layer));
     }),
@@ -627,22 +639,50 @@ const asTheBot = workflow(
     }),
 );
 
+/** One comment, whose text the test may change while it waits, as an edited definition would. */
+const definition = { body: "hola" };
+const commentOnce = workflow(
+  "comentar-una-vez",
+  { version: 1, payload: Schema.Struct({}), returns: Schema.String },
+  () =>
+    Effect.gen(function* () {
+      const commented = yield* integration("comentar", {
+        bot: "ana",
+        ...comment,
+        arguments: { ...comment.arguments, body: definition.body },
+      });
+      return commented.status;
+    }),
+);
+
 const noAgents = WorkflowAgents.of({
   start: () => Effect.die("No agent step runs here; only the integration steps reach the bots."),
   result: () => Effect.die("No agent step runs here."),
   interrupt: () => Effect.die("No agent step runs here."),
 });
-const withEngine = <A, E>(harness: Harness, use: Effect.Effect<A, E, Workflows.Workflows>) =>
+const withEngine = <A, E>(
+  harness: Harness,
+  use: Effect.Effect<A, E, Workflows.Workflows>,
+  callAsBot = harness.service.callAsBot,
+) =>
   withWorkflowEngine(
-    [asTheBot],
+    [asTheBot, commentOnce],
     {
       workflowTurn: harness.forkBots.workflowTurn,
-      isBotThread: harness.forkBots.isBotThread,
-      callAsBot: harness.service.callAsBot,
+      wasBotThread: harness.forkBots.wasBotThread,
+      callAsBot,
     },
     noAgents,
     use,
   );
+/** Waits on the one comment `commentOnce` asks for, its text as the definition has it now. */
+const askedOnce = Effect.gen(function* () {
+  definition.body = "hola";
+  const workflows = yield* Workflows.Workflows;
+  const { runId } = yield* workflows.start("comentar-una-vez", {}, { idempotencyKey: "1" });
+  yield* workflows.waitFor(runId, (run) => run.status === "waiting");
+  return { workflows, runId };
+});
 /** An answer given in the ADE: the server stamps the client session it came from. */
 const fromTheApp = { label: "ADE", sessionId: "session-1" };
 
@@ -691,6 +731,88 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("workflows a
           );
           const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
           expect(done.result).toEqual(["done", "denied", "denied"]);
+          expect(writes(harness.github.seen)).toEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.live("a yes whose answer was lost is not sent again when the run resumes", () =>
+    withIntegrations({ github: { comment: "ask" } }, (harness) => {
+      // GitHub saves the comment, and its answer never reaches the server.
+      let lost = false;
+      const losesTheAnswer: typeof harness.service.callAsBot = (who, input, approved) =>
+        harness.service.callAsBot(who, input, approved).pipe(
+          Effect.flatMap((result) => {
+            if (!approved || lost) return Effect.succeed(result);
+            lost = true;
+            return Effect.fail(
+              new ForkIntegrationsError({ reason: "unavailable", message: "no answer" }),
+            );
+          }),
+        );
+      return withEngine(
+        harness,
+        Effect.gen(function* () {
+          const { workflows, runId } = yield* askedOnce;
+          yield* workflows.answer(runId, "comentar/pregunta", { choice: "Sí" }, fromTheApp);
+          yield* workflows.waitFor(runId, (run) => run.status === "paused");
+          yield* workflows.resume(runId);
+          const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
+          expect(done.result).toBe("unknown");
+          expect(writes(harness.github.seen)).toHaveLength(1);
+        }),
+        losesTheAnswer,
+      );
+    }),
+  );
+
+  it.live("a yes runs nothing when the step was edited after it asked", () =>
+    withIntegrations({ github: { comment: "ask" } }, (harness) =>
+      withEngine(
+        harness,
+        Effect.gen(function* () {
+          const { workflows, runId } = yield* askedOnce;
+          definition.body = "otra cosa";
+          yield* workflows.answer(runId, "comentar/pregunta", { choice: "Sí" }, fromTheApp);
+          const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
+          expect(done.result).toBe("denied");
+          expect(writes(harness.github.seen)).toEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.live("a yes runs as the bot that asked, not one given its handle since", () =>
+    withIntegrations({ github: { comment: "ask" } }, (harness) =>
+      withEngine(
+        harness,
+        Effect.gen(function* () {
+          const { workflows, runId } = yield* askedOnce;
+          yield* harness.forkBots.remove({ id: harness.bot.id });
+          yield* harness.makeBot("ana", { github: { comment: "allow" } });
+          yield* workflows.answer(runId, "comentar/pregunta", { choice: "Sí" }, fromTheApp);
+          const done = yield* workflows.waitFor(runId, (run) => run.status === "completed");
+          expect(done.result).toBe("denied");
+          expect(writes(harness.github.seen)).toEqual([]);
+        }),
+      ),
+    ),
+  );
+
+  it.live("a card saved above a ceiling lowered since asks before it writes", () =>
+    withIntegrations({ github: { comment: "allow" } }, (harness) =>
+      withEngine(
+        harness,
+        Effect.gen(function* () {
+          harness.policy.limits = { maxRuntimeMode: "approval-required" };
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start("comentar-una-vez", {}, { idempotencyKey: "1" });
+          const run = yield* workflows.waitFor(
+            runId,
+            (current) => current.status === "waiting" || current.status === "completed",
+          );
+          expect(run.status).toBe("waiting");
           expect(writes(harness.github.seen)).toEqual([]);
         }),
       ),

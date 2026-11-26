@@ -1391,8 +1391,8 @@ const make = Effect.gen(function* () {
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = Effect.fn(
     "ThreadManagementService.interruptThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
-    const explicitRun =
+    let target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    let explicitRun =
       input.runId === undefined
         ? undefined
         : target.runs.find((candidate) => candidate.id === input.runId);
@@ -1402,22 +1402,36 @@ const make = Effect.gen(function* () {
         runId: input.runId,
       });
     }
-    if (explicitRun !== undefined && isTerminalRunStatus(explicitRun.status)) {
-      return {
+    const terminal = (run: OrchestrationV2Run) =>
+      ({
         type: "already_terminal",
-        run: explicitRun as OrchestrationV2Run & {
-          readonly status: ThreadManagementTerminalRunStatus;
-        },
-      } as const;
+        run: run as OrchestrationV2Run & { readonly status: ThreadManagementTerminalRunStatus },
+      }) as const;
+    if (explicitRun !== undefined && isTerminalRunStatus(explicitRun.status)) {
+      return terminal(explicitRun);
     }
+    let commandId = input.commandId;
     if (explicitRun?.status === "queued") {
-      const dispatch = yield* orchestrator.dispatch({
-        type: "queued-run.cancel",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        runId: explicitRun.id,
-      });
-      return { type: "interrupt_requested", run: explicitRun, dispatch } as const;
+      const queued = explicitRun;
+      const cancelled = yield* orchestrator
+        .dispatch({
+          type: "queued-run.cancel",
+          commandId: input.commandId,
+          threadId: input.threadId,
+          runId: queued.id,
+        })
+        .pipe(Effect.result);
+      if (cancelled._tag === "Success") {
+        return { type: "interrupt_requested", run: queued, dispatch: cancelled.success } as const;
+      }
+      // It may have left the queue since it was read: then it is interrupted like a running one.
+      commandId = CommandId.make(`${input.commandId}:started`);
+      target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+      explicitRun = target.runs.find((candidate) => candidate.id === queued.id);
+      if (explicitRun === undefined || explicitRun.status === "queued") {
+        return yield* cancelled.failure;
+      }
+      if (isTerminalRunStatus(explicitRun.status)) return terminal(explicitRun);
     }
     const interruptibleRun = latestActiveRun(target);
     if (interruptibleRun === undefined) {
@@ -1437,7 +1451,7 @@ const make = Effect.gen(function* () {
     }
     const dispatch = yield* orchestrator.dispatch({
       type: "run.interrupt",
-      commandId: input.commandId,
+      commandId,
       threadId: input.threadId,
       runId: interruptibleRun.id,
       ...(input.reason === undefined ? {} : { reason: input.reason }),

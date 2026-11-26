@@ -566,12 +566,14 @@ describe("readWorkflowQuestion", () => {
       title: "Ship it?",
       choices: [{ value: "yes", description: null, requireReason: false }],
       body: "Diff is small.",
+      arguments: null,
       links: [],
     });
     expect(readWorkflowQuestion(question("r", null))).toEqual({
       title: "approve",
       choices: [],
       body: null,
+      arguments: null,
       links: [],
     });
   });
@@ -597,8 +599,15 @@ describe("readWorkflowQuestion", () => {
         { value: "No", description: "It is closed", requireReason: true },
       ],
       body: null,
+      arguments: null,
       links: [{ label: "The request", url: "https://example.com/1" }],
     });
+  });
+
+  it("keeps the arguments a yes runs exactly as sent, Markdown marks included", () => {
+    const args = { body: "**no** __es__ `código`\n- lista", issue_number: 7 };
+    const view = readWorkflowQuestion(question("r", { data: { arguments: args } }));
+    expect(JSON.parse(view.arguments ?? "null")).toEqual(args);
   });
 });
 

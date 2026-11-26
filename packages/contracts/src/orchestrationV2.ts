@@ -854,6 +854,10 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  /** The modes its sender may use. Queued, it is cancelled rather than start above them. */
+  modeLimit: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
   /** The JSON Schema of the result this run was asked to return as data. */
   outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
   /**

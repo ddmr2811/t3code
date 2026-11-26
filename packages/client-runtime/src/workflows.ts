@@ -35,6 +35,8 @@ export interface WorkflowQuestionView {
   readonly title: string;
   readonly choices: ReadonlyArray<WorkflowQuestionChoice>;
   readonly body: string | null;
+  /** The exact arguments a yes runs, as JSON to show as they are: never read as Markdown. */
+  readonly arguments: string | null;
   readonly links: ReadonlyArray<WorkflowQuestionLink>;
 }
 
@@ -46,6 +48,9 @@ function field(value: unknown, key: string): unknown {
 
 const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
+
+const argumentsOf = (value: unknown): string | null =>
+  typeof value === "object" && value !== null ? JSON.stringify(value, null, 2) : null;
 
 const isWebUrl = (url: string) => {
   const protocol = URL.parse(url)?.protocol;
@@ -77,6 +82,7 @@ export function readWorkflowQuestion(question: WorkflowQuestion): WorkflowQuesti
           })
       : [],
     body: text(field(field(question.request, "data"), "body")),
+    arguments: argumentsOf(field(field(question.request, "data"), "arguments")),
     links: Array.isArray(links)
       ? links.flatMap((link) => {
           const label = text(field(link, "label"));

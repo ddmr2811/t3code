@@ -685,8 +685,6 @@ function WorkflowNotice(
   );
   const [reason, setReason] = useState("");
   const view = readWorkflowQuestion(props.open.question);
-  const data = props.open.question.request as { readonly data?: { readonly arguments?: unknown } };
-  const args = data?.data?.arguments;
   const disabled = canAnswer !== true || props.sending;
   const needsReason = view.choices.some((choice) => choice.requireReason);
   return (
@@ -715,14 +713,11 @@ function WorkflowNotice(
         </>
       }
     >
-      {/* An integration step's body repeats its arguments, shown laid out below instead. */}
-      {view.body === null || args !== undefined ? null : (
-        <p className="ade-request-note">{view.body}</p>
-      )}
-      {args === undefined ? null : (
+      {view.body === null ? null : <p className="ade-request-note">{view.body}</p>}
+      {view.arguments === null ? null : (
         <div className="ade-proposal-instructions">
           <p className="ade-request-note">Argumentos exactos</p>
-          <pre>{JSON.stringify(args, null, 2)}</pre>
+          <pre>{view.arguments}</pre>
         </div>
       )}
       {view.choices.some((choice) => choice.description !== null) ? (

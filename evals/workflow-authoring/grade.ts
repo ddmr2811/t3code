@@ -132,16 +132,19 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const link = Layer.succeed(ForkWorkflowLink, {
     current: {
       workflowTurn: () => Effect.die("Bot turns go through WorkflowAgents in this eval."),
-      isBotThread: () => Effect.succeed(false),
-      callAsBot: (bot, input, approved) =>
+      wasBotThread: () => Effect.succeed(false),
+      // A bot's id here is its handle, so a yes names the same bot its question did.
+      callAsBot: (who, input, approved) =>
         Effect.sync(() => {
-          const call = { bot, ...input, approved };
+          const bot = "id" in who ? who.id : who.handle;
+          const { app, action } = input;
+          const call = { bot, app, action, arguments: input.arguments, approved };
           integrations.push(call);
           const reads = /^(get|list|search)_|_read$/.test(input.action);
           if (reads) return { status: "done" as const, text: read(call) };
           return approved
             ? { status: "done" as const, text: "{}" }
-            : { status: "ask" as const, text: "{}" };
+            : { status: "ask" as const, text: "{}", botId: bot };
         }),
     },
   });
