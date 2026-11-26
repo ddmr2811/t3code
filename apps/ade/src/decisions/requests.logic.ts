@@ -1,5 +1,9 @@
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
-import { pruneResolvedUserInputDrafts } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  pruneResolvedUserInputDrafts,
+  type ThreadPendingApproval,
+  type ThreadPendingUserInput,
+} from "@t3tools/client-runtime/state/thread-requests";
 import type {
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
@@ -129,4 +133,53 @@ export function approvalMayCoverTurn(
     request.requestKind === "command" &&
     request.nativeItemRef?.driver === "acpRegistry"
   );
+}
+
+const QUICK_PICK_MAX_OPTIONS = 4;
+
+/**
+ * What Inicio's «Para ti» can answer in one tap, from the request the tray shows first: a plain
+ * one-time «Sí»/«No», or one pick from a short list. Anything that needs more reading than a
+ * line (wider grants, push hooks, a full-access override, several questions) opens the thread.
+ */
+export function quickAnswer<
+  A extends Pick<
+    ThreadPendingApproval,
+    "responseCapability" | "options" | "pushHooks" | "fullAccessOverride"
+  >,
+  Q extends Pick<ThreadPendingUserInput, "responseCapability" | "questions">,
+>(requests: {
+  readonly approvals: ReadonlyArray<A>;
+  readonly userInputs: ReadonlyArray<Q>;
+}):
+  | { readonly kind: "approval"; readonly approval: A; readonly no: ProviderApprovalDecision }
+  | { readonly kind: "pick"; readonly prompt: Q; readonly question: Q["questions"][number] }
+  | { readonly kind: "open" } {
+  const approval = requests.approvals[0];
+  if (approval !== undefined) {
+    const choices = approvalChoices(approval.options);
+    const no =
+      choices.find((choice) => choice.decision === "decline") ??
+      choices.find((choice) => choice.decision === "cancel");
+    const plain =
+      approval.responseCapability === "live" &&
+      approval.pushHooks === undefined &&
+      approval.fullAccessOverride === undefined &&
+      choices.some((choice) => choice.decision === "accept") &&
+      no !== undefined;
+    return plain ? { kind: "approval", approval, no: no.decision } : { kind: "open" };
+  }
+  const prompt = requests.userInputs[0];
+  const question = prompt?.questions.length === 1 ? prompt.questions[0] : undefined;
+  if (
+    prompt === undefined ||
+    question === undefined ||
+    prompt.responseCapability === "not_resumable" ||
+    question.multiSelect ||
+    question.options.length === 0 ||
+    question.options.length > QUICK_PICK_MAX_OPTIONS
+  ) {
+    return { kind: "open" };
+  }
+  return { kind: "pick", prompt, question };
 }

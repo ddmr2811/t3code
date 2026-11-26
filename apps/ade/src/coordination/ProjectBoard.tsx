@@ -66,7 +66,7 @@ interface EditorState {
   readonly draft: CoordinationDraft;
 }
 
-function formatUpdatedShort(iso: string): string {
+export function formatUpdatedShort(iso: string): string {
   const parsed = DateTime.make(iso);
   if (Option.isNone(parsed)) return "";
   const diffMinutes = Math.max(

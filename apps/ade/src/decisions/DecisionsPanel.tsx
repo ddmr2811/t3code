@@ -43,7 +43,7 @@ import {
   tickSnoozeClock,
 } from "./snoozed.ts";
 
-const KIND_LABELS: Record<PendingTrayKind, string> = {
+export const KIND_LABELS: Record<PendingTrayKind, string> = {
   approval: "Aprobación",
   question: "Pregunta",
   plan: "Plan",
