@@ -25,6 +25,8 @@ export const FORK_BOTS_HANDOFF_MAX_HOPS = 4;
 /** Handoffs kept on disk; an id older than the last ones is no longer recognised as a repeat. */
 export const FORK_BOTS_HANDOFF_HISTORY = 100;
 export const FORK_BOTS_HANDOFF_PREVIEW_LENGTH = 200;
+/** Bytes, not characters: an excerpt for the next bot, never the sender's whole history. */
+export const FORK_BOTS_HANDOFF_CONTEXT_MAX_BYTES = 4096;
 /** Shorter than a bot's own: every pending proposal of every project shares the bot file. */
 const FORK_BOTS_PROPOSAL_INSTRUCTIONS_MAX_LENGTH = 4000;
 const FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH = 500;
@@ -42,6 +44,11 @@ const noSingleLineControl = Schema.makeFilter(
 const noMultilineControl = Schema.makeFilter(
   (value: string) => !MULTILINE_CONTROL_PATTERN.test(value),
   { expected: "text without control characters" },
+);
+const utf8 = new TextEncoder();
+const withinHandoffContextBytes = Schema.makeFilter(
+  (value: string) => utf8.encode(value).byteLength <= FORK_BOTS_HANDOFF_CONTEXT_MAX_BYTES,
+  { expected: `at most ${FORK_BOTS_HANDOFF_CONTEXT_MAX_BYTES} bytes of UTF-8` },
 );
 const safeBotId = Schema.makeFilter(
   (value: string) => SAFE_ID_PATTERN.test(value) && !value.includes(".."),
@@ -72,6 +79,10 @@ export const ForkBotMessage = TrimmedNonEmptyString.check(
   Schema.isMaxLength(FORK_BOTS_MESSAGE_MAX_LENGTH),
   noMultilineControl,
 );
+export const ForkBotHandoffContext = TrimmedNonEmptyString.check(
+  withinHandoffContextBytes,
+  noMultilineControl,
+);
 
 export const ForkBot = Schema.Struct({
   id: ForkBotId,
@@ -90,6 +101,8 @@ export const ForkBot = Schema.Struct({
   memoryHash: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Hops of the handoff that last reached it; a message from the user resets it to 0. */
   handoffHops: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Its last finished turn ran on a provider that never reached T3's MCP, so it had no bot_handoff. */
+  handoffToolsMissing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** What it may do in outside apps; nothing unless the user grants it. */
   integrations: ForkBotIntegrations.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   createdAt: IsoDateTime,
@@ -331,6 +344,7 @@ export const ForkBotHandoffInput = Schema.Struct({
   fromId: ForkBotId,
   toHandle: ForkBotHandle,
   text: ForkBotMessage,
+  context: Schema.optionalKey(ForkBotHandoffContext),
 });
 export type ForkBotHandoffInput = typeof ForkBotHandoffInput.Type;
 

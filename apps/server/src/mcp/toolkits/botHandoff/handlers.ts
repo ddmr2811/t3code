@@ -25,7 +25,7 @@ const toFailure = (error: ForkBotsError) =>
   });
 
 export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
-  bot_handoff: McpToolAccess.actsAsCaller(({ handle, text }) =>
+  bot_handoff: McpToolAccess.actsAsCaller(({ handle, text, context }) =>
     Effect.gen(function* () {
       const forkBots = yield* ForkBots.ForkBots;
       const { caller, limits } = yield* loadCaller();
@@ -40,11 +40,28 @@ export const layer = McpToolAccess.toLayer(BotHandoffToolkit, {
       }
       // The same call in the same run gets the same id, so a retried call is not sent twice.
       const id = `handoff:${NodeCrypto.createHash("sha256")
-        .update([caller.id, caller.activeRunId ?? "", handle, text].join("\u0000"))
+        .update(
+          [
+            caller.id,
+            caller.activeRunId ?? "",
+            handle,
+            text,
+            ...(context === undefined ? [] : [context]),
+          ].join("\u0000"),
+        )
         .digest("hex")
         .slice(0, 40)}`;
       const result = yield* forkBots
-        .handoff({ id, fromId: from.id, toHandle: handle, text }, { kind: "agent", limits })
+        .handoff(
+          {
+            id,
+            fromId: from.id,
+            toHandle: handle,
+            text,
+            ...(context === undefined ? {} : { context }),
+          },
+          { kind: "agent", limits },
+        )
         .pipe(Effect.mapError(toFailure));
       return {
         id: result.handoff.id,

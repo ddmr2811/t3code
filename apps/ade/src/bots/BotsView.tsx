@@ -401,6 +401,17 @@ function MachineBots(props: {
                     runId={threadOf(bot)?.latestRun?.runId ?? null}
                   />
                 ) : null}
+                {bot.handoffToolsMissing ? (
+                  <p className="m-0 flex min-w-0 items-center gap-1.5 px-2.5 pb-1 text-xs text-muted-foreground">
+                    <span className="ade-chip shrink-0" data-kind="approval">
+                      Sin traspasos
+                    </span>
+                    <span className="min-w-0">
+                      En su último turno, su proveedor no cargó las herramientas de T3: no puede
+                      pasar trabajo a otros bots.
+                    </span>
+                  </p>
+                ) : null}
                 <BotHandoffs entries={recentHandoffs(handoffs, bots, bot.id, 3)} />
                 <div className="ade-bot-actions">
                   <button

@@ -22,6 +22,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -32,6 +33,7 @@ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import { liveThreadShell } from "../../mcp/McpToolAccess.testkit.ts";
 import * as IntegrationsHandlers from "../../mcp/toolkits/integrations/handlers.ts";
 import { IntegrationsToolkit } from "../../mcp/toolkits/integrations/tools.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -203,6 +205,7 @@ const withIntegrations = <A, E, R>(
         Layer.mock(ScheduledTasks.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] } as never),
         }),
+        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
       );
       const layer = ForkIntegrations.layerWith({
         githubCommand: binary ?? "",
@@ -368,6 +371,16 @@ describe.skipIf(binary === undefined || !NodeFS.existsSync(binary))("ForkIntegra
               "application/json",
             ),
           });
+          // Having reached /mcp, its finished turn does not warn that it lacks bot_handoff.
+          yield* harness.forkBots.noteRunUpdated({
+            threadId: bot.threadId,
+            providerInstanceId: codex,
+            status: "completed",
+          });
+          const bots = (yield* harness.forkBots.list({})).bots;
+          expect(bots.find((candidate) => candidate.id === bot.id)?.handoffToolsMissing).toBe(
+            false,
+          );
           const call = (input: object) =>
             httpClient
               .post("/mcp", {

@@ -22,9 +22,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -225,6 +227,7 @@ const withBots = <A, E, R>(
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([provider, ...draftProviders]),
         }),
+        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.sync(() => settings.current),
         }),
@@ -542,6 +545,52 @@ describe("ForkBots", () => {
           expect(texts.join("\n")).toContain("TRASPASO de @ana");
         }),
       ),
+    );
+
+    it.effect("brings a short context excerpt along with the work and refuses a longer one", () =>
+      withBots(({ service, texts }) =>
+        Effect.gen(function* () {
+          const [ana] = yield* twoBots(service);
+          const send = (id: string, context: string) =>
+            service.handoff(
+              { id, fromId: ana.id, toHandle: "beto", text: "revisa", context },
+              asAgent,
+            );
+          yield* send("handoff:context", "El fallo sale en src/a.ts:12.");
+          expect(texts.at(-1)).toContain("El fallo sale en src/a.ts:12.");
+          // 4097 bytes in 1366 characters: the cap counts bytes, not characters.
+          const tooLong = yield* send("handoff:history", `${"é".repeat(2048)}x`).pipe(Effect.flip);
+          expect(tooLong.reason).toBe("invalidInput");
+          expect(texts).toHaveLength(1);
+        }),
+      ),
+    );
+
+    it.effect(
+      "marks a bot whose finished turn never reached T3's MCP, and clears it once it does",
+      () =>
+        withBots(({ service }) =>
+          Effect.gen(function* () {
+            const [ana] = yield* twoBots(service);
+            const { threadId } = yield* service.sendMessage({ id: ana.id, text: "hola" });
+            const turn = (status: "running" | "completed") =>
+              service.noteRunUpdated({ threadId, providerInstanceId: codex, status });
+            const missing = service
+              .list({})
+              .pipe(
+                Effect.map(
+                  ({ bots }) => bots.find((bot) => bot.id === ana.id)?.handoffToolsMissing,
+                ),
+              );
+            yield* turn("running");
+            expect(yield* missing).toBe(false);
+            yield* turn("completed");
+            expect(yield* missing).toBe(true);
+            yield* service.noteMcpReached(threadId, codex);
+            yield* turn("completed");
+            expect(yield* missing).toBe(false);
+          }),
+        ),
     );
 
     it.effect("ignores a repeated id, also after a restart", () =>

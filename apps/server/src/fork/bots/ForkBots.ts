@@ -33,6 +33,7 @@ import {
   isForkBotDraftModelAllowed,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2Run,
   type ProjectId,
   type ProviderInstanceId,
   type RuntimeMode,
@@ -56,13 +57,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
 import {
   DispatchModeLimit,
   type DispatchModes,
   exceededDispatchModeLimit,
 } from "../../orchestration-v2/DispatchModeLimit.ts";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -70,6 +74,7 @@ import * as ProviderInstallationGate from "../../provider/ProviderInstallationGa
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
+import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
@@ -116,6 +121,15 @@ export class ForkBots extends Context.Service<
     ) => Effect.Effect<ForkBotProposal, ForkBotsError>;
     /** Whether a thread is a bot's current one; answered from memory. */
     readonly isBotThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** A bot thread's provider reached T3's MCP, so it has bot_handoff. */
+    readonly noteMcpReached: (
+      threadId: ThreadId,
+      providerInstanceId: ProviderInstanceId,
+    ) => Effect.Effect<void>;
+    /** At the end of a bot's turn, marks or clears `handoffToolsMissing`. */
+    readonly noteRunUpdated: (
+      run: Pick<OrchestrationV2Run, "threadId" | "providerInstanceId" | "status">,
+    ) => Effect.Effect<void, ForkBotsError>;
   }
 >()("t3/fork/bots/ForkBots") {}
 
@@ -232,10 +246,16 @@ function memoryBlock(notes: ReadonlyArray<ForkMemoryNote>): string {
   ].join("\n");
 }
 
-function handoffMessage(handoff: ForkBotHandoff, from: ForkBot, text: string): string {
+function handoffMessage(
+  handoff: ForkBotHandoff,
+  from: ForkBot,
+  text: string,
+  context: string | undefined,
+): string {
   return [
     `--- TRASPASO de @${from.handle} (${from.name}) · ${handoff.id} · salto ${handoff.hops} de ${FORK_BOTS_HANDOFF_MAX_HOPS} ---`,
     text,
+    ...(context === undefined ? [] : [`--- CONTEXTO de @${from.handle} (extracto) ---`, context]),
     "--- FIN DEL TRASPASO ---",
   ].join("\n");
 }
@@ -332,6 +352,7 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const fileSystem = yield* FileSystem.FileSystem;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
 
   /**
    * A routine copies the mode and model of the thread it continues. When the bot leaves that
@@ -614,6 +635,7 @@ const make = Effect.gen(function* () {
       threadId: kept?.threadId ?? null,
       memoryHash: kept?.memoryHash ?? null,
       handoffHops: existing?.handoffHops ?? 0,
+      handoffToolsMissing: kept?.handoffToolsMissing ?? false,
       archived: existing?.archived ?? false,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -1007,7 +1029,7 @@ const make = Effect.gen(function* () {
         }
         const sent = yield* deliver(
           to,
-          handoffMessage(reserved.handoff, from, parsed.text),
+          handoffMessage(reserved.handoff, from, parsed.text, parsed.context),
           { handoffHops: reserved.handoff.hops },
           sender.kind === "agent" ? sender.limits : undefined,
           sender.kind === "agent" ? from.integrations : undefined,
@@ -1325,6 +1347,51 @@ const make = Effect.gen(function* () {
     return answered;
   });
 
+  // Since this server started; a provider that loads the MCP reaches it again when its session opens.
+  const mcpReached = new Map<ThreadId, Set<ProviderInstanceId>>();
+  const noteRunUpdated = Effect.fn("ForkBots.noteRunUpdated")(function* (
+    run: Pick<OrchestrationV2Run, "threadId" | "providerInstanceId" | "status">,
+  ) {
+    // Only a completed turn: one that failed early may have stopped before the MCP connected.
+    if (run.status !== "completed" || !(yield* Ref.get(botThreads)).has(run.threadId)) return;
+    const missing = mcpReached.get(run.threadId)?.has(run.providerInstanceId) !== true;
+    yield* storeLock.withPermits(1)(
+      Effect.gen(function* () {
+        const directory = yield* fileStore.read();
+        const bot = directory.bots.find((candidate) => candidate.threadId === run.threadId);
+        if (bot === undefined || bot.handoffToolsMissing === missing) return;
+        const now = yield* nowIso;
+        yield* fileStore.write({
+          ...directory,
+          bots: directory.bots.map((candidate) =>
+            candidate.id === bot.id
+              ? { ...candidate, handoffToolsMissing: missing, updatedAt: now }
+              : candidate,
+          ),
+          updatedAt: now,
+        });
+      }),
+    );
+  });
+  yield* forkParked(
+    orchestrator.streamDomainEvents.pipe(
+      Stream.mapEffect((event) =>
+        event.type === "run.updated"
+          ? noteRunUpdated(event.payload).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("fork bots could not check a turn for its handoff tools", {
+                  threadId: event.threadId,
+                  cause,
+                }),
+              ),
+            )
+          : Effect.void,
+      ),
+      Stream.retry(Schedule.spaced("30 seconds")),
+      Stream.runDrain,
+    ),
+  );
+
   return ForkBots.of({
     list,
     propose,
@@ -1340,6 +1407,16 @@ const make = Effect.gen(function* () {
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);
     }),
+    // Untraced: /mcp calls it on every request from a bot's thread, as it does isBotThread.
+    noteMcpReached: Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      providerInstanceId: ProviderInstanceId,
+    ) {
+      const instances = mcpReached.get(threadId) ?? new Set();
+      instances.add(providerInstanceId);
+      mcpReached.set(threadId, instances);
+    }),
+    noteRunUpdated,
   });
 });
 

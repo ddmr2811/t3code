@@ -350,6 +350,12 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined || Option.isNone(forkBots)
         ? false
         : yield* forkBots.value.isBotThread(limited.thread.threadId);
+    if (bot && limited.thread !== undefined && Option.isSome(forkBots)) {
+      yield* forkBots.value.noteMcpReached(
+        limited.thread.threadId,
+        limited.thread.providerInstanceId,
+      );
+    }
     return {
       ...limited,
       linkedEnvironments,
