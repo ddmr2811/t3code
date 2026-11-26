@@ -22,11 +22,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import {
-  UNATTENDED_GIT_CONFIG_PARAMETERS,
-  UNSTOPPABLE_HOOKS_DETAIL,
-  UNSTOPPABLE_HOOKS_VERSION,
-} from "../vcs/VcsProcess.ts";
+import { UNATTENDED_GIT_CONFIG_PARAMETERS } from "../vcs/VcsProcess.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -146,21 +142,18 @@ export class ProjectSetupScriptRunner extends Context.Service<
  */
 function scopeUnattendedGit(command: string, shell: CompletionShell | null): string {
   const policy = UNATTENDED_GIT_CONFIG_PARAMETERS;
-  const old = UNSTOPPABLE_HOOKS_VERSION;
-  const detail = UNSTOPPABLE_HOOKS_DETAIL;
-  // Each block asks its own shell's Git for its version: startup files can put another on PATH.
   switch (shell) {
     case null:
       return command;
     case "posix":
       // The empty line ends a script whose last line is a comment or ends in a backslash.
-      return `(case "$(git version 2>/dev/null)" in\n"git version 2.54"*|"git version 2.55.0.rc"*|"git version 2.55.0-rc"*) printf '%s\\n' '${detail}' >&2; exit 1 ;;\nesac\nexport GIT_CONFIG_PARAMETERS="\${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }${policy}"\n${command}\n\n)`;
+      return `(export GIT_CONFIG_PARAMETERS="\${GIT_CONFIG_PARAMETERS:+$GIT_CONFIG_PARAMETERS }${policy}"\n${command}\n\n)`;
     case "fish":
-      return `begin\nif string match -qr -- '${old}' (git version 2>/dev/null)\nprintf '%s\\n' '${detail}' >&2\nfalse\nelse\nset -lx GIT_CONFIG_PARAMETERS (string join ' ' -- $GIT_CONFIG_PARAMETERS "${policy}")\n${command}\nend\nend`;
+      return `begin\nset -lx GIT_CONFIG_PARAMETERS (string join ' ' -- $GIT_CONFIG_PARAMETERS "${policy}")\n${command}\nend`;
     case "nushell":
-      return `do {\nif (try { ^git version } catch { "" }) =~ '${old}' {\nerror make {msg: '${detail}'}\n}\n$env.GIT_CONFIG_PARAMETERS = ([($env.GIT_CONFIG_PARAMETERS? | default "") "${policy}"] | str join " " | str trim)\n${command}\n}`;
+      return `do {\n$env.GIT_CONFIG_PARAMETERS = ([($env.GIT_CONFIG_PARAMETERS? | default "") "${policy}"] | str join " " | str trim)\n${command}\n}`;
     case "powershell":
-      return `& {\nif ("$(git version 2>$null)" -match '${old}') {\n[Console]::Error.WriteLine('${detail}')\n$global:LASTEXITCODE = 1\nreturn\n}\n$__t3g = $env:GIT_CONFIG_PARAMETERS; $env:GIT_CONFIG_PARAMETERS = "$__t3g ${policy}".Trim()\ntry {\n${command}\n} finally { $env:GIT_CONFIG_PARAMETERS = $__t3g }\n}`;
+      return `& {\n$__t3g = $env:GIT_CONFIG_PARAMETERS; $env:GIT_CONFIG_PARAMETERS = "$__t3g ${policy}".Trim()\ntry {\n${command}\n} finally { $env:GIT_CONFIG_PARAMETERS = $__t3g }\n}`;
   }
 }
 

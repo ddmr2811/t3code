@@ -16,11 +16,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  VcsProcessExitError,
-  VcsProcessSpawnError,
-  VcsUnsupportedOperationError,
-} from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -37,9 +33,6 @@ const layerLive = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
   effect.pipe(Effect.provide(layerLive));
 
-// The no-hooks check reads the Git binary from disk.
-const makeProcess = VcsProcess.make.pipe(Effect.provide(NodeServices.layer));
-
 const baseInput = {
   operation: "test.process-boundary",
   command: "git",
@@ -50,7 +43,7 @@ const baseInput = {
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
 ) =>
-  makeProcess.pipe(
+  VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
@@ -60,49 +53,6 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
-  it.effect.each([
-    { versions: ["2.54.0"], outcomes: ["refuse"] },
-    { versions: ["2.54.1"], outcomes: ["refuse"] },
-    { versions: ["2.55.0.rc0"], outcomes: ["refuse"] },
-    { versions: ["2.55.0-rc1"], outcomes: ["refuse"] },
-    { versions: ["2.55.0"], outcomes: ["allow"] },
-    { versions: ["2.53.9"], outcomes: ["allow"] },
-    // The same PATH after an update of the binary, and after another Git comes first on it.
-    { versions: ["2.43.0", "2.54.0"], outcomes: ["allow", "refuse"] },
-  ] as const)(
-    "refuses no-hooks Git by the version of the binary it would run: $versions",
-    ({ versions, outcomes }) =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const bin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-version-" });
-        const git = path.join(bin, "git");
-        const service = yield* makeProcess;
-        const input = {
-          ...baseInput,
-          cwd: bin,
-          args: [...VcsProcess.NO_HOOKS_GIT_ARGS, "status", "--short"],
-          env: { PATH: bin },
-        };
-
-        for (const [index, outcome] of outcomes.entries()) {
-          // The marker makes each binary a different size, as an update does.
-          yield* fileSystem.writeFileString(
-            git,
-            `#!/bin/sh\n# ${index}\necho 'git version ${versions[index]}'\n`,
-          );
-          yield* fileSystem.chmod(git, 0o755);
-          if (outcome === "allow") {
-            yield* service.run(input);
-          } else {
-            const error = yield* Effect.flip(service.run(input));
-            assert.instanceOf(error, VcsUnsupportedOperationError);
-            expect(error.detail).toBe(VcsProcess.UNSTOPPABLE_HOOKS_DETAIL);
-          }
-        }
-      }).pipe(Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer))),
-  );
-
   it.effect("explains a locked Git index and allows restore after the lock is released", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -203,7 +153,7 @@ describe("VcsProcess.run", () => {
   it.effect("reads Git failures in English when Git would follow the system language", () =>
     Effect.gen(function* () {
       let attempts = 0;
-      const service = yield* makeProcess.pipe(
+      const service = yield* VcsProcess.make.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
@@ -293,7 +243,7 @@ describe("VcsProcess.run", () => {
     ({ stderr, fsyncMethods, ...scenario }) =>
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
-        const service = yield* makeProcess.pipe(
+        const service = yield* VcsProcess.make.pipe(
           Effect.provideService(
             HostProcess.Platform,
             "platform" in scenario ? scenario.platform : "darwin",
@@ -366,7 +316,7 @@ describe("VcsProcess.run", () => {
       const active = yield* Ref.make(0);
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
-      const service = yield* makeProcess.pipe(
+      const service = yield* VcsProcess.make.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
@@ -420,7 +370,7 @@ describe("VcsProcess.run", () => {
   it.effect("leaves git a slot while slow forge CLI processes are running", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
-      const service = yield* makeProcess.pipe(
+      const service = yield* VcsProcess.make.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({

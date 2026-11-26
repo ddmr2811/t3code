@@ -52,9 +52,6 @@ import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
   NO_HOOKS_GIT_ARGS,
   UNATTENDED_GIT_CONFIG,
-  UNSTOPPABLE_HOOKS_DETAIL,
-  asksForNoHooks,
-  cannotStopConfiguredHooks,
   gitConfigEnv,
   serverGitConfigEnv,
   unsetInheritedRepositoryEnv,
@@ -1448,40 +1445,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ];
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
-        // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
-        const executable = resolved.shell ? "git" : resolved.command;
-        if (
-          (unattended || asksForNoHooks(commandInput.args)) &&
-          (yield* cannotStopConfiguredHooks(
-            executable,
-            spawnEnv,
-            executeRaw({
-              operation: "GitVcsDriver.version",
-              cwd: input.cwd,
-              args: ["version"],
-              ...(input.env === undefined ? {} : { env: input.env }),
-            }).pipe(
-              Effect.provideService(GitVcsDriver.UnattendedGit, false),
-              Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "all" }),
-              Effect.map((result) => result.stdout),
-              Effect.orElseSucceed(() => null),
-            ),
-          ).pipe(
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-          ))
-        ) {
-          return yield* new GitCommandError({
-            ...gitCommandContext(commandInput),
-            detail: UNSTOPPABLE_HOOKS_DETAIL,
-          });
-        }
         const spawnError = (cause: unknown) =>
           new GitCommandError({
             ...gitCommandContext(commandInput),
             detail: "Failed to spawn Git process.",
             cause,
           });
+        // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
+        const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner
           .spawn(
             ChildProcess.make(executable, spawnArgs, {

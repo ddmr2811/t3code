@@ -12,9 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -334,7 +332,7 @@ describe("ProjectSetupScriptRunner", () => {
   );
 });
 
-const runObservedSetup = Effect.fnUntraced(function* (command: string, pathOverride?: string) {
+const runObservedSetup = Effect.fnUntraced(function* (command: string) {
   const { writes, outputLines, emit, completion, opens } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
@@ -352,7 +350,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string, pathOverr
         ["--noprofile", "--norc", "-c", shellInput.replaceAll("\r", "\n")],
         {
           cwd,
-          env: { PATH: pathOverride ?? env.PATH },
+          env: { PATH: env.PATH },
         },
       ),
     );
@@ -378,31 +376,6 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string, pathOverr
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup completion", () => {
-  it.live("checks unsupported Git with the PATH of the script's shell", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const bin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-shell-path-" });
-        const fakeGit = path.join(bin, "git");
-        yield* fileSystem.writeFileString(
-          fakeGit,
-          "#!/bin/sh\nprintf '%s\\n' 'git version 2.54.0'\n",
-        );
-        yield* fileSystem.chmod(fakeGit, 0o755);
-        const environment = yield* HostProcess.Environment;
-
-        const result = yield* runObservedSetup(
-          "printf '%s\\n' ran",
-          `${bin}:${environment.PATH ?? ""}`,
-        ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
-
-        assert.equal(result.exitCode, 1);
-        assert.notInclude(result.lines, "ran");
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.live("submits one line while preserving multiline shell syntax and literal text", () =>
     Effect.gen(function* () {
       const result = yield* runObservedSetup(

@@ -55,7 +55,7 @@ import {
 import { autoPullProjects } from "../serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
-import { gitConfigEnv, UNATTENDED_GIT_CONFIG, UNSTOPPABLE_HOOKS_DETAIL } from "./VcsProcess.ts";
+import { gitConfigEnv } from "./VcsProcess.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
@@ -6787,60 +6787,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* pushRemoteCommit("asked.txt");
         yield* driver.pullCurrentBranch(cwd);
         assert.isTrue(yield* fs.exists(ran));
-      }),
-    );
-
-    it.effect("asks the version of the Git the command's own environment runs", () =>
-      Effect.gen(function* () {
-        const environment = yield* HostProcess.Environment;
-        const versions = ["2.43.0", "2.54.0"] as const;
-        const calls: Array<{ readonly args: ReadonlyArray<string>; readonly path?: string }> = [];
-        const spawner = ChildProcessSpawner.make((command) => {
-          const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
-          const path = ChildProcess.isStandardCommand(command)
-            ? command.options.env?.PATH
-            : undefined;
-          const versionChecks = calls.filter((call) => call.args[0] === "version").length;
-          calls.push({ args, ...(typeof path === "string" ? { path } : {}) });
-          const version = args[0] === "version" ? versions[versionChecks] : undefined;
-          return Effect.succeed(
-            makeSuccessfulHandle(version === undefined ? "" : `git version ${version}\n`),
-          );
-        });
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const run = driver
-          .execute({
-            operation: "test.unattended",
-            cwd: "/repo",
-            args: ["status"],
-            env: { PATH: "command-git-path" },
-          })
-          .pipe(
-            Effect.provideService(GitVcsDriver.UnattendedGit, true),
-            Effect.provideService(HostProcess.Environment, {
-              ...environment,
-              PATH: "host-git-path",
-            }),
-          );
-
-        yield* run;
-        const error = yield* run.pipe(Effect.flip);
-        assert.instanceOf(error, GitCommandError);
-        assert.strictEqual(error.detail, UNSTOPPABLE_HOOKS_DETAIL);
-        assert.deepStrictEqual(
-          calls.map((call) => call.args),
-          [
-            ["version"],
-            [...UNATTENDED_GIT_CONFIG.flatMap((setting) => ["-c", setting]), "status"],
-            ["version"],
-          ],
-        );
-        assert.deepStrictEqual(
-          calls.map((call) => call.path),
-          ["command-git-path", "command-git-path", "command-git-path"],
-        );
       }),
     );
 
