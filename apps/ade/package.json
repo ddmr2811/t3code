@@ -9,7 +9,8 @@
     "preview": "vp preview",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run",
-    "smoke": "node smoke.ts"
+    "smoke": "node smoke.ts",
+    "desktop:win": "electron-builder --projectDir desktop --win"
   },
   "dependencies": {
     "@effect/atom-react": "catalog:",
@@ -32,6 +33,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron-builder": "26.16.1",
     "playwright": "1.64.1",
     "tailwindcss": "catalog:",
     "vite": "catalog:",

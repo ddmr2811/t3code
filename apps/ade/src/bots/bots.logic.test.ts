@@ -1,11 +1,15 @@
 import {
+  EnvironmentId,
   type ForkBot,
   ProjectId,
   ProviderInstanceId,
   RunId,
   type ScheduledTask,
   ThreadId,
+  WS_METHODS,
 } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
   NIGHTLY_CONSOLIDATION_PROMPT,
@@ -13,8 +17,11 @@ import {
   coordinatorRoutineInput,
   isCustomNightly,
   isNightlyTask,
+  lacksMethod,
   nightlyPromptUpdate,
   parseMention,
+  botDestination,
+  SENTENCE_RUNTIME_MODES,
   validateBotDraft,
 } from "./bots.logic.ts";
 
@@ -207,5 +214,100 @@ describe("bots.logic", () => {
       schedule: { type: "fixed_time", timeOfDay: "04:15" },
       title: nightly.title,
     });
+  });
+});
+
+describe("lacksMethod", () => {
+  // How an Effect RPC server answers a method it lacks, through the defect codec of the wire.
+  const overTheWire = (exit: Exit.Exit<unknown, unknown>) => {
+    const codec = Schema.toCodecJson(Schema.Exit(Schema.Unknown, Schema.Unknown, Schema.Defect()));
+    const decoded = Schema.decodeSync(codec)(Schema.encodeSync(codec)(exit));
+    if (Exit.isSuccess(decoded)) throw new Error("expected a failure");
+    return decoded.cause;
+  };
+
+  it("tells a server without the method from one whose read failed", () => {
+    const tag = WS_METHODS.forkGapsList;
+    expect(lacksMethod(overTheWire(Exit.die(`Unknown request tag: ${tag}`)), tag)).toBe(true);
+    expect(lacksMethod(overTheWire(Exit.die(new Error("gaps.json is corrupt"))), tag)).toBe(false);
+    expect(lacksMethod(overTheWire(Exit.die(`Unknown request tag: other.method`)), tag)).toBe(
+      false,
+    );
+  });
+});
+
+describe("botDestination", () => {
+  const pc = EnvironmentId.make("pc");
+  const nexo = EnvironmentId.make("nexo");
+  const project = (id: string, title: string) => ({ id: ProjectId.make(id), title });
+  const pcMachine = { environmentId: pc, projects: [project("web", "t3code-fork")] };
+  const nexoMachine = {
+    environmentId: nexo,
+    projects: [project("hubra", "Hubra"), project("tests", "Tests")],
+  };
+
+  it.each([
+    // Codex r3: PC still loading, Nexo loaded: the sentence used to leave for Nexo unasked.
+    [
+      "a machine still loads",
+      "un bot que resuma errores",
+      [{ ...pcMachine, projects: [] }, nexoMachine],
+    ],
+    // A word that names a project on one machine used to choose that machine.
+    [
+      "a word names a project on one machine",
+      "un bot que resuma los tests",
+      [pcMachine, nexoMachine],
+    ],
+    // A new attempt brings no pick, whatever was picked before or is open.
+    ["a new attempt brings no pick", "PR de Hubra", [pcMachine, nexoMachine]],
+    // A paired machine that cannot take it (outdated, offline) still means two places.
+    ["the other paired machine is unusable", "revisa Alpha y Bravo", [pcMachine]],
+  ] as const)("asks with several machines when %s", (_case, text, machines) => {
+    expect(botDestination(text, machines, null, 2)).toEqual({ kind: "ask" });
+  });
+
+  it("sends only the pick made for this send, and waits if its machine lost its projects", () => {
+    const pick = { environmentId: nexo, projectId: ProjectId.make("hubra") };
+    expect(botDestination("x", [pcMachine, nexoMachine], pick, 2)).toEqual({
+      kind: "send",
+      target: pick,
+    });
+    expect(botDestination("x", [pcMachine, { ...nexoMachine, projects: [] }], pick, 2)).toEqual({
+      kind: "wait",
+    });
+  });
+
+  it("uses the single machine's named project, else its first, and waits while it loads", () => {
+    const only = [nexoMachine];
+    expect(botDestination("revisa los tests", only, null, 1)).toEqual({
+      kind: "send",
+      target: { environmentId: nexo, projectId: "tests" },
+    });
+    expect(botDestination("resume errores", only, null, 1)).toEqual({
+      kind: "send",
+      target: { environmentId: nexo, projectId: "hubra" },
+    });
+    expect(botDestination("x", [{ ...nexoMachine, projects: [] }], null, 1)).toEqual({
+      kind: "wait",
+    });
+  });
+});
+
+describe("validateBotDraft from a sentence", () => {
+  it.each(["auto", "full-access"] as const)("refuses %s", (runtimeMode) => {
+    const draft = {
+      handle: "revisor",
+      name: "Revisor",
+      role: "Revisa",
+      instructions: "Revisa los PR.",
+      projectId: "p",
+      runtimeMode,
+      instanceId: "codex",
+      model: "gpt-5.4",
+      coordinator: false,
+    };
+    expect(validateBotDraft(draft).ok).toBe(true);
+    expect(validateBotDraft(draft, SENTENCE_RUNTIME_MODES).ok).toBe(false);
   });
 });

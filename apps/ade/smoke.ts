@@ -273,10 +273,10 @@ try {
   await shot("compositor-vacio");
   // The model comes from the machine's own list: a short scenario first, then a long one that
   // leaves time to queue and stop.
-  const model = composer.locator("summary", { hasText: "Modelo:" });
+  const model = composer.getByRole("button", { name: /^Modelo:/ });
   await model.click();
   await shot("compositor-selector");
-  await composer.getByRole("radio", { name: "Command output" }).click();
+  await page.getByRole("menuitemradio", { name: "Command output" }).click();
   await message.fill(`Repite el comando ${run}`);
   await message.press("Enter");
   await conversation.locator(".ade-msg-user", { hasText: `Repite el comando ${run}` }).waitFor();
@@ -288,7 +288,7 @@ try {
   await composer.getByRole("button", { name: "Enviar", exact: true }).waitFor();
 
   await model.click();
-  await composer.getByRole("radio", { name: "Showcase" }).click();
+  await page.getByRole("menuitemradio", { name: "Showcase" }).click();
   await message.fill(`Turno largo ${run}`);
   await message.press("Enter");
   const stop = composer.getByRole("button", { name: "Parar", exact: true });
@@ -316,13 +316,13 @@ try {
   const approval = requests.getByRole("article", { name: /^Aprobación/ });
   const sendWith = async (scenario: string, text: string) => {
     await model.click();
-    await composer.getByRole("radio", { name: scenario }).click();
+    await page.getByRole("menuitemradio", { name: scenario }).click();
     await message.fill(text);
     await message.press("Enter");
   };
   // With full access the server answers for the user; asking is a mode of the thread.
-  await composer.locator("summary", { hasText: "Modo:" }).click();
-  await composer.getByRole("radio", { name: "Pedir aprobación" }).click();
+  await composer.getByRole("button", { name: /^Modo:/ }).click();
+  await page.getByRole("menuitemradio", { name: "Pedir aprobación" }).click();
   await sendWith("Write approval", `Pide permiso ${run}`);
   await approval.getByText(".codex-probe-write-action.txt").waitFor();
   NodeAssert.deepEqual(

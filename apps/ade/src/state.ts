@@ -39,7 +39,10 @@ export const attachmentEnvironment = createAttachmentEnvironmentAtoms(connection
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
 });
-const threadFamilies = createThreadFamilyAtoms(connectionAtomRuntime, environmentShell.stateAtom);
+export const threadFamilies = createThreadFamilyAtoms(
+  connectionAtomRuntime,
+  environmentShell.stateAtom,
+);
 export const threadEnvironment = createThreadEnvironmentAtoms(
   connectionAtomRuntime,
   threadFamilies.snapshotAtom,

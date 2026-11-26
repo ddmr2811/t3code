@@ -50,3 +50,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## ADE home background (`apps/ade/src/home/home-art.png`)
+
+- What: a dithered rendering of Ansel Adams, «The Tetons – Snake River» (1942).
+- Where from: U.S. National Archives, identifier 519904.
+- License: public domain, a work of the U.S. Government (17 U.S.C. § 105).

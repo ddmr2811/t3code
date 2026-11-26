@@ -9,6 +9,7 @@ import { isNightlyTask } from "../bots/bots.logic.ts";
 import { allCoordinationEntriesAtom } from "../coordination/coordination.state.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { useBotNotices } from "../decisions/BotNotices.tsx";
+import { paidFigure } from "../overview/Spend.tsx";
 import { spendSummary, weekWindow } from "../overview/spend.logic.ts";
 import { flatProvidersAtom, spendUsageAtom } from "../overview/spend.state.ts";
 import { serverEnvironment } from "../state.ts";
@@ -54,7 +55,7 @@ export function Overnight(props: { needsYouCount: number }) {
         usage.readable.length === 0 && usage.failed.length === 0 && usage.needsPairing.length > 0
         ? "sin permiso para leerlo"
         : "sin datos"
-      : `${usd(week.realUsd)}${week.estimatedUsd > 0 ? ` · ${usd(week.estimatedUsd)} est.` : ""}${partial}`;
+      : `${paidFigure(week)}${week.estimatedUsd > 0 ? ` · ${usd(week.estimatedUsd)} est.` : ""}${partial}`;
   const pending = props.needsYouCount;
 
   return (

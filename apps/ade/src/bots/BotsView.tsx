@@ -10,9 +10,12 @@ import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/models";
 import {
+  FORK_BOTS_DRAFT_TEXT_MAX_LENGTH,
   FORK_BOTS_MESSAGE_MAX_LENGTH,
   type EnvironmentId,
   type ForkBot,
+  type ForkBotDraft,
+  type ProjectId,
   type ForkBotHandoff,
   type ForkBotHandoffStatus,
   type ThreadId,
@@ -20,7 +23,7 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { runCommand } from "../composer/Composer.tsx";
+import { RUNTIME_MODE_TEXT, runCommand } from "../composer/Composer.tsx";
 import { allEnvironmentProjectsAtom } from "../coordination/coordination.state.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { availableMachineModelOptions } from "../failover/failover.logic.ts";
@@ -31,7 +34,13 @@ import {
   botState,
   type BotDraft,
   parseMention,
+  type BotMachine,
+  type BotProjectChoice,
+  botDestination,
+  suggestBotProject,
   recentHandoffs,
+  RUNTIME_MODES,
+  SENTENCE_RUNTIME_MODES,
   routineThreadIds,
   validateBotDraft,
 } from "./bots.logic.ts";
@@ -44,6 +53,7 @@ import { BotSpend } from "../overview/Spend.tsx";
 import { USAGE_PROVIDER_OF_DRIVER } from "../overview/spend.state.ts";
 import {
   allBotsAtom,
+  forkBotsDraftCommand,
   forkBotsHandoffCommand,
   forkBotsRemoveCommand,
   forkBotsSendMessageCommand,
@@ -52,7 +62,6 @@ import {
   refreshBots,
 } from "./bots.state.ts";
 
-const RUNTIME_MODES = ["approval-required", "auto-accept-edits", "auto", "full-access"] as const;
 const MODEL_SEPARATOR = "\u0000";
 
 export const HANDOFF_STATUS_LABELS: Record<ForkBotHandoffStatus, string> = {
@@ -112,6 +121,16 @@ export function BotsView() {
         </div>
       )}
 
+      {selectedEnv === null ? null : (
+        <QuickCreate
+          fallbackEnv={selectedEnv}
+          machines={enabledEnvs}
+          pairedCount={catalog.entries.size}
+          machineLabel={machineLabel}
+          onCreated={setSelectedEnv}
+        />
+      )}
+
       {selectedEnv === null || bots === undefined ? (
         <section className="ade-projects-empty">
           <p>
@@ -165,7 +184,7 @@ function MachineBots(props: {
   };
   const stateOf = (bot: ForkBot) =>
     botState(bot, threadOf(bot), bot.threadId !== null && routines.has(bot.threadId));
-  const [editing, setEditing] = useState<ForkBot | "new" | null>(null);
+  const [editing, setEditing] = useState<ForkBot | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
@@ -312,14 +331,6 @@ function MachineBots(props: {
     <>
       <div className="ade-projects-toolbar">
         <IntegrationConnections environmentId={environmentId} />
-        <button
-          type="button"
-          className="ade-button"
-          onClick={() => setEditing("new")}
-          disabled={canWrite !== true}
-        >
-          <UserCircleIcon size={16} aria-hidden /> Nuevo bot
-        </button>
       </div>
 
       {listError === null ? null : (
@@ -470,11 +481,7 @@ function MachineBots(props: {
 
       {confirm.dialog}
       {editing === null ? null : (
-        <BotEditor
-          environmentId={environmentId}
-          bot={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
-        />
+        <BotEditor environmentId={environmentId} bot={editing} onClose={() => setEditing(null)} />
       )}
     </>
   );
@@ -562,6 +569,9 @@ function BotHandoffs(props: { entries: ReturnType<typeof recentHandoffs> }) {
 function BotEditor(props: {
   environmentId: EnvironmentId;
   bot: ForkBot | null;
+  /** A new bot's starting values, as a sentence's draft proposes them. */
+  initial?: BotDraft;
+  onSaved?: () => void;
   onClose: () => void;
 }) {
   const { environmentId, bot, onClose } = props;
@@ -571,17 +581,20 @@ function BotEditor(props: {
   const projects = [...(allProjects.get(environmentId)?.values() ?? [])];
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const models = useMemo(() => availableMachineModelOptions(serverConfig), [serverConfig]);
-  const [draft, setDraft] = useState<BotDraft>(() => ({
-    handle: bot?.handle ?? "",
-    name: bot?.name ?? "",
-    role: bot?.role ?? "",
-    instructions: bot?.instructions ?? "",
-    projectId: bot?.projectId ?? "",
-    runtimeMode: bot?.runtimeMode ?? "approval-required",
-    instanceId: bot?.modelSelection.instanceId ?? "",
-    model: bot?.modelSelection.model ?? "",
-    coordinator: bot?.coordinator ?? false,
-  }));
+  const [draft, setDraft] = useState<BotDraft>(
+    () =>
+      props.initial ?? {
+        handle: bot?.handle ?? "",
+        name: bot?.name ?? "",
+        role: bot?.role ?? "",
+        instructions: bot?.instructions ?? "",
+        projectId: bot?.projectId ?? "",
+        runtimeMode: bot?.runtimeMode ?? "approval-required",
+        instanceId: bot?.modelSelection.instanceId ?? "",
+        model: bot?.modelSelection.model ?? "",
+        coordinator: bot?.coordinator ?? false,
+      },
+  );
   const [integrations, setIntegrations] = useState(bot?.integrations ?? {});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -601,10 +614,13 @@ function BotEditor(props: {
         : `${firstModel.instanceId}${MODEL_SEPARATOR}${firstModel.model}`
       : `${draft.instanceId}${MODEL_SEPARATOR}${draft.model}`;
   const set = (patch: Partial<BotDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  // From a sentence the mode stays low; an existing bot's editor keeps every mode, as before.
+  const modes =
+    bot === null && props.initial !== undefined ? SENTENCE_RUNTIME_MODES : RUNTIME_MODES;
 
   const save = async () => {
     const [instanceId = "", model = ""] = modelKey.split(MODEL_SEPARATOR);
-    const validated = validateBotDraft({ ...draft, projectId, instanceId, model });
+    const validated = validateBotDraft({ ...draft, projectId, instanceId, model }, modes);
     if (!validated.ok) return setError(validated.error);
     setBusy(true);
     setError(null);
@@ -631,6 +647,7 @@ function BotEditor(props: {
     setBusy(false);
     if (failure !== null) return setError(failure);
     refreshBots(registry, environmentId);
+    props.onSaved?.();
     dialog.current?.close();
   };
 
@@ -663,6 +680,7 @@ function BotEditor(props: {
             <input
               value={draft.handle}
               onChange={(event) => set({ handle: event.target.value })}
+              placeholder="ej. general-manager"
               autoCapitalize="none"
               spellCheck={false}
             />
@@ -719,7 +737,7 @@ function BotEditor(props: {
                 set({ runtimeMode: event.target.value as BotDraft["runtimeMode"] })
               }
             >
-              {RUNTIME_MODES.map((mode) => (
+              {modes.map((mode) => (
                 <option key={mode} value={mode}>
                   {mode}
                 </option>
@@ -768,5 +786,363 @@ function BotEditor(props: {
         </div>
       </form>
     </dialog>
+  );
+}
+
+const FALLBACK_TEXT: Record<NonNullable<ForkBotDraft["fallbackReason"]>, string> = {
+  noModel:
+    "Propuesta sin IA: el modelo que redacta no está disponible en esta máquina. Se elige en Ajustes → General de T3.",
+  modelNotAllowed:
+    "Propuesta sin IA: el modelo elegido para redactar no está en la lista permitida (Gemini Flash o Kimi). Cámbialo en Ajustes → General de T3.",
+  modelFailed: "Propuesta sin IA: el modelo que redacta no respondió.",
+  invalidReply: "Propuesta sin IA: el modelo devolvió un borrador que no sirve.",
+};
+
+/** A machine paired without permission to draft (read-only) is not offered as a destination. */
+function MachineProjectOptions(props: { machine: BotMachine; label: string; text: string }) {
+  const { machine } = props;
+  const canDraft = useAtomValue(forkBotsDraftCommand.permissionAtom(machine.environmentId));
+  if (canDraft !== true) return null;
+  const suggested = suggestBotProject(props.text, machine.projects);
+  return (
+    <optgroup label={props.label}>
+      {machine.projects.length === 0 ? (
+        <option disabled>Cargando proyectos…</option>
+      ) : (
+        machine.projects
+          .toSorted((left, right) => Number(right.id === suggested) - Number(left.id === suggested))
+          .map((project) => (
+            <option
+              key={project.id}
+              value={`${machine.environmentId}${MODEL_SEPARATOR}${project.id}`}
+            >
+              {project.title}
+            </option>
+          ))
+      )}
+    </optgroup>
+  );
+}
+
+/** One sentence in, a proposed bot out; «Crear» saves it as proposed, «Ajustar» opens the form. */
+function QuickCreate(props: {
+  fallbackEnv: EnvironmentId;
+  machines: ReadonlyArray<EnvironmentId>;
+  pairedCount: number;
+  machineLabel: (id: EnvironmentId) => string;
+  onCreated: (environmentId: EnvironmentId) => void;
+}) {
+  const registry = useContext(RegistryContext);
+  const allProjects = useAtomValue(allEnvironmentProjectsAtom);
+  const [text, setText] = useState("");
+  const [proposal, setProposal] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly draft: ForkBotDraft;
+  } | null>(null);
+  const [adjusting, setAdjusting] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly initial: BotDraft;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const target = proposal?.environmentId ?? props.fallbackEnv;
+  const canCreate = useAtomValue(forkBotsUpsertCommand.permissionAtom(target));
+  const config = useAtomValue(serverEnvironment.configValueAtom(target));
+
+  const machines: ReadonlyArray<BotMachine> = props.machines.map((environmentId) => ({
+    environmentId,
+    projects: [...(allProjects.get(environmentId)?.values() ?? [])],
+  }));
+  const [asking, setAsking] = useState(false);
+  const [pickKey, setPickKey] = useState("");
+  // Where the last sentence went, so «Rellenar a mano» opens there after a failure.
+  const [sent, setSent] = useState<BotProjectChoice | null>(null);
+
+  const reset = () => {
+    setAsking(false);
+    setSent(null);
+    setProposal(null);
+    setText("");
+    setError(null);
+  };
+
+  /** `pick` is the selector's answer for this send only; a new «Proponer» asks again. */
+  const propose = async (pick: BotProjectChoice | null) => {
+    const sentence = text.trim();
+    if (sentence === "" || busy) return;
+    const destination = botDestination(sentence, machines, pick, props.pairedCount);
+    if (destination.kind === "ask") {
+      setPickKey("");
+      setError(null);
+      return setAsking(true);
+    }
+    if (destination.kind === "wait") {
+      return setError(
+        machines.every((machine) => machine.projects.length === 0)
+          ? "Aún no hay proyectos cargados en ninguna máquina."
+          : "Los proyectos de esa máquina aún se están cargando. Prueba en un momento.",
+      );
+    }
+    const where = destination.target;
+    setSent(where);
+    setAsking(false);
+    setBusy(true);
+    setError(null);
+    setProposal(null);
+    const failure = await runCommand(
+      registry,
+      forkBotsDraftCommand,
+      {
+        environmentId: where.environmentId,
+        input: { text: sentence, projectId: where.projectId },
+      },
+      "No se pudo proponer el bot",
+      (draft) => setProposal({ environmentId: where.environmentId, draft }),
+    );
+    setBusy(false);
+    if (failure !== null) setError(failure);
+  };
+
+  const formFrom = (draft: ForkBotDraft): BotDraft => ({
+    handle: draft.handle,
+    name: draft.name,
+    role: draft.role,
+    instructions: draft.instructions,
+    projectId: draft.projectId,
+    runtimeMode: draft.runtimeMode,
+    instanceId: draft.modelSelection.instanceId,
+    model: draft.modelSelection.model,
+    coordinator: false,
+  });
+
+  const create = async () => {
+    if (proposal === null) return;
+    const { environmentId, draft } = proposal;
+    setBusy(true);
+    setError(null);
+    const failure = await runCommand(
+      registry,
+      forkBotsUpsertCommand,
+      {
+        environmentId,
+        input: {
+          handle: draft.handle,
+          name: draft.name,
+          role: draft.role,
+          instructions: draft.instructions,
+          projectId: draft.projectId,
+          runtimeMode: draft.runtimeMode,
+          modelSelection: draft.modelSelection,
+        },
+      },
+      "No se pudo crear el bot",
+    );
+    setBusy(false);
+    if (failure !== null) return setError(failure);
+    refreshBots(registry, environmentId);
+    props.onCreated(environmentId);
+    reset();
+  };
+
+  const draft = proposal?.draft;
+  const projectTitle =
+    proposal === null
+      ? null
+      : (allProjects.get(proposal.environmentId)?.get(proposal.draft.projectId)?.title ??
+        "Proyecto sin nombre");
+  const model =
+    draft === undefined
+      ? undefined
+      : availableMachineModelOptions(config).find(
+          (option) =>
+            option.instanceId === draft.modelSelection.instanceId &&
+            option.model === draft.modelSelection.model,
+        );
+
+  return (
+    <section className="ade-bot-quick" aria-label="Crear un bot con una frase">
+      <form
+        className="ade-bot-quick-row"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void propose(null);
+        }}
+      >
+        <label className="ade-sr-only" htmlFor="ade-bot-quick-text">
+          Describe el bot que quieres
+        </label>
+        <textarea
+          id="ade-bot-quick-text"
+          value={text}
+          onChange={(event) => {
+            setText(event.target.value);
+            setAsking(false);
+            // A new sentence has not been sent anywhere yet: «Rellenar a mano» must not reuse it.
+            setSent(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void propose(null);
+            }
+          }}
+          placeholder="Un bot que revise mis PR de Hubra cada mañana"
+          rows={2}
+          maxLength={FORK_BOTS_DRAFT_TEXT_MAX_LENGTH}
+        />
+        <button type="submit" className="ade-button" disabled={busy || text.trim() === ""}>
+          <UserCircleIcon size={16} aria-hidden />{" "}
+          {busy && proposal === null ? "Pensando…" : "Proponer"}
+        </button>
+      </form>
+
+      {asking ? (
+        <div className="ade-bot-quick-error" role="group" aria-label="¿En qué máquina y proyecto?">
+          <label className="ade-bot-meta" htmlFor="ade-bot-quick-where">
+            ¿En qué máquina y proyecto?
+          </label>
+          <select
+            id="ade-bot-quick-where"
+            className="ade-bot-quick-where"
+            value={pickKey}
+            onChange={(event) => setPickKey(event.target.value)}
+          >
+            <option value="">Elige…</option>
+            {machines.map((machine) => (
+              <MachineProjectOptions
+                key={machine.environmentId}
+                machine={machine}
+                label={props.machineLabel(machine.environmentId)}
+                text={text}
+              />
+            ))}
+          </select>
+          <button
+            type="button"
+            className="ade-button"
+            disabled={pickKey === "" || busy}
+            onClick={() => {
+              const [environmentId = "", projectId = ""] = pickKey.split(MODEL_SEPARATOR);
+              void propose({
+                environmentId: environmentId as EnvironmentId,
+                projectId: projectId as ProjectId,
+              });
+            }}
+          >
+            Proponer aquí
+          </button>
+        </div>
+      ) : null}
+
+      {error === null ? null : (
+        <div className="ade-bot-quick-error" role="alert">
+          <p className="ade-error">{error}</p>
+          {sent === null || text.trim() === "" ? null : (
+            <button
+              type="button"
+              className="ade-button-quiet"
+              onClick={() =>
+                setAdjusting({
+                  environmentId: sent.environmentId,
+                  initial: {
+                    handle: "",
+                    name: "",
+                    role: "",
+                    instructions: text.trim(),
+                    projectId: sent.projectId,
+                    runtimeMode: "approval-required",
+                    instanceId: "",
+                    model: "",
+                    coordinator: false,
+                  },
+                })
+              }
+            >
+              Rellenar a mano
+            </button>
+          )}
+        </div>
+      )}
+
+      {proposal === null || draft === undefined ? null : (
+        <article className="ade-bot-card ade-bot-proposal" aria-label={`Propuesta: ${draft.name}`}>
+          <div className="ade-bot-proposal-head">
+            <BotAvatar status="asleep" />
+            <span className="ade-bot-card-text">
+              <strong>{draft.name}</strong>
+              <span className="ade-bot-meta">
+                <span className="ade-nowrap">@{draft.handle}</span> · {draft.role}
+              </span>
+            </span>
+          </div>
+          <dl className="ade-proposal-facts">
+            <dt>Proyecto</dt>
+            <dd>
+              {projectTitle}
+              {props.machines.length > 1 ? ` · ${props.machineLabel(proposal.environmentId)}` : ""}
+            </dd>
+            <dt>Modelo</dt>
+            <dd>
+              {model === undefined
+                ? draft.modelSelection.model
+                : `${model.providerLabel} · ${model.modelName}`}
+            </dd>
+            <dt>Permisos</dt>
+            <dd>{RUNTIME_MODE_TEXT[draft.runtimeMode]}</dd>
+            {draft.routine === "" ? null : (
+              <>
+                <dt>Rutina</dt>
+                <dd>{draft.routine} (la añades desde el bot cuando exista)</dd>
+              </>
+            )}
+          </dl>
+          <details className="ade-proposal-instructions">
+            <summary>Instrucciones</summary>
+            <pre>{draft.instructions}</pre>
+          </details>
+          <p className="ade-bot-meta" role="status">
+            {draft.fallbackReason === null
+              ? `Redactado por ${draft.draftedBy?.model ?? "el modelo"}.`
+              : FALLBACK_TEXT[draft.fallbackReason]}
+          </p>
+          <div className="ade-coord-form-actions">
+            <button type="button" className="ade-button-quiet" onClick={reset} disabled={busy}>
+              Descartar
+            </button>
+            <button
+              type="button"
+              className="ade-button-quiet"
+              onClick={() =>
+                setAdjusting({ environmentId: proposal.environmentId, initial: formFrom(draft) })
+              }
+              disabled={busy || canCreate !== true}
+            >
+              Ajustar
+            </button>
+            <button
+              type="button"
+              className="ade-button"
+              onClick={() => void create()}
+              disabled={busy || canCreate !== true}
+            >
+              {busy ? "Creando…" : "Crear"}
+            </button>
+          </div>
+        </article>
+      )}
+
+      {adjusting === null ? null : (
+        <BotEditor
+          environmentId={adjusting.environmentId}
+          bot={null}
+          initial={adjusting.initial}
+          onSaved={() => {
+            props.onCreated(adjusting.environmentId);
+            reset();
+          }}
+          onClose={() => setAdjusting(null)}
+        />
+      )}
+    </section>
   );
 }

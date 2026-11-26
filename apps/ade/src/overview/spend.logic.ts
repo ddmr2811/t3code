@@ -1,5 +1,10 @@
 import {
+  type AuthEnvironmentScope,
+  AuthUsageReadScope,
   type EnvironmentId,
+  type ServerProviderUsageWindow,
+  type SessionGrantInput,
+  sessionGrantsScope,
   USAGE_CONTRACT_VERSION,
   type TurnTokenUsage,
   type UsageBucket,
@@ -9,6 +14,21 @@ import {
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
 import { countedBuckets, type EnvironmentUsage } from "@t3tools/shared/usageMerge";
+import { AsyncResult } from "effect/reactivity";
+
+/**
+ * What widening a pairing to `usage:read` asks for: exactly what the session holds of `candidates`
+ * plus `usage:read`. Nothing while the session is read again: it may be a replaced pairing's.
+ */
+export function widenScopes(
+  result: AsyncResult.AsyncResult<SessionGrantInput, unknown>,
+  candidates: ReadonlyArray<AuthEnvironmentScope>,
+): ReadonlyArray<AuthEnvironmentScope> | null {
+  const session = result.waiting ? null : AsyncResult.getOrElse(result, () => null);
+  if (session === null) return null;
+  const held = candidates.filter((scope) => sessionGrantsScope(session, scope));
+  return [...held.filter((scope) => scope !== AuthUsageReadScope), AuthUsageReadScope];
+}
 
 /** Monday to today in the browser's zone: the week the Gasto card counts. */
 export function weekWindow(now?: Date): UsageSummaryInput {
@@ -66,7 +86,7 @@ const isListPriceOnly = (bucket: UsageBucket) =>
 const hasReportedCost = (bucket: UsageBucket) =>
   bucket.costUsd > 0 && bucket.costSource === "providerReported";
 
-function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
+export function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   // A reported charge is paid even on a machine with a flat plan for that provider.
   if (flat && !hasReportedCost(bucket)) return "flat";
   if (bucket.costSource === "providerReported") return "real";
@@ -78,7 +98,7 @@ function bucketKind(bucket: UsageBucket, flat: boolean): SpendKind {
   return estimatedRecords > 0 ? "mixed" : "real";
 }
 
-const bucketTokens = (bucket: UsageBucket) =>
+export const bucketTokens = (bucket: UsageBucket) =>
   bucket.totals.uncachedInputTokens +
   bucket.totals.cachedInputTokens +
   bucket.totals.cacheCreationTokens +
@@ -147,6 +167,35 @@ export function spendSummary(
     today: period(todayOnly, flatByEnvironment),
     week: period(environments, flatByEnvironment),
   };
+}
+
+/** Whether any of it was billed per use: a reported or part-reported group. */
+export const hasPaidUse = (period: SpendPeriod) =>
+  period.lines.some((line) => line.kind === "real" || line.kind === "mixed");
+
+export interface ProviderLimits {
+  readonly provider: UsageProviderKind;
+  readonly windows: ReadonlyArray<Pick<ServerProviderUsageWindow, "usedPercent" | "modelIds">>;
+}
+
+/**
+ * The fullest limit window (0–1) that names this model. A window naming no model is the whole
+ * account's (OpenCode Go covers several models), so it is no single model's share.
+ */
+export function modelLimitShare(
+  limits: ReadonlyArray<ProviderLimits>,
+  provider: UsageProviderKind,
+  model: string,
+): number | undefined {
+  let peak: number | undefined;
+  for (const account of limits) {
+    if (account.provider !== provider) continue;
+    for (const window of account.windows) {
+      if (!window.modelIds?.some((id) => id === model || id.endsWith(`/${model}`))) continue;
+      peak = Math.max(peak ?? 0, window.usedPercent / 100);
+    }
+  }
+  return peak;
 }
 
 /** Whether a machine's own summary says some transcripts could not be read: its total is short. */

@@ -1,5 +1,6 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
+import { ChartBarIcon } from "@phosphor-icons/react/dist/csr/ChartBar";
 import { FoldersIcon } from "@phosphor-icons/react/dist/csr/Folders";
 import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { KanbanIcon } from "@phosphor-icons/react/dist/csr/Kanban";
@@ -8,6 +9,7 @@ import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
 import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, PROVIDER_DISPLAY_NAMES, WS_METHODS } from "@t3tools/contracts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
@@ -33,10 +35,11 @@ import {
 } from "../sidebar/Sidebar.tsx";
 import type { ThreadState } from "../sidebar/sidebar.logic.ts";
 import { groupSessions, openPullRequests, SESSION_GROUPS } from "./overview.logic.ts";
+import { GastoView } from "./Gasto.tsx";
 import { SpendCard } from "./Spend.tsx";
 import { limitAccountsAtom } from "./spend.state.ts";
 
-export type View = "inicio" | "resumen" | "proyectos" | "tablero" | "respaldo" | "bots";
+export type View = "inicio" | "resumen" | "gasto" | "proyectos" | "tablero" | "respaldo" | "bots";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
@@ -44,6 +47,7 @@ const readView = (): View => {
   const value = new URLSearchParams(window.location.search).get("vista");
   if (
     value === "resumen" ||
+    value === "gasto" ||
     value === "tablero" ||
     value === "proyectos" ||
     value === "respaldo" ||
@@ -111,6 +115,7 @@ const WINDOW_NAME = { session: "sesión", weekly: "semana", monthly: "mes" } as 
 
 export const VIEW_LINKS = [
   { target: "resumen", label: "Resumen", Icon: SquaresFourIcon },
+  { target: "gasto", label: "Gasto", Icon: ChartBarIcon },
   { target: "proyectos", label: "Proyectos", Icon: FoldersIcon },
   { target: "tablero", label: "Tablero", Icon: KanbanIcon },
   { target: "bots", label: "Bots", Icon: UserCircleIcon },
@@ -308,7 +313,6 @@ function SessionMeta(props: { thread: EnvironmentThreadShell }) {
 
 const SessionRow = memo(function SessionRow(props: {
   thread: EnvironmentThreadShell;
-  state: ThreadState;
   onOpen: (key: string) => void;
 }) {
   return (
@@ -318,7 +322,9 @@ const SessionRow = memo(function SessionRow(props: {
         className="ade-session"
         onClick={() => props.onOpen(sessionKey(props.thread))}
       >
-        <ThreadStateBadge state={props.state} />
+        <span className="ade-thread-mark">
+          <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} />
+        </span>
         <span className="ade-session-title">{props.thread.title}</span>
         <SessionMeta thread={props.thread} />
       </button>
@@ -341,7 +347,7 @@ const BoardCard = memo(function BoardCard(props: {
       >
         <SessionMeta thread={props.thread} />
         <span className="ade-session-title">{props.thread.title}</span>
-        <ThreadStateBadge state={props.state} withText />
+        <ThreadStateBadge kind={resolveThreadStatusKind(props.thread)} withText />
       </button>
     </li>
   );
@@ -367,7 +373,7 @@ function Sessions() {
           </h2>
           <ul>
             {groups[state].slice(0, SHOWN).map((thread) => (
-              <SessionRow key={sessionKey(thread)} thread={thread} state={state} onOpen={open} />
+              <SessionRow key={sessionKey(thread)} thread={thread} onOpen={open} />
             ))}
           </ul>
           <More count={groups[state].length} />
@@ -460,6 +466,7 @@ function FailoverSummaryCard() {
 }
 
 function Summary() {
+  const setView = useAtomSet(viewAtom);
   return (
     <div className="ade-summary">
       <h1>Resumen</h1>
@@ -468,7 +475,7 @@ function Summary() {
         <CoordinationSummaryCard />
         <FailoverSummaryCard />
         <UsageCard />
-        <SpendCard />
+        <SpendCard onOpenGasto={() => setView("gasto")} />
         <PullRequestsCard />
       </div>
       <ExtensionPanel />
@@ -530,5 +537,6 @@ export function Overview() {
   if (view === "proyectos") return <ProjectBoard />;
   if (view === "bots") return <BotsView />;
   if (view === "respaldo") return <FailoverPanel />;
+  if (view === "gasto") return <GastoView />;
   return view === "tablero" ? <Board /> : <Summary />;
 }

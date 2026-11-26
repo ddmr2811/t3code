@@ -28,6 +28,8 @@ import {
 import {
   ForkBot,
   ForkBotDismissHandoffInput,
+  ForkBotDraft,
+  ForkBotDraftInput,
   ForkBotAnswerProposalInput,
   ForkBotProposal,
   ForkBotHandoff,
@@ -130,6 +132,7 @@ export const FORK_WS_METHODS = {
   forkBotsHandoff: "forkBots.handoff",
   forkBotsDismissHandoff: "forkBots.dismissHandoff",
   forkBotsAnswerProposal: "forkBots.answerProposal",
+  forkBotsDraft: "forkBots.draft",
   // Fork: what a bot lacks, and the installs it asks the user for.
   forkGapsList: "forkGaps.list",
   forkGapsAnswerInstall: "forkGaps.answerInstall",
@@ -369,6 +372,13 @@ const WsForkBotsAnswerProposalRpc = Rpc.make(FORK_WS_METHODS.forkBotsAnswerPropo
   error: ForkBotsRpcError,
 });
 
+// Spends a model call on the user's sentence, so it needs what creating the bot needs.
+const WsForkBotsDraftRpc = Rpc.make(FORK_WS_METHODS.forkBotsDraft, {
+  payload: ForkBotDraftInput,
+  success: ForkBotDraft,
+  error: ForkBotsRpcError,
+});
+
 const WsForkGapsListRpc = Rpc.make(FORK_WS_METHODS.forkGapsList, {
   payload: ForkGapListInput,
   success: ForkGapListResult,
@@ -457,6 +467,7 @@ export const FORK_RPCS = [
   WsForkBotsHandoffRpc,
   WsForkBotsDismissHandoffRpc,
   WsForkBotsAnswerProposalRpc,
+  WsForkBotsDraftRpc,
   WsForkGapsListRpc,
   WsForkGapsAnswerInstallRpc,
   WsForkMemoryListRpc,
@@ -485,6 +496,7 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.forkBotsHandoff]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsDismissHandoff]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkBotsAnswerProposal]: AuthOrchestrationOperateScope,
+  [FORK_WS_METHODS.forkBotsDraft]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkGapsAnswerInstall]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryUpsert]: AuthOrchestrationOperateScope,
   [FORK_WS_METHODS.forkMemoryRemove]: AuthOrchestrationOperateScope,

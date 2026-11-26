@@ -1,7 +1,7 @@
 import { EnvironmentId, type OrchestrationProjectShell, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveInitialThreadTitle, homeProjects } from "./home.logic.ts";
+import { deriveInitialThreadTitle, homeChips, homeProjects } from "./home.logic.ts";
 
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");
@@ -62,6 +62,26 @@ describe("homeProjects", () => {
       ["dev-a", "busy"],
       ["dev-a", "empty"],
     ]);
+  });
+});
+
+describe("homeChips", () => {
+  const recentFirst = ["a", "b", "c", "d", "e", "f", "g"];
+
+  it.each([
+    {
+      when: "nothing picked: the five most recent",
+      selected: null,
+      expected: ["a", "b", "c", "d", "e"],
+    },
+    { when: "a recent one picked: unchanged", selected: "c", expected: ["a", "b", "c", "d", "e"] },
+    {
+      when: "an older one picked from «Más…»: it takes the fifth place",
+      selected: "g",
+      expected: ["a", "b", "c", "d", "g"],
+    },
+  ])("$when", ({ selected, expected }) => {
+    expect(homeChips(recentFirst, selected)).toEqual(expected);
   });
 });
 

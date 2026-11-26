@@ -27,14 +27,18 @@ type ThreadActivityInput = Pick<
   | "latestUserAuthoredMessageAt"
 >;
 
-export function greetingForHour(hour: number): string {
-  if (hour >= 5 && hour < 12) return "Buenos días.";
-  if (hour >= 12 && hour < 20) return "Buenas tardes.";
-  return "Buenas noches.";
-}
-
 export function homeProjectKey(environmentId: EnvironmentId, projectId: ProjectId): string {
   return `${environmentId}:${projectId}`;
+}
+
+const HOME_CHIPS = 5;
+
+/** Inicio's chips: the five most recent, with a project picked from «Más…» in the last place. */
+export function homeChips<T>(projects: ReadonlyArray<T>, selected: T | null): ReadonlyArray<T> {
+  const recent = projects.slice(0, HOME_CHIPS);
+  return selected === null || recent.includes(selected)
+    ? recent
+    : [...recent.slice(0, HOME_CHIPS - 1), selected];
 }
 
 /**

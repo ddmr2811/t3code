@@ -6,7 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 import { serverEnvironment, usageAccessAtom } from "../state.ts";
-import { summaryIncomplete } from "./spend.logic.ts";
+import { type ProviderLimits, summaryIncomplete } from "./spend.logic.ts";
 
 export const limitAccountsAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
@@ -34,11 +34,11 @@ export const USAGE_PROVIDER_OF_DRIVER: Record<string, UsageProviderKind> = {
 
 /**
  * Per machine, the providers it pays as a flat subscription (from the accounts whose limits it
- * reads), and per provider the fullest window of those accounts (0–1) for the breakdown.
+ * reads), and those accounts' limit windows for the breakdown.
  */
 export const flatProvidersAtom = Atom.make((get) => {
   const byEnvironment = new Map<EnvironmentId, Set<UsageProviderKind>>();
-  const peaks = new Map<UsageProviderKind, number>();
+  const limits: ProviderLimits[] = [];
   for (const account of get(limitAccountsAtom)) {
     const provider = USAGE_PROVIDER_OF_DRIVER[String(account.driver)];
     if (provider === undefined) continue;
@@ -46,16 +46,18 @@ export const flatProvidersAtom = Atom.make((get) => {
       const providers = byEnvironment.get(environmentId) ?? new Set();
       byEnvironment.set(environmentId, providers.add(provider));
     }
-    const used = Math.max(0, ...account.limits.windows.map((window) => window.usedPercent)) / 100;
-    peaks.set(provider, Math.max(peaks.get(provider) ?? 0, used));
+    limits.push({ provider, windows: account.limits.windows });
   }
-  return { byEnvironment, peaks };
+  return { byEnvironment, limits };
 }).pipe(Atom.withLabel("ade-flat-providers"));
 
 export interface SpendUsage {
   readonly environments: ReadonlyArray<EnvironmentUsage>;
   /** Machines paired before F7, without `usage:read`: pairing again is the way out. */
-  readonly needsPairing: ReadonlyArray<string>;
+  readonly needsPairing: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
   /** Machines whose session check, usage read or transcripts failed; the total misses some. */
   readonly failed: ReadonlyArray<string>;
   /** Machines whose usage this ADE may read, to refresh them. */
@@ -69,14 +71,14 @@ export const spendUsageAtom = Atom.family((windowKey: string) =>
     const input = JSON.parse(windowKey) as UsageSummaryInput;
     const catalog = get(environmentCatalog.catalogValueAtom);
     const environments: EnvironmentUsage[] = [];
-    const needsPairing: string[] = [];
+    const needsPairing: Array<SpendUsage["needsPairing"][number]> = [];
     const failed: string[] = [];
     const readable: EnvironmentId[] = [];
     let pending = false;
     for (const environmentId of enabledEnvironmentIds(catalog)) {
       const label = catalog.entries.get(environmentId)?.target.label ?? environmentId;
       const access = get(usageAccessAtom(environmentId));
-      if (access === false) needsPairing.push(label);
+      if (access === false) needsPairing.push({ environmentId, label });
       if (access === "unknown") failed.push(label);
       if (access !== true) {
         pending ||= access === null;

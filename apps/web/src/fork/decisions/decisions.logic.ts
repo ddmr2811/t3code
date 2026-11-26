@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isLatestRunSettled } from "@t3tools/client-runtime/state/thread-status";
 
 type NeedsYouInput = Pick<
   EnvironmentThreadShell,
@@ -12,24 +13,6 @@ type NeedsYouInput = Pick<
   | "latestRun"
   | "runtime"
 >;
-
-// `isLatestRunSettled` from session-logic, repeated: apps/ade imports this file, and that one
-// would bring the web's i18n with it.
-function isLatestRunSettled(
-  latestRun: NeedsYouInput["latestRun"],
-  runtime: NeedsYouInput["runtime"],
-): boolean {
-  if (latestRun === null) return false;
-  if (
-    latestRun.status === "preparing" ||
-    latestRun.status === "queued" ||
-    latestRun.status === "starting" ||
-    latestRun.status === "running" ||
-    latestRun.status === "waiting"
-  )
-    return false;
-  return runtime?.activeRunId !== latestRun.runId;
-}
 
 /**
  * Whether the thread itself waits on the user. A parent flagged only by its subagent's

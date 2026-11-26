@@ -79,7 +79,7 @@ body {
 
 /* Fondo fijo en CSS puro: luna quieta o paisaje de atardecer, sin canvas ni bucles. */
 .ade-bg-moon {
-  background:
+  --ade-moon:
     radial-gradient(
       circle at 80% 20%,
       rgb(244 239 228 / 0.19) 0,
@@ -92,7 +92,9 @@ body {
       rgb(185 198 214 / 0.11) 0,
       rgb(69 86 106 / 0.07) clamp(180px, 22vw, 360px),
       transparent clamp(320px, 42vw, 680px)
-    ),
+    );
+  background:
+    var(--ade-moon),
     radial-gradient(
       ellipse 72% 28% at 22% 96%,
       rgb(15 21 29 / 0.72) 0,
@@ -106,6 +108,11 @@ body {
       transparent 60%
     ),
     linear-gradient(180deg, #040507 0%, #090d13 42%, #111822 76%, #070a0f 100%);
+}
+
+/* Inicio has its own landscape; the moon does not belong in it. */
+[data-ade-bg="luna"]:has(~ .ade-shell .ade-home) .ade-bg-moon {
+  --ade-moon: none, none;
 }
 
 .ade-bg-image-default {
@@ -537,19 +544,73 @@ body {
   flex-shrink: 0;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
   color: var(--ade-text-tertiary);
 }
 
-.ade-thread-state[data-state="needs-you"] {
+/* T3's states on the ADE's palette: orange is active or waiting on you, green only an unread
+   finish, red only a failure. Waiting on its own subagent or task stays quiet, as in T3. */
+.ade-thread-state:is(
+  [data-kind="approval"],
+  [data-kind="input"],
+  [data-kind="guest"],
+  [data-kind="plan"],
+  [data-kind="working"],
+  [data-kind="connecting"]
+) {
   color: var(--ade-accent);
 }
 
-.ade-thread-state[data-state="working"] {
-  color: var(--ade-accent);
+.ade-thread-state[data-kind="completed"] {
+  color: var(--ade-ok);
 }
 
-.ade-thread-state[data-state="error"] {
+.ade-thread-state[data-kind="failed"] {
   color: var(--ade-danger);
+}
+
+/* T3's status-pulse: stepped, so it repaints a few times a second, not every frame. */
+@media (prefers-reduced-motion: no-preference) {
+  .ade-thread-state:is([data-kind="working"], [data-kind="connecting"]) svg {
+    animation: ade-status-pulse 2s infinite;
+  }
+}
+
+@keyframes ade-status-pulse {
+  0%,
+  40% {
+    opacity: 1;
+    animation-timing-function: steps(6);
+  }
+  50%,
+  90% {
+    opacity: 0.5;
+    animation-timing-function: steps(6);
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* A fixed slot, so titles line up whether or not a row has a mark. */
+.ade-thread-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 14px;
+}
+
+/* What waits on you reads first in the list. */
+.ade-thread:has(
+    .ade-thread-state:is(
+      [data-kind="approval"],
+      [data-kind="input"],
+      [data-kind="guest"],
+      [data-kind="plan"]
+    )
+  )
+  .ade-thread-title {
+  color: var(--ade-accent);
+  font-weight: 600;
 }
 
 .ade-thread-view h1 {
@@ -933,6 +994,220 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* Sits under the last turn, closer than the gap between turns. */
+.ade-live {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin-top: -12px;
+}
+
+.ade-live:empty {
+  display: none;
+}
+
+.ade-live-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* A still dot: no animation runs while the agent works for minutes. */
+.ade-live-line::before {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ade-accent);
+  content: "";
+}
+
+/* A subagent or delegated task: who runs it, how it goes, how long, and the way into it. */
+.ade-subagent {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--ade-divider);
+  border-radius: var(--ade-radius-md);
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+}
+
+button.ade-subagent {
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+button.ade-subagent:hover {
+  border-color: var(--ade-border);
+  background: var(--ade-surface);
+}
+
+button.ade-subagent:active {
+  background: var(--ade-divider);
+}
+
+.ade-subagent-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.ade-subagent-title,
+.ade-subagent-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-subagent-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ade-subagent-where,
+.ade-subagent-status {
+  color: var(--ade-text-muted);
+  font-weight: 400;
+}
+
+.ade-subagent-status {
+  font-size: 12px;
+}
+
+.ade-subagent-status[data-status="failed"] {
+  color: var(--ade-danger);
+}
+
+.ade-subagent-time,
+.ade-background-time {
+  flex: none;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-subagent-open {
+  flex: none;
+  color: var(--ade-text-tertiary);
+  transition: transform 120ms ease;
+}
+
+button.ade-subagent:hover .ade-subagent-open {
+  color: var(--ade-text);
+  transform: translateX(2px);
+}
+
+/* Work the agent left going, above the composer: one line, its list under «Detalles». */
+.ade-background {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ade-background-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.ade-background-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ade-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A still dot: no animation runs while a task works for minutes. */
+.ade-background-title::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--ade-accent);
+  vertical-align: middle;
+  content: "";
+}
+
+.ade-background-action {
+  flex: none;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--ade-radius-sm);
+  background: none;
+  color: var(--ade-text);
+  font: 500 13px var(--ade-font-sans);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.ade-background-action:hover {
+  background: var(--ade-surface);
+}
+
+.ade-background-action:disabled {
+  color: var(--ade-text-disabled);
+  cursor: default;
+}
+
+.ade-background-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 0 0 14px;
+  border-top: 1px solid var(--ade-divider);
+  list-style: none;
+  font-size: 13px;
+}
+
+.ade-background-list li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ade-background-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-background-state {
+  flex: none;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+/* Only a question or an approval for the user takes the accent; work going on stays quiet. */
+.ade-background-title[data-asks],
+.ade-background-state[data-asks] {
+  color: var(--ade-accent);
+  font-weight: 600;
+}
+
 .ade-tool-empty,
 .ade-notice {
   margin: 4px 0 0;
@@ -1152,26 +1427,15 @@ body {
   text-align: center;
 }
 
-.ade-picker summary,
-.ade-picker-menu label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ade-picker-menu label svg[width] {
-  margin-left: auto;
-}
-
 /* Settings that rarely change: no frame until hovered, like T3's footer chips. */
-.ade-picker.ade-picker-chip summary {
+.ade-picker.ade-picker-chip {
   padding: 4px 6px;
   border-color: transparent;
   font-size: 11.5px;
 }
 
-.ade-picker.ade-picker-chip summary:hover,
-.ade-picker.ade-picker-chip[open] summary {
+.ade-picker.ade-picker-chip:hover,
+.ade-picker.ade-picker-chip[data-open] {
   border-color: var(--ade-border);
 }
 
@@ -1182,67 +1446,67 @@ body {
 }
 
 .ade-picker {
-  position: relative;
-}
-
-.ade-picker summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 10px;
   border: 1px solid var(--ade-border);
   border-radius: var(--ade-radius-sm);
+  background: none;
   color: var(--ade-text-muted);
   font: 12px var(--ade-font-mono);
-  list-style: none;
   cursor: pointer;
 }
 
-.ade-picker summary::-webkit-details-marker {
-  display: none;
-}
-
-.ade-picker summary::after {
-  content: " ▾";
+.ade-picker::after {
+  content: "▾";
   color: var(--ade-text-tertiary);
 }
 
-.ade-picker[open] summary,
-.ade-picker summary:hover {
+.ade-picker[data-open],
+.ade-picker:hover {
   color: var(--ade-text);
 }
 
-.ade-composer-form fieldset:disabled .ade-picker summary {
+.ade-picker:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 1px;
+}
+
+.ade-picker:disabled {
   pointer-events: none;
   opacity: 0.6;
 }
 
+/* Opaque: a menu over the conversation must not let it show through. */
 .ade-picker-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 2;
   display: grid;
   gap: 8px;
   min-width: 220px;
-  max-height: 50vh;
+  max-width: calc(100vw - 24px);
+  max-height: min(50vh, var(--available-height));
   overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--ade-border);
   border-radius: var(--ade-radius-md);
-  background: var(--ade-surface);
+  background: #101217;
+  color: var(--ade-text);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.7);
 }
 
-.ade-picker-menu fieldset {
+.ade-picker-menu [data-slot="menu-radio-group"] {
   display: grid;
   gap: 2px;
 }
 
-.ade-picker-menu legend {
+.ade-picker-menu [data-slot="menu-group-label"] {
   padding: 0 6px 2px;
   color: var(--ade-text-tertiary);
   font: 500 10.5px/2 var(--ade-font-mono);
   text-transform: uppercase;
 }
 
-.ade-picker-menu label {
+.ade-picker-menu [data-slot="menu-radio-item"] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1251,20 +1515,41 @@ body {
   color: var(--ade-text-muted);
   font-size: 13px;
   cursor: pointer;
+  outline: none;
 }
 
-.ade-picker-menu label:hover,
-.ade-picker-menu label:has(:checked) {
-  background: var(--ade-bg);
+.ade-picker-menu [data-slot="menu-radio-item"] svg[width] {
+  margin-left: auto;
+}
+
+.ade-picker-menu [data-slot="menu-radio-item"][data-highlighted],
+.ade-picker-menu [data-slot="menu-radio-item"][data-checked] {
+  background: rgb(255 255 255 / 0.07);
   color: var(--ade-text);
 }
 
-.ade-picker-menu input {
-  accent-color: var(--ade-accent);
+.ade-picker-menu [data-slot="menu-radio-item"][data-highlighted] {
+  box-shadow: inset 0 0 0 1px var(--ade-border);
+}
+
+.ade-picker-menu [data-slot="menu-item-indicator"] {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--ade-text-tertiary);
+  border-radius: 999px;
+}
+
+.ade-picker-menu [data-slot="menu-item-indicator"][data-checked] {
+  border-color: var(--ade-accent);
+  background: radial-gradient(circle, var(--ade-accent) 0 3px, transparent 3.5px);
 }
 
 .ade-queue {
   display: grid;
+  /* An auto column grows to the queued text's full width; the text cuts itself instead. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -1959,7 +2244,7 @@ body {
 }
 
 /* Inicio, Resumen, Proyectos and Tablero: hairlines and tonal steps, colour only for what needs you or is full. */
-.ade-main:has(.ade-home, .ade-summary, .ade-board, .ade-projects) {
+.ade-main:has(.ade-home, .ade-summary, .ade-gasto, .ade-board, .ade-projects) {
   place-items: stretch;
 }
 
@@ -2048,6 +2333,17 @@ body {
   font-size: 13px;
 }
 
+.ade-spend-widen {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.ade-spend-widen .ade-pairing {
+  justify-self: stretch;
+  margin: 4px 0 0;
+}
+
 .ade-summary-rows {
   display: grid;
   gap: 6px;
@@ -2073,6 +2369,24 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Gasto: the model's name is never cut; the amount moves to its own line when both do not fit. */
+.ade-spend-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.ade-spend-rows .ade-summary-name {
+  flex: 0 1 auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.ade-spend-rows .ade-summary-aside {
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .ade-summary-aside {
@@ -2209,6 +2523,296 @@ body {
   color: var(--ade-text-muted);
   font: 12px var(--ade-font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Gasto: cuatro cifras con su tendencia, una gráfica de barras y la tabla por modelo y cuenta. */
+.ade-gasto {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: start;
+  /* A scrolling table's row would otherwise shrink to nothing when the view is shorter than it. */
+  grid-auto-rows: max-content;
+  gap: 16px;
+  min-height: 0;
+  padding: 32px;
+  overflow-y: auto;
+}
+
+.ade-gasto-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ade-gasto-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ade-gasto-ranges {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ade-border);
+  border-radius: 10px;
+  background: var(--ade-surface);
+}
+
+.ade-gasto-range {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--ade-text-muted);
+  font: 500 13px/1.4 var(--ade-font-sans);
+  cursor: pointer;
+}
+
+.ade-gasto-range:hover {
+  color: var(--ade-text);
+}
+
+.ade-gasto-range:focus-visible {
+  outline: 2px solid var(--ade-accent);
+  outline-offset: 1px;
+}
+
+.ade-gasto-range[data-pressed] {
+  background: rgb(255 255 255 / 0.12);
+  color: var(--ade-text);
+}
+
+.ade-gasto-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.ade-gasto-stat,
+.ade-gasto-chart,
+.ade-gasto-table-wrap {
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+}
+
+.ade-gasto-stat {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 14px 18px 16px;
+}
+
+.ade-gasto-stat h2,
+.ade-gasto-stat p {
+  margin: 0;
+}
+
+.ade-gasto-stat .ade-label {
+  padding: 0;
+}
+
+.ade-gasto-figure {
+  font: 500 26px/1.15 var(--ade-font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.ade-gasto-trend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--ade-text-muted);
+  font: 12px/1.4 var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-note {
+  margin: 0;
+}
+
+.ade-gasto-note:not([data-level]) {
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-gasto-empty {
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-lg);
+  background: var(--ade-surface);
+  color: var(--ade-text-muted);
+}
+
+.ade-gasto-chart {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 18px 12px;
+}
+
+.ade-gasto-chart figcaption,
+.ade-gasto-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-gasto-chart figcaption > :first-child {
+  color: var(--ade-text);
+  font-weight: 500;
+}
+
+.ade-gasto-chart-max,
+.ade-gasto-axis {
+  font: 12px var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 160px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--ade-divider);
+  list-style: none;
+}
+
+.ade-gasto-bars li {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.ade-gasto-bars li:hover::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-canvas);
+  color: var(--ade-text);
+  font: 12px var(--ade-font-mono);
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+}
+
+.ade-gasto-bars li:first-child:hover::after {
+  left: 0;
+  transform: translateY(-100%);
+}
+
+.ade-gasto-bars li:last-child:hover::after {
+  right: 0;
+  left: auto;
+  transform: translateY(-100%);
+}
+
+.ade-gasto-bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--ade-accent);
+}
+
+.ade-gasto-bars li:hover .ade-gasto-bar {
+  background: #ff8f57;
+}
+
+.ade-gasto-table-wrap {
+  overflow-x: auto;
+}
+
+.ade-gasto-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ade-gasto-table th,
+.ade-gasto-table td {
+  padding: 10px 16px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ade-gasto-table thead th {
+  color: var(--ade-text-muted);
+  font-weight: 500;
+}
+
+.ade-gasto-table tbody tr {
+  border-top: 1px solid var(--ade-divider);
+}
+
+.ade-gasto-table tbody th {
+  font-weight: 500;
+}
+
+.ade-gasto-table td:nth-child(n + 3),
+.ade-gasto-table th:nth-child(n + 3) {
+  text-align: right;
+}
+
+.ade-gasto-table td {
+  color: var(--ade-text-muted);
+  font: 12.5px var(--ade-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ade-gasto-table td:nth-child(2) {
+  font-family: var(--ade-font-sans);
+}
+
+.ade-gasto-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .ade-gasto {
+    padding: 16px;
+  }
+
+  .ade-gasto-range {
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+
+  .ade-gasto-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ade-gasto-figure {
+    font-size: 22px;
+  }
+
+  .ade-gasto-trend-vs {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .ade-spend-est {
@@ -2393,43 +2997,84 @@ body {
   display: none;
 }
 
-/* Inicio: estado vacío del chat nuevo sobre el vidrio aclarado. */
+/* Inicio: la pregunta en el centro, el compositor abajo y el tramado naranja sobre la Luna. */
+.ade-shell:has(.ade-home) {
+  background: rgb(10 11 14 / 0.55);
+}
+
 .ade-home {
   position: relative;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  isolation: isolate;
+  display: grid;
   min-height: 0;
-  padding: 32px 24px 7%;
-  overflow-y: auto;
-  background: radial-gradient(70% 60% at 86% 8%, rgb(7 8 10 / 0.38), rgb(7 8 10 / 0.78) 100%);
+  overflow: hidden;
+  container-type: size;
 }
 
-.ade-home-inner {
-  display: grid;
-  gap: 24px;
-  width: min(700px, 100%);
-  margin: 0 auto;
+/* The art stays on the visible box; only this column scrolls. */
+.ade-home-scroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 32px 24px 28px;
+  overflow-y: auto;
+}
+
+/* Solo con el fondo Luna: con «Liso» o una imagen propia el Inicio queda como lo eligió el usuario.
+   La foto ya viene tramada (el script está en el commit que añadió home-art.png); aquí solo se
+   pinta en puntos del acento. Foto: Ansel Adams, «The Tetons – Snake River», NARA 519904, dominio público. */
+.ade-home-art {
+  --cell: max(4px, 100cqw / 721, 100cqh / 401);
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.95;
+  pointer-events: none;
+  background-color: var(--ade-accent);
+  mask:
+    url("./home/home-art.png") center / calc(721 * var(--cell)) calc(401 * var(--cell)) no-repeat,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'%3E%3Crect x='.5' y='.5' width='3' height='3'/%3E%3C/svg%3E")
+      center / var(--cell) var(--cell);
+  mask-composite: intersect;
+  image-rendering: pixelated;
+}
+
+[data-ade-bg="luna"] ~ .ade-shell .ade-home-art {
+  display: block;
 }
 
 .ade-home-greeting {
   display: grid;
-  gap: 12px;
+  flex: 1 0 auto;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 0;
+  text-align: center;
 }
 
 .ade-home-greeting h1 {
   margin: 0;
   color: var(--ade-text);
-  font-size: clamp(34px, 5vw, 56px);
-  font-weight: 400;
-  line-height: 1.04;
-  letter-spacing: -0.045em;
-  text-shadow: 0 2px 24px rgb(0 0 0 / 0.55);
+  font-size: clamp(30px, 3.2vw, 44px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-shadow: 0 2px 24px rgb(0 0 0 / 0.7);
+}
+
+.ade-home-inner {
+  display: grid;
+  gap: 12px;
+  width: min(760px, 100%);
+  margin: 0 auto;
 }
 
 .ade-overnight {
   margin: 0 0 16px;
+  background: rgb(16 18 23 / 0.88);
   padding: 10px 12px;
   border: 1px solid var(--ade-border);
   border-radius: 10px;
@@ -2459,11 +3104,13 @@ body {
   align-items: center;
   gap: 10px;
   margin: 0 0 0 2px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(10 11 14 / 0.75);
   color: #d6d6db;
   font: 500 11.5px/1.2 var(--ade-font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  text-shadow: 0 1px 10px rgb(0 0 0 / 0.9);
 }
 
 .ade-home-stat-sep {
@@ -2479,7 +3126,7 @@ body {
   margin: -2px -6px;
   border: 0;
   border-radius: var(--ade-radius-sm);
-  background: rgb(10 11 14 / 0.7);
+  background: none;
   color: var(--ade-accent);
   font: inherit;
   letter-spacing: inherit;
@@ -2489,8 +3136,8 @@ body {
 
 .ade-home-needs-you:hover,
 .ade-home-needs-you:focus-visible {
-  background: color-mix(in srgb, var(--ade-accent) 20%, transparent);
-  color: var(--ade-accent);
+  background: var(--ade-accent);
+  color: var(--ade-ink);
   outline: 2px solid var(--ade-accent);
   outline-offset: 2px;
 }
@@ -2544,9 +3191,11 @@ body {
 }
 
 .ade-composer-home .ade-composer-where {
-  padding: 0 8px;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(10 11 14 / 0.75);
   color: #d6d6db;
-  text-shadow: 0 1px 10px rgb(0 0 0 / 0.9);
 }
 
 .ade-home-projects {
@@ -2568,6 +3217,11 @@ body {
   color: #e8e8eb;
   font: 400 13px/1.2 var(--ade-font-sans);
   cursor: pointer;
+}
+
+.ade-home-project-chip.ade-home-project-more {
+  justify-content: center;
+  padding-inline: 13px;
 }
 
 .ade-home-project-chip:hover {
@@ -3165,6 +3819,86 @@ body {
   background: var(--ade-surface);
   color: var(--ade-text);
   font: 13px var(--ade-font-sans);
+}
+
+.ade-bot-quick {
+  display: grid;
+  gap: 10px;
+}
+
+.ade-bot-quick-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.ade-bot-quick-row textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 12px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 14px/1.45 var(--ade-font-sans);
+  resize: vertical;
+}
+
+.ade-bot-quick-row textarea:focus-visible {
+  border-color: var(--ade-accent);
+  outline: none;
+}
+
+.ade-bot-quick-row .ade-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.ade-bot-quick-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ade-bot-quick-error .ade-error {
+  margin: 0;
+}
+
+.ade-bot-proposal {
+  border-color: var(--ade-accent);
+}
+
+.ade-bot-quick-where {
+  min-width: min(100%, 280px);
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-sm);
+  background: var(--ade-surface);
+  color: var(--ade-text);
+  font: 13px var(--ade-font-sans);
+}
+
+.ade-bot-quick-where:focus-visible {
+  border-color: var(--ade-accent);
+  outline: none;
+}
+
+/* The quiet buttons sit level with «Crear». */
+.ade-bot-quick .ade-button-quiet {
+  margin-top: 0;
+}
+
+.ade-bot-proposal-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
 }
 
 .ade-bots-layout {
@@ -3985,16 +4719,8 @@ body {
     border-radius: 16px;
   }
 
-  .ade-home {
-    padding: 24px 20px 5%;
-  }
-
-  .ade-home-inner {
-    gap: 18px;
-  }
-
-  .ade-home-greeting h1 {
-    font-size: clamp(32px, 4.2vw, 46px);
+  .ade-home-scroll {
+    padding: 24px 20px;
   }
 }
 
@@ -4074,6 +4800,14 @@ body {
 
   .ade-bots-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ade-bot-quick-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ade-bot-quick-row .ade-button {
+    justify-self: end;
   }
 
   .ade-bots-chat {
@@ -4193,17 +4927,17 @@ body {
     padding: 16px;
   }
 
-  .ade-home {
-    justify-content: flex-start;
-    padding: 28px 16px 24px;
+  .ade-home-scroll {
+    padding: 16px 16px 24px;
   }
 
-  .ade-home-inner {
-    gap: 18px;
+  /* A phone shows the whole height of the scene, not just its clear middle. */
+  .ade-home-art {
+    --cell: max(2px, 100cqh / 401);
   }
 
   .ade-home-greeting h1 {
-    font-size: 34px;
+    font-size: 28px;
   }
 
   .ade-composer.ade-composer-home {
@@ -4213,10 +4947,6 @@ body {
   .ade-composer-home .ade-composer-form {
     padding: 12px;
     border-radius: 16px;
-  }
-
-  .ade-composer-home .ade-picker-menu {
-    max-width: calc(100vw - 48px);
   }
 
   .ade-home-project-chip {
@@ -4625,8 +5355,15 @@ body {
   .ade-search,
   .ade-search-backdrop,
   .ade-main > *,
-  .ade-bot-avatar circle {
+  .ade-bot-avatar circle,
+  .ade-subagent,
+  .ade-subagent-open,
+  .ade-background-action {
     transition: none;
+  }
+
+  button.ade-subagent:hover .ade-subagent-open {
+    transform: none;
   }
 }
 

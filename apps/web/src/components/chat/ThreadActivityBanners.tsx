@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
+  pendingBackgroundTaskItem,
   presentPendingBackgroundWork,
   presentProviderGoal,
   type RunStopPresentation,
@@ -212,11 +213,10 @@ export function backgroundWorkNowItem(
   const presentation = presentPendingBackgroundWork(input.tasks, resolve);
   if (presentation === null) return null;
   const rows = presentation.items.map((task) => {
-    const itemKey =
-      input.tasks.find((pending) => pending.taskId === task.taskId)?.nativeItemId ?? task.taskId;
-    // Same key derivePendingBackgroundWork gives turn-item tasks; subagent items carry progress.
-    const item = input.turnItems.findLast(
-      (candidate) => (candidate.nativeItemRef?.nativeId || candidate.id) === itemKey,
+    // Subagent items carry progress.
+    const item = pendingBackgroundTaskItem(
+      input.tasks.find((pending) => pending.taskId === task.taskId) ?? task,
+      input.turnItems,
     );
     const subagent = item?.type === "subagent" ? item : undefined;
     return {

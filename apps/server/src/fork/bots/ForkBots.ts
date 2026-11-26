@@ -14,6 +14,8 @@ import {
   ForkBotAnswerProposalInput,
   ForkBotProposal,
   ForkBotDismissHandoffInput,
+  ForkBotDraft,
+  ForkBotDraftInput,
   type ForkBotHandoff,
   ForkBotHandoffInput,
   type ForkBotHandoffResult,
@@ -27,6 +29,8 @@ import {
   ForkBotSetArchivedInput,
   ForkBotsError,
   ForkBotUpsertInput,
+  forkBotDraftModel,
+  isForkBotDraftModelAllowed,
   MessageId,
   type ModelSelection,
   type ProjectId,
@@ -41,11 +45,13 @@ import {
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -60,6 +66,7 @@ import {
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
@@ -67,6 +74,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as ForkCoordination from "../coordination/ForkCoordination.ts";
 import * as ForkProjectMemory from "../memory/ForkProjectMemory.ts";
 import { makeForkJsonFileStore } from "../jsonFileStore.ts";
+import { DraftReply, draftPrompt, handleFrom, sentenceDraft, uniqueHandle } from "./draft.ts";
 import {
   decodeStoredBotDirectory,
   EMPTY_BOT_DIRECTORY,
@@ -81,6 +89,8 @@ export class ForkBots extends Context.Service<
   {
     readonly list: (input: ForkBotListInput) => Effect.Effect<ForkBotListResult, ForkBotsError>;
     readonly upsert: (input: ForkBotUpsertInput) => Effect.Effect<ForkBot, ForkBotsError>;
+    /** A bot from one sentence, for the user to create with `upsert`; nothing is saved. */
+    readonly draft: (input: ForkBotDraftInput) => Effect.Effect<ForkBotDraft, ForkBotsError>;
     readonly setArchived: (input: ForkBotSetArchivedInput) => Effect.Effect<ForkBot, ForkBotsError>;
     readonly remove: (
       input: ForkBotRemoveInput,
@@ -144,6 +154,9 @@ const savedBytes = (value: unknown) =>
 const decodeAnswerProposalInput = Schema.decodeUnknownEffect(ForkBotAnswerProposalInput);
 const decodeListInput = Schema.decodeUnknownEffect(ForkBotListInput);
 const decodeUpsertInput = Schema.decodeUnknownEffect(ForkBotUpsertInput);
+const decodeDraftInput = Schema.decodeUnknownEffect(ForkBotDraftInput);
+const decodeDraft = Schema.decodeUnknownEffect(ForkBotDraft);
+const decodeDraftReply = Schema.decodeUnknownEffect(Schema.fromJsonString(DraftReply));
 const decodeSetArchivedInput = Schema.decodeUnknownEffect(ForkBotSetArchivedInput);
 const decodeRemoveInput = Schema.decodeUnknownEffect(ForkBotRemoveInput);
 const decodeSendMessageInput = Schema.decodeUnknownEffect(ForkBotSendMessageInput);
@@ -317,6 +330,8 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+  const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   /**
    * A routine copies the mode and model of the thread it continues. When the bot leaves that
@@ -417,6 +432,113 @@ const make = Effect.gen(function* () {
     );
     const id = parsed.id ?? `bot:${SecureRandom.uuidV4Unsafe()}`;
     return yield* botLocks.withLock(id, storeLock.withPermits(1)(saveBot(parsed, id)));
+  });
+
+  const draft = Effect.fn("ForkBots.draft")(function* (input: ForkBotDraftInput) {
+    const parsed = yield* decodeDraftInput(input).pipe(
+      Effect.mapError(() => invalidInput("Invalid bot sentence.")),
+    );
+    const project = yield* projects
+      .getById(parsed.projectId)
+      .pipe(Effect.mapError(() => unavailable("Could not verify the bot project.")));
+    if (Option.isNone(project)) return yield* notFound("Bot project was not found.");
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => unavailable("Could not read the drafting model setting.")),
+    );
+    const allProviders = yield* providerRegistry.getProviders.pipe(Effect.orElseSucceed(() => []));
+    const providers = allProviders.filter(
+      (provider) =>
+        providerIsSelectable(provider) &&
+        resolveProjectProviderInstanceEnabled(settings, parsed.projectId, provider.instanceId),
+    );
+    const usableModels = providers.flatMap((provider) =>
+      provider.models
+        .filter((model) => model.isLegacy !== true)
+        .map((model) => ({ instanceId: provider.instanceId, model: model.slug })),
+    );
+    // A default whose provider or model went away would only make «Crear» fail.
+    const selection = [
+      project.value.defaultModelSelection,
+      settings.defaultModelSelection,
+      usableModels[0],
+    ].find(
+      (candidate) =>
+        candidate != null &&
+        usableModels.some(
+          (usable) =>
+            usable.instanceId === candidate.instanceId && usable.model === candidate.model,
+        ),
+    );
+    if (selection == null) {
+      return yield* unavailable("No provider is available for a bot in this project.");
+    }
+    // Only the chosen or default allowed model: no fallback to another provider's model.
+    const chosen = settings.forkBotDraftModelSelection;
+    const drafter = forkBotDraftModel(chosen, providers);
+    const chosenDriver = allProviders.find(
+      (provider) => provider.instanceId === chosen?.instanceId,
+    )?.driver;
+    const notAllowed =
+      chosen !== null &&
+      chosenDriver !== undefined &&
+      !isForkBotDraftModelAllowed(String(chosenDriver), chosen.model);
+    const reply =
+      drafter === null
+        ? undefined
+        : yield* Effect.gen(function* () {
+            const instance = yield* instanceRegistry.getInstance(drafter.instanceId);
+            if (instance === undefined) return yield* Effect.fail("unregistered" as const);
+            // A provider runs in a folder; drafting must not read a checkout.
+            const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-bot-draft-" });
+            // The one free-prompt operation every provider implements; its answer is our JSON.
+            return yield* installationGate.execute(
+              drafter.instanceId,
+              instance.textGeneration.generateTranscriptionPostProcessing({
+                cwd,
+                prompt: draftPrompt(parsed.text),
+                modelSelection: drafter,
+              }),
+            );
+          }).pipe(
+            Effect.scoped,
+            Effect.map((generated) => generated.transcription),
+            Effect.tapError((error) =>
+              Effect.logWarning("fork bots could not draft a bot with its model", {
+                instanceId: drafter.instanceId,
+                error,
+              }),
+            ),
+            Effect.option,
+          );
+    const takenHandles = new Set(
+      (yield* storeLock.withPermits(1)(fileStore.read())).bots.map((bot) =>
+        bot.handle.toLowerCase(),
+      ),
+    );
+    // Built from named fields only, so a reply cannot add a mode, a project or a coordinator.
+    const build = (fields: DraftReply, fallbackReason: ForkBotDraft["fallbackReason"]) =>
+      decodeDraft({
+        handle: uniqueHandle(handleFrom(fields.handle || fields.name), takenHandles),
+        name: fields.name,
+        role: fields.role,
+        instructions: fields.instructions,
+        routine: fields.routine,
+        projectId: parsed.projectId,
+        runtimeMode: "approval-required",
+        modelSelection: { instanceId: selection.instanceId, model: selection.model },
+        draftedBy: fallbackReason === null ? drafter : null,
+        fallbackReason,
+      });
+    const fromSentence = (reason: NonNullable<ForkBotDraft["fallbackReason"]>) =>
+      build(sentenceDraft(parsed.text), reason).pipe(
+        Effect.mapError(() => invalidInput("Could not draft a bot from this sentence.")),
+      );
+    if (reply === undefined) return yield* fromSentence(notAllowed ? "modelNotAllowed" : "noModel");
+    if (Option.isNone(reply)) return yield* fromSentence("modelFailed");
+    return yield* decodeDraftReply(extractJsonObject(reply.value)).pipe(
+      Effect.flatMap((fields) => build(fields, null)),
+      Effect.catch(() => fromSentence("invalidReply")),
+    );
   });
 
   /**
@@ -1208,6 +1330,7 @@ const make = Effect.gen(function* () {
     propose,
     answerProposal,
     upsert,
+    draft,
     setArchived,
     remove,
     sendMessage,

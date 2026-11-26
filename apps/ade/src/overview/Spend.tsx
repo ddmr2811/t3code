@@ -1,18 +1,31 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { connectionRouteId } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId, UsageProviderKind } from "@t3tools/contracts";
+import {
+  AuthTerminalOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+  type UsageProviderKind,
+} from "@t3tools/contracts";
 import { formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { useContext, useEffect, useMemo, useState } from "react";
 
-import { environmentThreadDetails, serverEnvironment } from "../state.ts";
+import { ADE_SCOPES, NOT_IN_WEB_LINKS } from "../connection/pairing.ts";
+import { PairingForm } from "../Machines.tsx";
+import { environmentSession, environmentThreadDetails, serverEnvironment } from "../state.ts";
 import {
   botEstimate,
+  hasPaidUse,
+  modelLimitShare,
   ratesByModel,
   rulerTicks,
   type SpendLine,
+  type SpendPeriod,
   spendSummary,
   weekWindow,
+  widenScopes,
 } from "./spend.logic.ts";
 import { flatProvidersAtom, spendUsageAtom } from "./spend.state.ts";
 
@@ -22,6 +35,14 @@ const REFRESH_MS = 60_000;
 
 const usd = (value: number) => formatUsd(value, "es-ES");
 const percent = (share: number) => `${Math.round(share * 100)} %`;
+
+/** The money billed per use, or what stands for it when nothing was: «0,00 US$» reads as free. */
+export function paidFigure(period: SpendPeriod): string {
+  if (hasPaidUse(period)) return usd(period.realUsd);
+  return period.lines.some((line) => line.kind === "flat")
+    ? "Incluido en suscripciones"
+    : "Sin API de pago";
+}
 
 function readCap(): string {
   try {
@@ -96,7 +117,64 @@ function Ruler(props: { valueUsd: number; capUsd: number }) {
   );
 }
 
-export function SpendCard() {
+/**
+ * A session can't add `usage:read` to itself, so the way in is a new code from that machine,
+ * paired at its stored address for exactly what this session holds plus `usage:read`. The
+ * pairing, address and permissions all come from the connection the session was last read over.
+ */
+export function WidenUsage(props: { environmentId: EnvironmentId; label: string }) {
+  const [open, setOpen] = useState(false);
+  const result = useAtomValue(environmentSession.sessionStateAtom(props.environmentId));
+  const prepared = Option.getOrNull(
+    useAtomValue(environmentSession.preparedConnectionValueAtom(props.environmentId)),
+  );
+  const scopes = widenScopes(result, [...ADE_SCOPES, AuthTerminalOperateScope]);
+  if (prepared === null || scopes === null) {
+    return <p className="ade-summary-caption">{props.label}: comprobando sus permisos…</p>;
+  }
+  const cliOnly = scopes.some((scope) => NOT_IN_WEB_LINKS.includes(scope));
+  return (
+    <div className="ade-spend-widen">
+      <p className="ade-summary-caption">
+        {props.label}: el ADE no tiene permiso para ver su gasto.
+      </p>
+      {open ? null : (
+        <button type="button" className="ade-button-quiet" onClick={() => setOpen(true)}>
+          Ampliar permiso
+        </button>
+      )}
+      {open ? (
+        <>
+          {cliOnly ? (
+            <p className="ade-summary-caption">
+              Su ajuste de Compartir y acceso no ofrece todos los permisos que ya tiene. En{" "}
+              {props.label} ejecuta{" "}
+              <code>t3 pair {scopes.map((s) => `--scope ${s}`).join(" ")}</code> y pega aquí lo que
+              imprime tras «Token:».
+            </p>
+          ) : (
+            <p className="ade-summary-caption">
+              En T3 Code de {props.label}: Ajustes → Compartir y acceso → Crear enlace. En Permisos
+              deja los que vienen marcados, marca «Ver totales de uso», crea el enlace y pega aquí
+              «Copiar solo el código».
+            </p>
+          )}
+          <PairingForm
+            onDone={() => setOpen(false)}
+            widen={{
+              environmentId: props.environmentId,
+              host: prepared.httpBaseUrl,
+              pairing: connectionRouteId(prepared.target),
+              scopes,
+            }}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+export function SpendCard(props: { onOpenGasto: () => void }) {
   const { window, usage } = useWeekUsage();
   const flat = useAtomValue(flatProvidersAtom);
   const spend = useMemo(
@@ -123,7 +201,10 @@ export function SpendCard() {
     }, REFRESH_MS);
     return () => clearInterval(timer);
   }, [registry, readable, window]);
-  const missing = [...usage.needsPairing, ...usage.failed];
+  const missing = [...usage.needsPairing.map((machine) => machine.label), ...usage.failed];
+  const widen = usage.needsPairing.map((machine) => (
+    <WidenUsage key={machine.environmentId} {...machine} />
+  ));
   const [capText, setCapText] = useState(readCap);
   const cap = Number(capText);
   const hasCap = capText !== "" && Number.isFinite(cap) && cap > 0;
@@ -134,15 +215,16 @@ export function SpendCard() {
       <section className="ade-summary-card">
         <h2 className="ade-label">Gasto</h2>
         <p className="ade-summary-figure">Sin datos</p>
-        <p className="ade-summary-caption">
-          {usage.failed.length > 0
-            ? `No se pudo leer el uso de ${usage.failed.join(", ")}.`
-            : usage.needsPairing.length > 0
-              ? "Vuelve a emparejar la máquina para ver el gasto."
+        {usage.failed.length > 0 || usage.needsPairing.length === 0 ? (
+          <p className="ade-summary-caption">
+            {usage.failed.length > 0
+              ? `No se pudo leer el uso de ${usage.failed.join(", ")}.`
               : usage.pending
                 ? "Leyendo el uso de las máquinas…"
                 : "Las máquinas aún no han informado del uso."}
-        </p>
+          </p>
+        ) : null}
+        {widen}
       </section>
     );
   }
@@ -151,10 +233,14 @@ export function SpendCard() {
     <section className="ade-summary-card">
       <h2 className="ade-label">Gasto</h2>
       <p className="ade-summary-figure" data-level={hasCap && week > cap ? "full" : undefined}>
-        {usd(week)}
-        {hasCap ? <span className="ade-spend-of"> de {usd(cap)}</span> : null}
+        {paidFigure(spend.week)}
+        {hasCap && hasPaidUse(spend.week) ? (
+          <span className="ade-spend-of"> de {usd(cap)}</span>
+        ) : null}
       </p>
-      <p className="ade-summary-caption">esta semana · hoy {usd(spend.today.realUsd)}</p>
+      <p className="ade-summary-caption">
+        esta semana{hasPaidUse(spend.today) ? ` · hoy ${usd(spend.today.realUsd)}` : ""}
+      </p>
       {spend.week.mixedUsd > 0 ? (
         <p className="ade-summary-caption">
           {usd(spend.week.mixedUsd)} de esa cifra{" "}
@@ -168,13 +254,16 @@ export function SpendCard() {
         </p>
       ) : null}
       {hasCap ? <Ruler valueUsd={week} capUsd={cap} /> : null}
-      <ul className="ade-summary-rows">
+      <ul className="ade-summary-rows ade-spend-rows">
         {spend.week.lines.slice(0, SHOWN_LINES).map((line) => (
           <li key={`${line.provider}:${line.model}:${line.kind}`}>
             <span className="ade-summary-name">{line.model}</span>
             <span className="ade-summary-aside" data-kind={line.kind}>
               {line.kind === "unpriced" ? line.provider : LINE_LABEL[line.kind]}
-              <LineAmount line={line} limitShare={flat.peaks.get(line.provider)} />
+              <LineAmount
+                line={line}
+                limitShare={modelLimitShare(flat.limits, line.provider, line.model)}
+              />
             </span>
           </li>
         ))}
@@ -187,27 +276,31 @@ export function SpendCard() {
       {usage.failed.length > 0 ? (
         <p className="ade-summary-caption">No se pudo leer el uso de {usage.failed.join(", ")}.</p>
       ) : null}
-      {usage.needsPairing.length > 0 ? (
-        <p className="ade-summary-caption">
-          {usage.needsPairing.join(", ")}: vuelve a emparejar la máquina para ver el gasto.
-        </p>
-      ) : null}
+      {widen}
       <label className="ade-spend-cap">
-        Tope semanal
+        {hasCap ? "Tope semanal" : "Sin tope semanal"}
         <input
           type="number"
           min={0}
           step={1}
           inputMode="decimal"
-          placeholder="sin tope"
+          placeholder="US$"
+          aria-label="Tope semanal en US$"
           value={capText}
           onChange={(event) => {
             setCapText(event.target.value);
             writeCap(event.target.value);
           }}
         />
-        US$
+        {capText === "" ? null : "US$"}
       </label>
+      <button
+        type="button"
+        className="ade-button-quiet ade-summary-action"
+        onClick={props.onOpenGasto}
+      >
+        Ver gasto
+      </button>
     </section>
   );
 }

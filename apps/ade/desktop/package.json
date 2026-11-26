@@ -1,0 +1,53 @@
+{
+  "name": "ade-desktop",
+  "version": "0.1.7",
+  "private": true,
+  "description": "ADE",
+  "author": "ddmr2811",
+  "type": "module",
+  "main": "main.mjs",
+  "build": {
+    "appId": "com.ddmr2811.ade",
+    "productName": "ADE",
+    "electronVersion": "44.10.1",
+    "directories": {
+      "output": "release",
+      "buildResources": "."
+    },
+    "files": [
+      "main.mjs",
+      "policy.mjs",
+      "package.json",
+      {
+        "from": "../dist",
+        "to": "web"
+      }
+    ],
+    "npmRebuild": false,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "artifactName": "ADE-Setup-${version}.${ext}",
+      "shortcutName": "ADE",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": null
+  },
+  "productName": "ADE"
+}

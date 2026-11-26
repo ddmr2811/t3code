@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   FORK_BOTS_INSTRUCTIONS_MAX_LENGTH,
   FORK_BOTS_NAME_MAX_LENGTH,
   FORK_BOTS_ROLE_MAX_LENGTH,
@@ -10,6 +11,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 
 import { threadState } from "../sidebar/sidebar.logic.ts";
 
@@ -37,8 +39,18 @@ export interface ValidatedBotDraft {
   readonly coordinator: boolean;
 }
 
+export const RUNTIME_MODES = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+] as const;
+/** A bot proposed from a sentence goes at most this far, even when adjusted. */
+export const SENTENCE_RUNTIME_MODES = ["approval-required", "auto-accept-edits"] as const;
+
 export function validateBotDraft(
   draft: BotDraft,
+  allowedModes: ReadonlyArray<BotDraft["runtimeMode"]> = RUNTIME_MODES,
 ):
   | { readonly ok: true; readonly value: ValidatedBotDraft }
   | { readonly ok: false; readonly error: string } {
@@ -68,6 +80,12 @@ export function validateBotDraft(
   }
   if (draft.instanceId === "" || draft.model === "") {
     return { ok: false, error: "Selecciona un modelo." };
+  }
+  if (!allowedModes.includes(draft.runtimeMode)) {
+    return {
+      ok: false,
+      error: "Desde una frase, los permisos llegan como mucho a «Aceptar ediciones».",
+    };
   }
   return {
     ok: true,
@@ -274,4 +292,75 @@ export function recentHandoffs(
         ? { handoff, direction: "in", peer: handleOf(handoff.fromBotId) }
         : { handoff, direction: "out", peer: handleOf(handoff.toBotId) },
     );
+}
+
+/** A server older than a method answers it with this defect: the feature is absent, not broken. */
+export function lacksMethod(cause: Cause.Cause<unknown>, tag: string): boolean {
+  const defect = Cause.squash(cause);
+  const message = defect instanceof Error ? defect.message : defect;
+  return message === `Unknown request tag: ${tag}`;
+}
+
+export interface BotProjectChoice {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}
+
+export interface BotMachine {
+  readonly environmentId: EnvironmentId;
+  /** Empty while its projects load. */
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+}
+
+const words = (text: string) =>
+  ` ${text
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()} `;
+
+/** Within one machine: the project the sentence names as whole words, longest first, else its first. */
+export function suggestBotProject(
+  text: string,
+  projects: BotMachine["projects"],
+): ProjectId | null {
+  const sentence = words(text);
+  const named = projects
+    .filter(
+      (project) => words(project.title).trim() !== "" && sentence.includes(words(project.title)),
+    )
+    .toSorted((left, right) => words(right.title).length - words(left.title).length)[0];
+  return (named ?? projects[0])?.id ?? null;
+}
+
+/**
+ * Where a sentence goes. With several machines the user always picks machine and project for
+ * this very send: nothing in the sentence, the open thread or Bots' machine picks it. With one,
+ * its suggested project. A machine with no projects loaded waits and never sends.
+ */
+export function botDestination(
+  text: string,
+  machines: ReadonlyArray<BotMachine>,
+  picked: BotProjectChoice | null,
+  // Every paired machine, usable or not: one that is merely offline or outdated still means
+  // the user has more than one place this sentence could be meant for.
+  pairedCount: number,
+):
+  | { readonly kind: "send"; readonly target: BotProjectChoice }
+  | { readonly kind: "ask" }
+  | { readonly kind: "wait" } {
+  if (picked !== null) {
+    const machine = machines.find((candidate) => candidate.environmentId === picked.environmentId);
+    return machine?.projects.some((project) => project.id === picked.projectId)
+      ? { kind: "send", target: picked }
+      : { kind: "wait" };
+  }
+  if (pairedCount > 1 && machines.length > 0) return { kind: "ask" };
+  if (machines.length !== 1) return { kind: "wait" };
+  const only = machines[0]!;
+  const projectId = suggestBotProject(text, only.projects);
+  return projectId === null
+    ? { kind: "wait" }
+    : { kind: "send", target: { environmentId: only.environmentId, projectId } };
 }

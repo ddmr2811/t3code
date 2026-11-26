@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime, environmentCatalog } from "../connection/runtime.ts";
+import { lacksMethod } from "./bots.logic.ts";
 
 export interface BotLoadError {
   readonly environmentId: EnvironmentId;
@@ -34,6 +35,11 @@ export const forkBotsListQuery = createEnvironmentRpcQueryAtomFamily(connectionA
 export const forkBotsUpsertCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "ade:fork-bots:upsert",
   tag: WS_METHODS.forkBotsUpsert,
+});
+
+export const forkBotsDraftCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "ade:fork-bots:draft",
+  tag: WS_METHODS.forkBotsDraft,
 });
 
 export const forkBotsSetArchivedCommand = createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -128,7 +134,9 @@ export const allBotsAtom = Atom.make((get) => {
     }
     const gaps = get(forkGapsListQuery({ environmentId, input: {} }));
     if (gaps._tag === "Success") gapsByEnv.set(environmentId, gaps.value.gaps);
-    if (gaps._tag === "Failure") gapErrors.push(environmentId);
+    if (gaps._tag === "Failure" && !lacksMethod(gaps.cause, WS_METHODS.forkGapsList)) {
+      gapErrors.push(environmentId);
+    }
   }
 
   return { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, errors, gapErrors };

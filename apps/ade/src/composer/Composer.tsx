@@ -45,12 +45,22 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import {
+  Menu,
+  MenuContent,
+  MenuGroupLabel,
+  MenuItemIndicator,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+} from "@ui-sdk/react/menu";
 import { type ReactNode, useContext, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../connection/runtime.ts";
 
 import {
   attachmentEnvironment,
+  environmentProjects,
   environmentSession,
   environmentThreadDetails,
   operateAccessAtom,
@@ -62,6 +72,8 @@ import {
   defaultNewThreadSettings,
   type DraftImage,
   effortBars,
+  type MenuProject,
+  menuProviders,
   modelEffort,
   type ProviderChoice,
   providerChoices,
@@ -215,7 +227,10 @@ export async function runCommand<W extends { readonly environmentId: Environment
   const error = squashAtomCommandFailure(result);
   const detail = isAuthorizationError(error)
     ? `la máquina pide el permiso ${error.requiredScope}, que esta sesión no tiene`
-    : errorDisplayMessage(error);
+    : // An older server answers a method it lacks with this defect.
+      error instanceof Error && error.message.startsWith("Unknown request tag: ")
+      ? "esta máquina tiene un servidor T3 anterior que aún no tiene esta función; elige otra o actualízala"
+      : errorDisplayMessage(error);
   return detail === null ? `${failure}.` : `${failure}: ${detail}`;
 }
 
@@ -234,53 +249,40 @@ function Picker<T extends string>(props: {
   selected: T;
   onSelect: (value: T) => void;
 }) {
-  const menu = useRef<HTMLDetailsElement>(null);
-  const close = () => {
-    if (menu.current !== null) menu.current.open = false;
-  };
   return (
-    <details
-      ref={menu}
-      className={props.compact ? "ade-picker ade-picker-chip" : "ade-picker"}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && menu.current?.open) {
-          // Only the menu closes, not the panel or the dialog around it.
-          event.preventDefault();
-          close();
-          menu.current.querySelector("summary")?.focus();
-        }
-      }}
-    >
-      <summary>
+    // Not modal: a press on the next picker closes this menu and opens that one in one click.
+    <Menu modal={false}>
+      <MenuTrigger
+        type="button"
+        className={props.compact ? "ade-picker ade-picker-chip" : "ade-picker"}
+      >
         <span className="ade-sr-only">{props.label}: </span>
         {props.current}
-      </summary>
-      <div className="ade-picker-menu">
+      </MenuTrigger>
+      <MenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        collisionPadding={12}
+        className="ade-picker-menu"
+      >
         {props.groups.map((group, index) => (
-          <fieldset key={group.label ?? index}>
-            <legend className={group.label === undefined ? "ade-sr-only" : undefined}>
-              {group.label ?? props.label}
-            </legend>
+          <MenuRadioGroup
+            key={group.label ?? index}
+            value={props.selected}
+            onValueChange={props.onSelect}
+          >
+            {group.label === undefined ? null : <MenuGroupLabel>{group.label}</MenuGroupLabel>}
             {group.choices.map((choice) => (
-              <label key={choice.value}>
-                <input
-                  type="radio"
-                  name={props.label}
-                  checked={choice.value === props.selected}
-                  onChange={() => {
-                    props.onSelect(choice.value);
-                    close();
-                  }}
-                  // Choosing the current value changes nothing, but still closes the menu.
-                  onClick={choice.value === props.selected ? close : undefined}
-                />
+              <MenuRadioItem key={choice.value} value={choice.value} closeOnSelect>
+                <MenuItemIndicator keepMounted />
                 {choice.label}
-              </label>
+              </MenuRadioItem>
             ))}
-          </fieldset>
+          </MenuRadioGroup>
         ))}
-      </div>
-    </details>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -315,6 +317,7 @@ function EffortGlyph(props: { count: number; filled: number }) {
 function SettingsPickers(props: {
   defaults: TurnSettings;
   providers: ReadonlyArray<ProviderChoice>;
+  project: MenuProject | null;
   draft: TurnDraft;
   setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
 }) {
@@ -339,18 +342,20 @@ function SettingsPickers(props: {
             </>
           )
         }
-        groups={providers.map((choice) => ({
-          label: choice.label,
-          choices: choice.models.map((model) => ({
-            value: modelKey(choice.instanceId, model.slug),
-            label: (
-              <>
-                <ProviderIcon provider={choice} />
-                {model.name}
-              </>
-            ),
-          })),
-        }))}
+        groups={menuProviders(providers, props.project, [settings.model, defaults.model]).map(
+          (choice) => ({
+            label: choice.label,
+            choices: choice.models.map((model) => ({
+              value: modelKey(choice.instanceId, model.slug),
+              label: (
+                <>
+                  <ProviderIcon provider={choice} />
+                  {model.name}
+                </>
+              ),
+            })),
+          }),
+        )}
         selected={modelKey(settings.model.instanceId, settings.model.model)}
         onSelect={(value) => {
           const [instanceId, slug] = JSON.parse(value) as [string, string];
@@ -547,6 +552,7 @@ interface SendPayload {
 function ComposerForm(props: {
   environmentId: EnvironmentId;
   providers: ReadonlyArray<ProviderChoice>;
+  project: MenuProject | null;
   defaults: TurnSettings | null;
   draft: TurnDraft;
   setDraft: (update: (draft: TurnDraft) => TurnDraft) => void;
@@ -720,6 +726,7 @@ function ComposerForm(props: {
             <SettingsPickers
               defaults={defaults}
               providers={providers}
+              project={props.project}
               draft={draft}
               setDraft={setDraft}
             />
@@ -809,7 +816,12 @@ function Workspace(props: { threadRef: ScopedThreadRef; thread: EnvironmentThrea
 }
 
 /** The selected thread's composer, with its queue above it and where it works below. */
-export function Composer(props: { threadRef: ScopedThreadRef; thread: EnvironmentThreadShell }) {
+export function Composer(props: {
+  threadRef: ScopedThreadRef;
+  thread: EnvironmentThreadShell;
+  /** What sits above the queue, such as the work the agent left going. */
+  children?: ReactNode;
+}) {
   const { threadRef, thread } = props;
   const registry = useContext(RegistryContext);
   const access = useAtomValue(operateAccessAtom(threadRef.environmentId));
@@ -818,6 +830,10 @@ export function Composer(props: { threadRef: ScopedThreadRef; thread: Environmen
   const providers = useMemo(
     () => (config === null ? NO_PROVIDERS : providerChoices(config, thread.projectId)),
     [config, thread.projectId],
+  );
+  const project = useAtomValue(
+    environmentProjects.environmentProjectIndexAtom(threadRef.environmentId),
+    (index) => index.get(thread.projectId) ?? null,
   );
   const running =
     useAtomValue(environmentThreadDetails.queueWorkflowAtom(threadRef))?.activeRun != null;
@@ -828,10 +844,12 @@ export function Composer(props: { threadRef: ScopedThreadRef; thread: Environmen
   };
   return (
     <section className="ade-composer" aria-label="Compositor">
+      {props.children}
       <QueuedRuns threadRef={threadRef} />
       <ComposerForm
         environmentId={threadRef.environmentId}
         providers={providers}
+        project={project}
         defaults={defaults}
         draft={draft}
         setDraft={setDraft}
@@ -974,6 +992,7 @@ export function NewThreadComposer(props: {
       <ComposerForm
         environmentId={environmentId}
         providers={providers}
+        project={project}
         defaults={defaults}
         draft={draft}
         setDraft={setDraft}

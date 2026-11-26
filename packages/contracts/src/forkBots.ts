@@ -9,6 +9,7 @@ import {
 } from "./baseSchemas.ts";
 import { ForkFailoverTarget } from "./forkFailover.ts";
 import { ForkBotIntegrations } from "./forkIntegrations.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Fork: persistent bot directory protocol version. */
@@ -192,6 +193,109 @@ export const ForkBotUpsertInput = Schema.Struct({
   integrations: Schema.optionalKey(ForkBotIntegrations),
 });
 export type ForkBotUpsertInput = typeof ForkBotUpsertInput.Type;
+
+export const FORK_BOTS_DRAFT_TEXT_MAX_LENGTH = 2000;
+
+/** One sentence describing the bot the user wants, for the project it should work in. */
+export const ForkBotDraftInput = Schema.Struct({
+  text: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(FORK_BOTS_DRAFT_TEXT_MAX_LENGTH),
+    noMultilineControl,
+  ),
+  projectId: ProjectId,
+});
+export type ForkBotDraftInput = typeof ForkBotDraftInput.Type;
+
+const ForkBotDraftModel = Schema.Struct({ instanceId: ProviderInstanceId, model: TrimmedString });
+
+/**
+ * A bot ready for `forkBots.upsert`. Mode, project and model are the server's, never the model's:
+ * the safest mode, and never a coordinator.
+ */
+export const ForkBotDraft = Schema.Struct({
+  handle: ForkBotHandle,
+  name: ForkBotName,
+  role: ForkBotRole,
+  instructions: ForkBotInstructions,
+  /** Described, not scheduled; empty when the sentence asks for none. */
+  routine: TrimmedString.check(
+    Schema.isMaxLength(FORK_BOTS_PROPOSAL_NOTE_MAX_LENGTH),
+    noSingleLineControl,
+  ),
+  projectId: ProjectId,
+  runtimeMode: Schema.Literal("approval-required"),
+  modelSelection: ForkFailoverTarget,
+  /** The model that wrote it; null when it was drafted from the sentence alone. */
+  draftedBy: Schema.NullOr(ForkBotDraftModel),
+  /**
+   * Why no model wrote it: none allowed is usable, the chosen one is not on the allowed list, its
+   * call failed, or its reply was not a valid bot. Null when `draftedBy` wrote it.
+   */
+  fallbackReason: Schema.NullOr(
+    Schema.Literals(["noModel", "modelNotAllowed", "modelFailed", "invalidReply"]),
+  ),
+});
+export type ForkBotDraft = typeof ForkBotDraft.Type;
+
+/**
+ * Drafting sends the user's sentence, which may carry project data, to the model. Only these
+ * exact models may receive it, preferred first: Gemini Flash through Antigravity, then Kimi
+ * through OpenCode Go.
+ */
+const FORK_BOT_DRAFT_MODELS = [
+  { driver: "antigravity", model: "gemini-3.8-flash" },
+  { driver: "antigravity", model: "gemini-3.8-flash-low" },
+  { driver: "antigravity", model: "gemini-3.8-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.8-flash-high" },
+  { driver: "antigravity", model: "gemini-3.7-flash-low" },
+  { driver: "antigravity", model: "gemini-3.7-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.7-flash-high" },
+  { driver: "antigravity", model: "gemini-3.6-flash-low" },
+  { driver: "antigravity", model: "gemini-3.6-flash-medium" },
+  { driver: "antigravity", model: "gemini-3.6-flash-high" },
+  { driver: "opencode", model: "opencode-go/kimi-k3" },
+  { driver: "opencode", model: "opencode-go/kimi-k3.1-pro" },
+  { driver: "opencode", model: "opencode-go/kimi-k2.7-code" },
+] as const;
+
+export const isForkBotDraftModelAllowed = (driver: string, model: string): boolean =>
+  FORK_BOT_DRAFT_MODELS.some((allowed) => allowed.driver === driver && allowed.model === model);
+
+interface DraftModelProvider {
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: string;
+  readonly models: ReadonlyArray<{
+    readonly slug: string;
+    readonly isLegacy?: boolean | undefined;
+  }>;
+}
+
+/**
+ * The model that drafts bots among the usable `providers`: the chosen one if allowed and listed,
+ * else, with none chosen, the first allowed one listed. Null drafts without a model.
+ */
+export function forkBotDraftModel(
+  chosen: { readonly instanceId: ProviderInstanceId; readonly model: string } | null,
+  providers: ReadonlyArray<DraftModelProvider>,
+): { readonly instanceId: ProviderInstanceId; readonly model: string } | null {
+  const offers = (provider: DraftModelProvider, model: string) =>
+    isForkBotDraftModelAllowed(String(provider.driver), model) &&
+    provider.models.some((listed) => listed.slug === model && listed.isLegacy !== true);
+  if (chosen !== null) {
+    const provider = providers.find((candidate) => candidate.instanceId === chosen.instanceId);
+    return provider !== undefined && offers(provider, chosen.model)
+      ? { instanceId: chosen.instanceId, model: chosen.model }
+      : null;
+  }
+  for (const allowed of FORK_BOT_DRAFT_MODELS) {
+    const provider = providers.find(
+      (candidate) =>
+        String(candidate.driver) === allowed.driver && offers(candidate, allowed.model),
+    );
+    if (provider !== undefined) return { instanceId: provider.instanceId, model: allowed.model };
+  }
+  return null;
+}
 
 export const ForkBotSetArchivedInput = Schema.Struct({
   id: ForkBotId,

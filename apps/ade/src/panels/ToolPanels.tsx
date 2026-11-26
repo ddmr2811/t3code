@@ -22,7 +22,7 @@ import {
   selectedThreadKeyAtom,
   ThreadStateBadge,
 } from "../sidebar/Sidebar.tsx";
-import { threadState } from "../sidebar/sidebar.logic.ts";
+import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import { environmentProjects, environmentThreadShells, terminalAccessAtom } from "../state.ts";
 import { FloatingPanel, shortcutsFree, toolPanelAtom } from "./FloatingPanel.tsx";
 import { terminalAfterShortcut, type ToolPanel } from "./panels.logic.ts";
@@ -176,7 +176,9 @@ function Activity() {
           <li key={key}>
             <button type="button" className="ade-activity-row" onClick={() => setSelected(key)}>
               <time dateTime={thread.updatedAt}>{clockTime(thread.updatedAt)}</time>
-              <ThreadStateBadge state={threadState(thread)} />
+              <span className="ade-thread-mark">
+                <ThreadStateBadge kind={resolveThreadStatusKind(thread)} />
+              </span>
               <span className="ade-activity-title">{thread.title}</span>
               <span className="ade-activity-project">
                 <ProjectTitle environmentId={thread.environmentId} projectId={thread.projectId} />

@@ -1,7 +1,15 @@
 import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupTurns, planStepChip } from "./timeline.logic.ts";
+import {
+  askingThreadIds,
+  backgroundWork,
+  formatElapsed,
+  groupTurns,
+  liveActivity,
+  planStepChip,
+} from "./timeline.logic.ts";
 
 // Only the fields grouping reads; the rest of a real item does not change the outcome.
 const row = (
@@ -55,5 +63,155 @@ describe("planStepChip", () => {
 
   it("shows nothing for a plan left by an earlier run", () => {
     expect(planStepChip([plan("completed", "running")], "run-c")).toBeNull();
+  });
+});
+
+describe("liveActivity", () => {
+  const at = DateTime.makeUnsafe("2026-11-25T08:00:00.000Z");
+  const instance = "claude";
+  const run = (id: string, ordinal: number, status: string) => ({
+    id,
+    ordinal,
+    status,
+    providerInstanceId: instance,
+    activeAttemptId: `attempt-${id}`,
+    requestedAt: at,
+    startedAt: at,
+    completedAt: status === "running" ? null : at,
+  });
+  // The provider opened its turn, so the run is past "Arrancando".
+  const providerTurn = (runId: string) => ({
+    id: `turn-${runId}`,
+    runAttemptId: `attempt-${runId}`,
+    ordinal: 1,
+    status: "running",
+    startedAt: at,
+    completedAt: null,
+  });
+  const item = (type: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id: `item-${type}`,
+    type,
+    status,
+    runId: "run-2",
+    ...extra,
+  });
+  const structure = (extra: Record<string, unknown> = {}) =>
+    ({
+      thread: { providerInstanceId: instance, activeProviderThreadId: null, pullRequests: [] },
+      runs: [run("run-2", 2, "running")],
+      providerTurns: [providerTurn("run-2")],
+      providerSessions: [],
+      providerThreads: [],
+      runtimeRequests: [],
+      messages: [],
+      turnItems: [item("reasoning", "completed")],
+      ...extra,
+    }) as never;
+
+  it("says the agent thinks between tools, and names the subagent at work", () => {
+    expect(liveActivity(structure())).toBe("Pensando");
+    const subagent = item("subagent", "running", { title: "Actualizar servidores" });
+    expect(liveActivity(structure({ turnItems: [subagent] }))).toBe(
+      "Subagente trabajando · Actualizar servidores",
+    );
+  });
+
+  it("claims nothing while the agent asks, or once its turn ended", () => {
+    const asking = structure({ runtimeRequests: [{ id: "request-1", status: "pending" }] });
+    expect(liveActivity(asking)).toBeNull();
+    const ended = structure({ providerTurns: [{ ...providerTurn("run-2"), status: "completed" }] });
+    expect(liveActivity(ended)).toBeNull();
+  });
+
+  it("names a delegated task an earlier run left going, with its clock and its thread", () => {
+    const delegated = structure({
+      runs: [run("run-1", 1, "completed"), run("run-2", 2, "running")],
+      turnItems: [
+        item("reasoning", "completed"),
+        item("subagent", "running", {
+          id: "item-delegated",
+          runId: "run-1",
+          title: "Actualizar servidores F8-F9",
+          childThreadId: "thread-child",
+          nativeItemRef: { nativeId: "task-1" },
+          startedAt: at,
+        }),
+      ],
+    });
+    expect(liveActivity(delegated)).toBe("Pensando");
+    expect(backgroundWork(delegated)).toEqual({
+      title: "Subagente trabajando · Actualizar servidores F8-F9",
+      startedAtMs: DateTime.toEpochMillis(at),
+      tasks: [
+        {
+          taskId: "task-1",
+          label: "Actualizar servidores F8-F9",
+          asksYou: false,
+          childThreadId: "thread-child",
+        },
+      ],
+    });
+    // «Te espera» only once the subagent asks the user something.
+    expect(backgroundWork(delegated, new Set(["thread-child"]))).toMatchObject({
+      title: "Te espera · Actualizar servidores F8-F9",
+      tasks: [{ asksYou: true }],
+    });
+  });
+
+  it("counts several background tasks and gives them no single clock", () => {
+    const tasks = [
+      { taskId: "task-1", kind: "command", description: "vp run dev" },
+      { taskId: "task-2", kind: "subagent" },
+    ];
+    const work = backgroundWork(
+      structure({
+        runs: [run("run-1", 1, "completed")],
+        providerThreads: [
+          { id: "provider-thread-1", providerInstanceId: instance, pendingBackgroundTasks: tasks },
+        ],
+      }),
+    );
+    expect(work).toMatchObject({ title: "En marcha · 2 tareas", startedAtMs: null });
+  });
+});
+
+describe("askingThreadIds", () => {
+  const shell = (id: string, overrides: Record<string, unknown> = {}) =>
+    ({
+      environmentId: "machine-a",
+      id,
+      archivedAt: null,
+      deletedAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default",
+      hasActionableProposedPlan: false,
+      latestRun: null,
+      runtime: null,
+      pendingSubagentRequest: null,
+      ...overrides,
+    }) as never;
+
+  it("counts a child whose own subagent asks for approval, on this machine only", () => {
+    expect(
+      askingThreadIds(
+        [
+          shell("child", { pendingSubagentRequest: "approval" }),
+          shell("quiet"),
+          shell("asks", { hasPendingUserInput: true }),
+          shell("elsewhere", { environmentId: "machine-b", hasPendingApprovals: true }),
+        ],
+        "machine-a",
+      ).split("\n"),
+    ).toEqual(["child", "asks"]);
+  });
+});
+
+describe("formatElapsed", () => {
+  it("switches unit at the minute and the hour, padding the smaller one", () => {
+    expect(formatElapsed(59_999)).toBe("59 s");
+    expect(formatElapsed(60_000)).toBe("1 min 00 s");
+    expect(formatElapsed(3_599_000)).toBe("59 min 59 s");
+    expect(formatElapsed(3_900_000)).toBe("1 h 05 min");
   });
 });

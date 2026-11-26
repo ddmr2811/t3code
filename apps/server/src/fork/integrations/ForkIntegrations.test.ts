@@ -35,6 +35,7 @@ import { IntegrationsToolkit } from "../../mcp/toolkits/integrations/tools.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
@@ -195,6 +196,7 @@ const withIntegrations = <A, E, R>(
         }),
         // An empty catalog is one still loading, which the bot directory accepts.
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        ProviderInstallationGate.layer,
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         }),
