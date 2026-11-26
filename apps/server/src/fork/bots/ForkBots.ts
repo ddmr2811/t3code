@@ -20,6 +20,9 @@ import {
   ForkBotHandoffInput,
   type ForkBotHandoffResult,
   ForkMemoryCorrectInput,
+  ForkMemoryError,
+  type ForkMemoryListResult,
+  type ForkMemoryRestoreInput,
   type ForkMemoryCorrectResult,
   type ForkMemoryNote,
   ForkBotListInput,
@@ -117,6 +120,10 @@ export class ForkBots extends Context.Service<
     readonly correctMemory: (
       input: ForkMemoryCorrectInput,
     ) => Effect.Effect<ForkMemoryCorrectResult, ForkBotsError>;
+    /** Goes back to the kept version, but not while the coordinator may still save over it. */
+    readonly restoreMemory: (
+      input: ForkMemoryRestoreInput,
+    ) => Effect.Effect<ForkMemoryListResult, ForkMemoryError>;
     /** A coordinator's thread suggests a bot; the user decides with `answerProposal`. */
     readonly propose: (
       draft: BotProposalDraft,
@@ -1059,6 +1066,37 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const restoreMemory = Effect.fn("ForkBots.restoreMemory")(function* (
+    input: ForkMemoryRestoreInput,
+  ) {
+    const directory = yield* storeLock
+      .withPermits(1)(fileStore.read())
+      .pipe(
+        Effect.mapError(
+          (error) => new ForkMemoryError({ reason: "storageFailed", message: error.message }),
+        ),
+      );
+    const coordinator = directory.bots.find(
+      (bot) => bot.coordinator && !bot.archived && bot.projectId === input.projectId,
+    );
+    if (coordinator?.threadId != null) {
+      const outcome = yield* threads
+        .getThreadRecords(coordinator.threadId, ["runs"])
+        .pipe(Effect.result);
+      // A turn still running or queued could save over the version the user goes back to.
+      if (
+        outcome._tag === "Success" &&
+        outcome.success.runs.some((run) => !ThreadManagement.isTerminalRunStatus(run.status))
+      ) {
+        return yield* new ForkMemoryError({
+          reason: "busy",
+          message: `@${coordinator.handle} is still applying the correction; go back once it finishes.`,
+        });
+      }
+    }
+    return yield* memory.restore(input);
+  });
+
   /**
    * The board is a trace; the handoff itself is already on disk, so a failed write is logged.
    * Delivered handoffs share one entry per pair of bots, so they never fill the board. A cut one
@@ -1586,6 +1624,7 @@ const make = Effect.gen(function* () {
     dismissHandoff,
     workflowTurn,
     correctMemory,
+    restoreMemory,
     // Untraced: /mcp asks on every request, inside the request's own span.
     isBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
       return (yield* Ref.get(botThreads)).has(threadId);

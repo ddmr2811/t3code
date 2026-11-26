@@ -2,7 +2,7 @@ import {
   ForkMemoryInclusion,
   ForkMemoryNoteId,
   ForkMemoryOrigin,
-  ForkMemoryText,
+  ForkMemoryInputText,
   IsoDateTime,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -53,7 +53,7 @@ const ProjectMemorySaveTool = Tool.make("project_memory_save", {
   description:
     "Save one durable fact to this project's memory, without being asked, when you learn something later work here will need: a decision, a convention, a fact that took effort to find. Not progress, not what the repo already says. One fact per note, one line. Notes are found with `project_memory_search`; only the user marks one essential, so propose it in your reply when a note should reach every turn. `replaces` merges agent notes: the listed ones are removed in the same save. Notes the user wrote cannot be replaced; propose changes to them instead.",
   parameters: Schema.Struct({
-    text: ForkMemoryText,
+    text: ForkMemoryInputText,
     replaces: Schema.optionalKey(
       Schema.Array(ForkMemoryNoteId)
         .check(Schema.isMaxLength(20))

@@ -142,6 +142,8 @@ export const ForkMemoryErrorReason = Schema.Literals([
   "storageFailed",
   /** The memory changed since the screen read it. */
   "conflict",
+  /** The coordinator's turn is still running or queued. */
+  "busy",
 ]);
 export type ForkMemoryErrorReason = typeof ForkMemoryErrorReason.Type;
 

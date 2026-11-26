@@ -79,7 +79,8 @@ export class ForkProjectMemory extends Context.Service<
       { readonly previous: ForkMemoryPrevious; readonly undo: Effect.Effect<void> },
       ForkMemoryError
     >;
-    /** Swaps the notes with the kept version, which becomes the notes left behind. */
+    /** Swaps the notes with the kept version, which becomes the notes left behind; ForkBots
+     * first checks no coordinator turn is still applying a correction. */
     readonly restore: (
       input: ForkMemoryRestoreInput,
     ) => Effect.Effect<ForkMemoryListResult, ForkMemoryError>;
@@ -365,13 +366,24 @@ const make = Effect.gen(function* () {
           .withPermits(1)(
             Effect.gen(function* () {
               const latest = yield* store.read();
-              if (stateOf(latest, projectId)?.revision !== kept.revision) return;
+              const current = stateOf(latest, projectId);
+              // Another copy was kept since; this one is no longer the user's way back.
+              if (current?.previous?.savedAt !== previous.savedAt) return;
               const rest = Object.fromEntries(
                 Object.entries(latest.projects ?? {}).filter(([id]) => id !== projectId),
               );
+              // Untouched since, the copy goes; after another change, only the earlier copy returns.
+              const back =
+                current.revision === kept.revision
+                  ? state
+                  : {
+                      revision: current.revision,
+                      updatedAt: current.updatedAt,
+                      ...(state?.previous === undefined ? {} : { previous: state.previous }),
+                    };
               yield* store.write({
                 ...latest,
-                projects: state === undefined ? rest : { ...rest, [projectId]: state },
+                projects: back === undefined ? rest : { ...rest, [projectId]: back },
               });
             }),
           )
@@ -415,9 +427,7 @@ const make = Effect.gen(function* () {
           reason: "restore",
           notes: current,
         };
-        // Going back is the user's edit: a coordinator's late save cannot merge these away.
-        const restored = kept.notes.map((note) => ({ ...note, origin: "user" as const }));
-        const next = withChange(memory, parsed.projectId, [...others, ...restored], now, left);
+        const next = withChange(memory, parsed.projectId, [...others, ...kept.notes], now, left);
         yield* store.write(next);
         return snapshotOf(next, parsed.projectId, true);
       }),

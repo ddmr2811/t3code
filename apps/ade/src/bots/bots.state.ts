@@ -10,6 +10,7 @@ import {
   type ForkBotHandoff,
   type ForkBotProposal,
   type ForkGap,
+  type ProjectId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -114,6 +115,18 @@ export const forkMemoryRestoreCommand = createEnvironmentRpcCommand(connectionAt
   label: "ade:fork-memory:restore",
   tag: WS_METHODS.forkMemoryRestore,
 });
+
+/** The Memoria view and the Bots tab read the same notes under two keys; a change refreshes both. */
+export function refreshMemory(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+) {
+  registry.refresh(forkMemoryListQuery({ environmentId, input: { projectId } }));
+  registry.refresh(
+    forkMemoryListQuery({ environmentId, input: { projectId, includePrevious: true } }),
+  );
+}
 
 export function refreshBots(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
   registry.refresh(forkBotsListQuery({ environmentId, input: {} }));

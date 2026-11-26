@@ -36,6 +36,13 @@ it.effect("saves an agent's note as searchable in the calling thread's own proje
       { text: "Los despliegues van por Fly.", inclusion: "searchable", origin: "agent" },
     ]);
     expect((yield* memory.list({ projectId: otherProject })).notes).toEqual([]);
+    // A Unicode line break would read to a model as a second line of the note.
+    for (const lineBreak of ["\u0085", "\u2028", "\u2029"]) {
+      yield* toolkit
+        .handle("project_memory_save", { text: `Uno${lineBreak}Dos` })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.exit);
+    }
+    expect((yield* memory.list({ projectId: callerProject })).notes).toHaveLength(1);
   }).pipe(
     Effect.provide(
       McpToolAccess.HandlersLayer.layer(ProjectMemoryHandlers.layer).pipe(

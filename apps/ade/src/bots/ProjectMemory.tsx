@@ -31,6 +31,7 @@ import {
 } from "./bots.logic.ts";
 import {
   forkMemoryListQuery,
+  refreshMemory,
   forkMemoryRemoveCommand,
   forkMemoryUpsertCommand,
 } from "./bots.state.ts";
@@ -43,7 +44,7 @@ const CARD = "grid gap-1.5 rounded-md border border-border bg-background p-2.5";
 const HINT = "m-0 text-xs text-muted-foreground";
 
 /** Notes are one line; pasted line breaks become spaces, as the server requires. */
-const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+const oneLine = (text: string) => text.replace(/[\s\u0085]+/g, " ").trim();
 
 const kilobytes = (bytes: number) =>
   `${(bytes / 1024).toLocaleString("es", { maximumFractionDigits: 1 })} KB`;
@@ -92,7 +93,7 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
       setError(failure);
       return false;
     }
-    registry.refresh(query);
+    refreshMemory(registry, environmentId, bot.projectId);
     return true;
   };
 
@@ -123,7 +124,7 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
     );
     setBusy(false);
     if (failure !== null) return setError(failure);
-    registry.refresh(query);
+    refreshMemory(registry, environmentId, bot.projectId);
   };
 
   if (result._tag !== "Success") {

@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import { useContext, useState } from "react";
+import { useContext, useRef, useState } from "react";
 
 import { BotAvatar } from "../bots/BotAvatar.tsx";
 import { botState } from "../bots/bots.logic.ts";
@@ -23,6 +23,7 @@ import {
   forkMemoryCorrectCommand,
   forkMemoryListQuery,
   forkMemoryRestoreCommand,
+  refreshMemory,
 } from "../bots/bots.state.ts";
 import { runCommand } from "../composer/Composer.tsx";
 import { homeProjectsAtom, selectedHomeProjectKeyAtom } from "../home/Home.tsx";
@@ -37,7 +38,7 @@ import {
 } from "./memory.logic.ts";
 
 /** Notes are one line; pasted line breaks become spaces, as the server requires. */
-const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+const oneLine = (text: string) => text.replace(/[\s\u0085]+/g, " ").trim();
 
 export function MemoryView() {
   const { projects, machineCount, loading } = useAtomValue(homeProjectsAtom);
@@ -91,6 +92,7 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   });
   const result = useAtomValue(query);
   const bots = useAtomValue(allBotsAtom).byEnv.get(environmentId) ?? [];
+  const threads = useAtomValue(listedThreadsAtom);
 
   if (result._tag !== "Success") {
     return result._tag === "Failure" ? (
@@ -106,6 +108,12 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   const sections = memorySections(memory.notes);
   const readers = memoryReaders(bots, project.id, sections.essential.length);
   const coordinator = readers.find((reader) => reader.bot.coordinator)?.bot ?? null;
+  const coordinatorThread = threads.find(
+    (thread) => thread.environmentId === environmentId && thread.id === coordinator?.threadId,
+  );
+  // The server refuses to go back meanwhile; the button says why before anyone tries.
+  const coordinatorWorking =
+    coordinator !== null && botState(coordinator, coordinatorThread, false).status === "working";
   const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
 
   return (
@@ -156,6 +164,7 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
           projectId={project.id}
           coordinatorHandle={coordinator?.handle ?? null}
           coordinatorThreadId={coordinator?.threadId ?? null}
+          coordinatorWorking={coordinatorWorking}
           now={now}
         />
       </div>
@@ -233,6 +242,7 @@ function Correction(props: {
   projectId: HomeProjectTarget["project"]["id"];
   coordinatorHandle: string | null;
   coordinatorThreadId: ForkBot["threadId"];
+  coordinatorWorking: boolean;
   now: number;
 }) {
   const { environmentId, memory, projectId, coordinatorThreadId } = props;
@@ -244,19 +254,29 @@ function Correction(props: {
   const setSelectedThread = useAtomSet(selectedThreadKeyAtom);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  // A ref, so two sends in one tick see each other before React renders.
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
-  const refresh = () =>
-    registry.refresh(
-      forkMemoryListQuery({ environmentId, input: { projectId, includePrevious: true } }),
-    );
+  const start = () => {
+    if (inFlight.current) return false;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    return true;
+  };
+  // Also after a refusal, so the next try is made against what the server holds now.
+  const finish = (failure: string | null) => {
+    refreshMemory(registry, environmentId, projectId);
+    inFlight.current = false;
+    setBusy(false);
+    if (failure !== null) setError(failure);
+  };
 
   const apply = async () => {
     const text = oneLine(draft);
-    // The busy check stops a second Enter; the revision stops one from another screen.
-    if (text === "" || busy || blocked !== null) return;
-    setBusy(true);
-    setError(null);
+    // The ref stops a second Enter; the revision stops one from another screen.
+    if (text === "" || blocked !== null || !start()) return;
     const failure = await runCommand(
       registry,
       forkMemoryCorrectCommand,
@@ -269,26 +289,20 @@ function Correction(props: {
             : `@${result.handle} la está aplicando.`,
         ),
     );
-    setBusy(false);
-    if (failure !== null) return setError(failure);
-    setDraft((current) => (oneLine(current) === text ? "" : current));
-    refresh();
+    if (failure === null) setDraft((current) => (oneLine(current) === text ? "" : current));
+    finish(failure);
   };
 
   const restore = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
+    if (!start()) return;
     const failure = await runCommand(
       registry,
       forkMemoryRestoreCommand,
       { environmentId, input: { projectId, revision } },
       "No se pudo volver a la versión anterior",
     );
-    setBusy(false);
     setSent(null);
-    if (failure !== null) return setError(failure);
-    refresh();
+    finish(failure);
   };
 
   const previous = memory.previous;
@@ -404,12 +418,14 @@ function Correction(props: {
           )}
           <div className="ade-memory-correct-row">
             <span className="ade-memory-hint">
-              Volver deja guardada la versión de ahora, así que también se puede deshacer.
+              {props.coordinatorWorking
+                ? "El coordinador aún está aplicando la corrección; podrás volver cuando acabe."
+                : "Volver deja guardada la versión de ahora, así que también se puede deshacer."}
             </span>
             <button
               type="button"
               className="ade-button-quiet m-0!"
-              disabled={busy || !canRestore || changes.length === 0}
+              disabled={busy || !canRestore || changes.length === 0 || props.coordinatorWorking}
               onClick={() => void restore()}
             >
               <ArrowCounterClockwiseIcon size={15} aria-hidden />
