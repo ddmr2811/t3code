@@ -141,7 +141,7 @@ export function Home() {
                 {projects.length > chips.length ? (
                   <button
                     type="button"
-                    className="ade-home-project-chip"
+                    className="ade-home-project-chip ade-home-project-more"
                     aria-haspopup="dialog"
                     onClick={() => openSearch("proyectos")}
                   >

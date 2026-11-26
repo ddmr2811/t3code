@@ -3111,7 +3111,6 @@ button.ade-subagent:hover .ade-subagent-open {
   font: 500 11.5px/1.2 var(--ade-font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  text-shadow: 0 1px 10px rgb(0 0 0 / 0.9);
 }
 
 .ade-home-stat-sep {
@@ -3127,7 +3126,7 @@ button.ade-subagent:hover .ade-subagent-open {
   margin: -2px -6px;
   border: 0;
   border-radius: var(--ade-radius-sm);
-  background: rgb(10 11 14 / 0.7);
+  background: none;
   color: var(--ade-accent);
   font: inherit;
   letter-spacing: inherit;
@@ -3218,6 +3217,11 @@ button.ade-subagent:hover .ade-subagent-open {
   color: #e8e8eb;
   font: 400 13px/1.2 var(--ade-font-sans);
   cursor: pointer;
+}
+
+.ade-home-project-chip.ade-home-project-more {
+  justify-content: center;
+  padding-inline: 13px;
 }
 
 .ade-home-project-chip:hover {

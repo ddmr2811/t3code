@@ -200,13 +200,18 @@ describe("menuProviders", () => {
             ["opencode/big-pickle", "Big Pickle"],
             ["opencode/beam-free", "Beam Free"],
             ["opencode-go/beam-free", "Beam Free"],
-            ["opencode/flint-40b-free", "Flint 40B Free"],
+            ["opencode/flint-40b", "Flint 40B"],
+            ["opencode-go/pickle-2", "Big Pickle 2"],
             ["opencode/tidepool-alpha-free", "Tidepool Alpha Free"],
             ["opencode-go/iceman-contributor-free", "Iceman Contributor Free"],
             ["opencode/nemotron-3.5-lightning-free", "Nemotron 3.5 Lightning Free"],
+            ["opencode/nemotron-3.5-pro", "Nemotron 3.5 Pro"],
             ["opencode/deepseek-v4.1-flash-free", "DeepSeek V4.1 Flash Free"],
             ["opencode-go/claude-haiku-5-5", "Claude Haiku 5.5"],
             ["opencode-go/claude-opus-5-5", "Claude Opus 5.5"],
+            // Same name, another provider inside OpenCode: not a Zen/Go pair, so it stays.
+            ["anthropic/claude-opus-5-5", "Claude Opus 5.5"],
+            ["opencode/kimi-k3.1-pro", "Kimi K3.1 Pro"],
             ["opencode-go/kimi-k3.1-pro", "Kimi K3.1 Pro"],
           ]),
         ),
@@ -248,7 +253,7 @@ describe("menuProviders", () => {
       expected: [
         "codex: m",
         "claudeAgent: claude-opus-5-5 claude-fable-5-2",
-        "opencode: opencode/beam-free opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
     {
@@ -260,7 +265,7 @@ describe("menuProviders", () => {
         "claudeAgent: claude-opus-5-5 claude-fable-5-2",
         "claudeAgent_claudehxcks: claude-opus-5-5",
         "claudeAgent_work: claude-opus-5-5",
-        "opencode: opencode/beam-free opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
     {
@@ -271,20 +276,20 @@ describe("menuProviders", () => {
         "codex: m",
         "claudeAgent: claude-opus-5-5 claude-sonnet-5-5 claude-fable-5-2",
         "claudeAgent_claudehxcks: claude-haiku-5-5",
-        "opencode: opencode/beam-free opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+        "opencode: opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
     {
-      when: "OpenCode: a thread on a hidden free model, or on the second Beam Free, keeps it",
+      when: "OpenCode: a thread on a hidden free model, or on Zen's copy of a Go model, keeps it",
       where: elsewhere,
       kept: [
         { instanceId: ProviderInstanceId.make("opencode"), model: "opencode/big-pickle" },
-        { instanceId: ProviderInstanceId.make("opencode"), model: "opencode-go/beam-free" },
+        { instanceId: ProviderInstanceId.make("opencode"), model: "opencode/beam-free" },
       ],
       expected: [
         "codex: m",
         "claudeAgent: claude-opus-5-5 claude-fable-5-2",
-        "opencode: opencode/big-pickle opencode-go/beam-free opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
+        "opencode: opencode/big-pickle opencode/beam-free opencode-go/beam-free opencode/nemotron-3.5-pro opencode/deepseek-v4.1-flash-free opencode-go/claude-opus-5-5 anthropic/claude-opus-5-5 opencode-go/kimi-k3.1-pro",
       ],
     },
   ])("$when", ({ where, kept, expected }) => {
@@ -307,6 +312,11 @@ describe("menuProviders", () => {
       instanceId: ProviderInstanceId.make("codex"),
       model: "m",
     });
+    // A Zen or Go default survives the Zen/Go merge.
+    for (const model of ["opencode/beam-free", "opencode-go/beam-free"]) {
+      const opencodeDefault = { instanceId: ProviderInstanceId.make("opencode"), model };
+      expect(settings(opencodeDefault)).toEqual(opencodeDefault);
+    }
   });
 });
 

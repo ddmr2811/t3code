@@ -36,6 +36,7 @@ import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-st
 import { searchOpenAtom } from "./SearchButton.tsx";
 
 const RECENT_THREADS = 50;
+const RECENT_PROJECTS = 8;
 
 /**
  * Ctrl+K: the way to what is not on screen, the panels, the views, the machines, the projects
@@ -45,6 +46,9 @@ const RECENT_THREADS = 50;
  */
 export function Search(props: { onShowMachines: () => void; onNewThread: () => void }) {
   const [open, setOpen] = useAtom(searchOpenAtom);
+  // The mode outlives the close, so the closing dialog does not mount every group.
+  const [mode, setMode] = useState(open);
+  if (open !== false && open !== mode) setMode(open);
   const content = useRef<HTMLDivElement>(null);
   useShortcut("mod+k", () => setOpen(true), {
     when: shortcutsFree,
@@ -57,7 +61,7 @@ export function Search(props: { onShowMachines: () => void; onNewThread: () => v
         <DialogTitle className="ade-sr-only">Buscar o ir a…</DialogTitle>
         <SearchCommands
           {...props}
-          onlyProjects={open === "proyectos"}
+          onlyProjects={mode === "proyectos"}
           layer={content}
           onClose={() => setOpen(false)}
         />
@@ -85,11 +89,16 @@ function SearchCommands(props: {
   const newThreadKeys = useShortcutHint("mod+shift+o").text || "Ctrl+Shift+O";
   // Page shortcuts pause while the dialog is open; this one belongs to it.
   useShortcut("mod+k", props.onClose, { layer: props.layer, description: "Cerrar el buscador" });
-  // Before a query, only the most recent threads: every row reads its project's name.
-  const shown =
-    query.trim() === ""
+  // Before a query, only the most recent threads and projects: every thread row reads its
+  // project's name. «Más…» lists every project.
+  const idle = query.trim() === "";
+  const shown = props.onlyProjects
+    ? []
+    : idle
       ? [...threads].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, RECENT_THREADS)
       : threads;
+  const listedProjects =
+    idle && !props.onlyProjects ? projects.slice(0, RECENT_PROJECTS) : projects;
   const actions: Record<string, () => void> = {
     terminal: () => openToolPanel(registry, "terminal"),
     actividad: () => openToolPanel(registry, "actividad"),
@@ -97,8 +106,20 @@ function SearchCommands(props: {
     maquinas: props.onShowMachines,
     nuevo: props.onNewThread,
   };
-  const item = (value: string, icon: ReactNode, label: string, aside?: ReactNode) => (
-    <CommandItem key={value} value={value} label={label} className="ade-command-item">
+  const item = (
+    value: string,
+    icon: ReactNode,
+    label: string,
+    aside?: ReactNode,
+    keywords?: string[],
+  ) => (
+    <CommandItem
+      key={value}
+      value={value}
+      label={label}
+      {...(keywords === undefined ? {} : { keywords })}
+      className="ade-command-item"
+    >
       <CommandItemIcon>{icon}</CommandItemIcon>
       <span className="ade-command-label">{label}</span>
       {aside}
@@ -173,22 +194,7 @@ function SearchCommands(props: {
             )}
           </CommandGroup>
         )}
-        {projects.length === 0 ? null : (
-          <CommandGroup>
-            <CommandGroupLabel className="ade-command-group">Proyectos</CommandGroupLabel>
-            {projects.map((target) =>
-              item(
-                `proyecto:${target.key}`,
-                <FolderIcon size={16} aria-hidden />,
-                target.project.title,
-                machineCount > 1 ? (
-                  <span className="ade-command-aside">{target.machineLabel}</span>
-                ) : undefined,
-              ),
-            )}
-          </CommandGroup>
-        )}
-        {props.onlyProjects || shown.length === 0 ? null : (
+        {shown.length === 0 ? null : (
           <CommandGroup>
             <CommandGroupLabel className="ade-command-group">Hilos</CommandGroupLabel>
             {shown.map((thread) => {
@@ -213,6 +219,22 @@ function SearchCommands(props: {
                 </CommandItem>
               );
             })}
+          </CommandGroup>
+        )}
+        {listedProjects.length === 0 ? null : (
+          <CommandGroup>
+            <CommandGroupLabel className="ade-command-group">Proyectos</CommandGroupLabel>
+            {listedProjects.map((target) =>
+              item(
+                `proyecto:${target.key}`,
+                <FolderIcon size={16} aria-hidden />,
+                target.project.title,
+                machineCount > 1 ? (
+                  <span className="ade-command-aside">{target.machineLabel}</span>
+                ) : undefined,
+                machineCount > 1 ? [target.machineLabel] : undefined,
+              ),
+            )}
           </CommandGroup>
         )}
       </CommandList>
