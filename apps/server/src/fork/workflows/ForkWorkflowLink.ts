@@ -16,34 +16,69 @@ export interface ForkWorkflowHooks {
 
 export class ForkWorkflowLink extends Context.Service<
   ForkWorkflowLink,
-  { current: ForkWorkflowHooks | undefined }
+  {
+    current: ForkWorkflowHooks | undefined;
+    /** Set by the workflow runtime, which runs its engine only while `current` is. */
+    engine?: (forkUp: boolean) => Effect.Effect<void>;
+  }
 >()("t3/fork/workflows/ForkWorkflowLink") {}
 
 /** One slot per server: layers memoize by reference, so the engine and the fork share it. */
 export const layer = Layer.sync(ForkWorkflowLink, () => ({ current: undefined }));
 
+/**
+ * Fills the slot with `hooks` for the scope, starting the engine after and stopping it before:
+ * the engine starts before the fork's services and stops after them, and no step may run without.
+ */
+export const attach = (link: ForkWorkflowLink["Service"], hooks: ForkWorkflowHooks) =>
+  Effect.acquireRelease(
+    Effect.suspend(() => {
+      link.current = hooks;
+      return link.engine?.(true) ?? Effect.void;
+    }),
+    () =>
+      (link.engine?.(false) ?? Effect.void).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            link.current = undefined;
+          }),
+        ),
+      ),
+  );
+
 /** Fills the slot while the fork's services are up. */
 export const layerFill = Layer.effectDiscard(
   Effect.gen(function* () {
-    const link = yield* ForkWorkflowLink;
     const bots = yield* ForkBots.ForkBots;
     const integrations = yield* ForkIntegrations.ForkIntegrations;
-    link.current = {
+    yield* attach(yield* ForkWorkflowLink, {
       workflowTurn: bots.workflowTurn,
       wasBotThread: bots.wasBotThread,
       callAsBot: integrations.callAsBot,
-    };
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        link.current = undefined;
-      }),
-    );
+    });
   }),
 ).pipe(Layer.provide(layer));
 
 /**
- * The fork's hooks as a step reads them when it runs, or why it cannot: the engine starts before
- * the fork's services and stops after them, so a step there fails and the run can be resumed.
+ * The workflow runtime's `turn`, run only while the fork is attached where the server has a fork.
+ * The runtime still asks for what settings say; `attach` turns it on and off around the fork.
+ */
+export const gateTurn = <E>(turn: (on: boolean) => Effect.Effect<void, E>) =>
+  Effect.map(Effect.serviceOption(ForkWorkflowLink), (found) => {
+    if (Option.isNone(found)) return turn;
+    const link = found.value;
+    let enabled = false;
+    link.engine = (forkUp) => Effect.ignore(turn(enabled && forkUp));
+    return (on: boolean) =>
+      Effect.suspend(() => {
+        enabled = on;
+        return turn(on && link.current !== undefined);
+      });
+  });
+
+/**
+ * The fork's hooks as a step reads them when it runs, or why it cannot (a server without the fork,
+ * or a test's engine without `attach`).
  */
 export const slot = Effect.map(Effect.serviceOption(ForkWorkflowLink), (link) =>
   Effect.suspend(() =>

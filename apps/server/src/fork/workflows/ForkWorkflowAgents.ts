@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 
 import { WorkflowAgentError, WorkflowAgents } from "../../workflows/WorkflowAgents.ts";
 import { isBotThreadId } from "../bots/ForkBots.ts";
@@ -38,10 +37,7 @@ export const layer = Layer.effect(
           }
           return yield* base.start(input);
         }
-        // The engine starts before the bots' services: a bot's step waits for them a while.
         const fork = yield* hooks.pipe(
-          Effect.retry(Schedule.spaced("200 millis")),
-          Effect.timeout("30 seconds"),
           Effect.mapError(() => refused("Bots are not available to workflows on this server.")),
         );
         const hash = yield* digest
