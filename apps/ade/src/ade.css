@@ -79,7 +79,7 @@ body {
 
 /* Fondo fijo en CSS puro: luna quieta o paisaje de atardecer, sin canvas ni bucles. */
 .ade-bg-moon {
-  background:
+  --ade-moon:
     radial-gradient(
       circle at 80% 20%,
       rgb(244 239 228 / 0.19) 0,
@@ -92,7 +92,9 @@ body {
       rgb(185 198 214 / 0.11) 0,
       rgb(69 86 106 / 0.07) clamp(180px, 22vw, 360px),
       transparent clamp(320px, 42vw, 680px)
-    ),
+    );
+  background:
+    var(--ade-moon),
     radial-gradient(
       ellipse 72% 28% at 22% 96%,
       rgb(15 21 29 / 0.72) 0,
@@ -106,6 +108,11 @@ body {
       transparent 60%
     ),
     linear-gradient(180deg, #040507 0%, #090d13 42%, #111822 76%, #070a0f 100%);
+}
+
+/* Inicio has its own landscape; the moon does not belong in it. */
+[data-ade-bg="luna"]:has(~ .ade-shell .ade-home) .ade-bg-moon {
+  --ade-moon: none, none;
 }
 
 .ade-bg-image-default {
@@ -3023,7 +3030,7 @@ button.ade-subagent:hover .ade-subagent-open {
   position: absolute;
   inset: 0;
   z-index: -1;
-  opacity: 0.72;
+  opacity: 0.95;
   pointer-events: none;
   background-color: var(--ade-accent);
   mask:
@@ -3097,6 +3104,9 @@ button.ade-subagent:hover .ade-subagent-open {
   align-items: center;
   gap: 10px;
   margin: 0 0 0 2px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgb(10 11 14 / 0.75);
   color: #d6d6db;
   font: 500 11.5px/1.2 var(--ade-font-mono);
   letter-spacing: 0.06em;

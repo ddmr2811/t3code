@@ -103,13 +103,19 @@ export function providerChoices(
 }
 
 const HXCKS = /hxcks/i;
+// Claude models by any provider: only Opus and Fable.
+const OTHER_CLAUDE = /claude|sonnet|haiku/i;
+const OPUS_OR_FABLE = /opus|fable/i;
+// OpenCode's free models that keep or train on prompts (agentes/politica.md).
+const BANNED_FREE = /big-pickle|(flint|tidepool|iceman|nemotron).*free/i;
 
 export type MenuProject = { readonly title: string; readonly workspaceRoot: string };
 
 /**
- * The model menu: Claude offers only Opus and Fable, and the Hxcks account only in a project whose
- * name or folder says hxcks (its default model is another account's). The `kept` models stay,
- * so the thread's own one can always be chosen again.
+ * The model menu: Claude models only as Opus and Fable, whoever serves them; no OpenCode free
+ * model that keeps the prompts; one row per name (OpenCode lists a free model under Zen and Go);
+ * and the Hxcks account only in a project whose name or folder says hxcks (its default model is
+ * another account's). The `kept` models stay, so the thread's own one can always be chosen again.
  */
 export function menuProviders(
   providers: ReadonlyArray<ProviderChoice>,
@@ -120,11 +126,20 @@ export function menuProviders(
     project !== null && (HXCKS.test(project.title) || HXCKS.test(project.workspaceRoot));
   return providers.flatMap((provider) => {
     const shown = inHxcks || !(HXCKS.test(provider.instanceId) || HXCKS.test(provider.label));
-    const models = provider.models.filter(
-      (model) =>
-        kept.some((keep) => keep.instanceId === provider.instanceId && keep.model === model.slug) ||
-        (shown && (provider.driver !== "claudeAgent" || /opus|fable/i.test(model.slug))),
-    );
+    const isKept = (model: ProviderChoice["models"][number]) =>
+      kept.some((keep) => keep.instanceId === provider.instanceId && keep.model === model.slug);
+    const names = new Set(provider.models.filter(isKept).map((model) => model.name));
+    const models = provider.models.filter((model) => {
+      if (isKept(model)) return true;
+      const allowed =
+        shown &&
+        !names.has(model.name) &&
+        !BANNED_FREE.test(model.slug) &&
+        (OPUS_OR_FABLE.test(model.slug) ||
+          (provider.driver !== "claudeAgent" && !OTHER_CLAUDE.test(model.slug)));
+      if (allowed) names.add(model.name);
+      return allowed;
+    });
     return models.length === 0 ? [] : [{ ...provider, models }];
   });
 }
