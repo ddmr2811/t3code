@@ -21,7 +21,7 @@ export function unknownRecord(value: unknown): Record<string, unknown> | undefin
 }
 
 // The path is joined and resolved exactly as written; only the operating system may read it differently.
-function resolveAcpPermissionPath(path: string, cwd: string | null): string | undefined {
+export function resolveAcpPermissionPath(path: string, cwd: string | null): string | undefined {
   if (path.trim().length === 0) return undefined;
   if (NodePath.isAbsolute(path)) return path;
   if (cwd === null || cwd.trim().length === 0) return undefined;

@@ -37,6 +37,9 @@ const layerLive = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
   effect.pipe(Effect.provide(layerLive));
 
+// The no-hooks check reads the Git binary from disk.
+const makeProcess = VcsProcess.make.pipe(Effect.provide(NodeServices.layer));
+
 const baseInput = {
   operation: "test.process-boundary",
   command: "git",
@@ -47,7 +50,7 @@ const baseInput = {
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
 ) =>
-  VcsProcess.make.pipe(
+  makeProcess.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
@@ -58,55 +61,46 @@ const captureProcessResult = (
 
 describe("VcsProcess.run", () => {
   it.effect.each([
-    { version: "2.54.0", refused: true },
-    { version: "2.54.1", refused: true },
-    { version: "2.55.0", refused: false },
-    { version: "2.53.9", refused: false },
-  ])("checks configured-hook suppression once with Git $version", ({ version, refused }) =>
-    Effect.gen(function* () {
-      const calls: Array<ReadonlyArray<string>> = [];
-      const service = yield* VcsProcess.make.pipe(
-        Effect.provideService(
-          ProcessRunner.ProcessRunner,
-          ProcessRunner.ProcessRunner.of({
-            run: (input) =>
-              Effect.sync(() => {
-                calls.push(input.args);
-                return {
-                  stdout: input.args[0] === "version" ? `git version ${version}\n` : "",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-        ),
-      );
-      const input = {
-        ...baseInput,
-        args: [...VcsProcess.NO_HOOKS_GIT_ARGS, "status", "--short"],
-        env: { PATH: `test-git-${version}` },
-      };
+    { versions: ["2.54.0"], outcomes: ["refuse"] },
+    { versions: ["2.54.1"], outcomes: ["refuse"] },
+    { versions: ["2.55.0.rc0"], outcomes: ["refuse"] },
+    { versions: ["2.55.0-rc1"], outcomes: ["refuse"] },
+    { versions: ["2.55.0"], outcomes: ["allow"] },
+    { versions: ["2.53.9"], outcomes: ["allow"] },
+    // The same PATH after an update of the binary, and after another Git comes first on it.
+    { versions: ["2.43.0", "2.54.0"], outcomes: ["allow", "refuse"] },
+  ] as const)(
+    "refuses no-hooks Git by the version of the binary it would run: $versions",
+    ({ versions, outcomes }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const bin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-version-" });
+        const git = path.join(bin, "git");
+        const service = yield* makeProcess;
+        const input = {
+          ...baseInput,
+          cwd: bin,
+          args: [...VcsProcess.NO_HOOKS_GIT_ARGS, "status", "--short"],
+          env: { PATH: bin },
+        };
 
-      if (refused) {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const error = yield* Effect.flip(service.run(input));
-          assert.instanceOf(error, VcsUnsupportedOperationError);
-          expect(error.detail).toBe(VcsProcess.UNSTOPPABLE_HOOKS_DETAIL);
+        for (const [index, outcome] of outcomes.entries()) {
+          // The marker makes each binary a different size, as an update does.
+          yield* fileSystem.writeFileString(
+            git,
+            `#!/bin/sh\n# ${index}\necho 'git version ${versions[index]}'\n`,
+          );
+          yield* fileSystem.chmod(git, 0o755);
+          if (outcome === "allow") {
+            yield* service.run(input);
+          } else {
+            const error = yield* Effect.flip(service.run(input));
+            assert.instanceOf(error, VcsUnsupportedOperationError);
+            expect(error.detail).toBe(VcsProcess.UNSTOPPABLE_HOOKS_DETAIL);
+          }
         }
-      } else {
-        yield* service.run(input);
-        yield* service.run(input);
-      }
-
-      expect(calls.filter((args) => args[0] === "version")).toHaveLength(1);
-      expect(calls).toHaveLength(refused ? 1 : 3);
-      if (!refused) expect(calls.slice(1)).toEqual([input.args, input.args]);
-    }),
+      }).pipe(Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer))),
   );
 
   it.effect("explains a locked Git index and allows restore after the lock is released", () =>
@@ -209,7 +203,7 @@ describe("VcsProcess.run", () => {
   it.effect("reads Git failures in English when Git would follow the system language", () =>
     Effect.gen(function* () {
       let attempts = 0;
-      const service = yield* VcsProcess.make.pipe(
+      const service = yield* makeProcess.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
@@ -299,7 +293,7 @@ describe("VcsProcess.run", () => {
     ({ stderr, fsyncMethods, ...scenario }) =>
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
-        const service = yield* VcsProcess.make.pipe(
+        const service = yield* makeProcess.pipe(
           Effect.provideService(
             HostProcess.Platform,
             "platform" in scenario ? scenario.platform : "darwin",
@@ -372,7 +366,7 @@ describe("VcsProcess.run", () => {
       const active = yield* Ref.make(0);
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
-      const service = yield* VcsProcess.make.pipe(
+      const service = yield* makeProcess.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
@@ -426,7 +420,7 @@ describe("VcsProcess.run", () => {
   it.effect("leaves git a slot while slow forge CLI processes are running", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
-      const service = yield* VcsProcess.make.pipe(
+      const service = yield* makeProcess.pipe(
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({

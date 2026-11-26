@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
 
 import { SourceControlProviderKind } from "@t3tools/contracts";
@@ -1304,6 +1305,7 @@ describe("PullRequestSyncReactor", () => {
       const started = yield* Queue.unbounded<string>();
       const release = yield* Deferred.make<void>();
       const vcs = yield* VcsProcess.make.pipe(
+        Effect.provide(NodeServices.layer),
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({

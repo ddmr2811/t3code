@@ -1,8 +1,11 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
@@ -21,6 +24,7 @@ import {
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveCommandPaths } from "@t3tools/shared/shell";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
 
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -191,21 +195,50 @@ export const asksForNoHooks = (args: ReadonlyArray<string>) => {
 };
 
 export const UNSTOPPABLE_HOOKS_DETAIL =
-  "Git 2.54 cannot turn off the hooks set in its configuration, so T3 Code does not run its own Git with it. Update Git to 2.55 or later.";
+  "This Git cannot turn off configured hooks by event. Update Git to a stable 2.55 or later.";
 
-// Asked once per PATH, which is once per process outside tests.
-const unstoppableHooksByPath = new Map<string | undefined, boolean>();
-/** `version` is the output of `git version`, or null when it could not be read. */
+// A 2.55 release candidate is not known to have the per-event switch. Shells match this source too.
+export const UNSTOPPABLE_HOOKS_VERSION = String.raw`^git version 2\.(?:54\b|55\.0[.-]rc)`;
+
+// By the binary's real path, size and mtime: another Git on PATH, or an update, is asked again.
+const unstoppableHooksByBinary = new Map<string, boolean>();
+/**
+ * `git` and `env` are the command's own; `version` is the output of its `git version`, or null
+ * when it could not be read.
+ */
 export const cannotStopConfiguredHooks = Effect.fnUntraced(function* <R>(
-  path: string | undefined,
+  git: string,
+  env: NodeJS.ProcessEnv,
   version: Effect.Effect<string | null, never, R>,
 ) {
-  const known = unstoppableHooksByPath.get(path);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Searched each time: the cached lookup would miss a Git that now comes first on PATH.
+  const [binary] = path.isAbsolute(git)
+    ? [git]
+    : yield* resolveCommandPaths(git, { env, until: () => true });
+  const key =
+    binary === undefined
+      ? null
+      : yield* fileSystem.realPath(binary).pipe(
+          Effect.flatMap((real) =>
+            fileSystem
+              .stat(real)
+              .pipe(
+                Effect.map(
+                  (stat) =>
+                    `${real}\0${stat.size}\0${Option.getOrUndefined(stat.mtime)?.getTime()}`,
+                ),
+              ),
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+  const known = key === null ? undefined : unstoppableHooksByBinary.get(key);
   if (known !== undefined) return known;
   const output = yield* version;
   if (output === null) return false;
-  const unstoppable = /^git version 2\.54(?!\d)/.test(output);
-  unstoppableHooksByPath.set(path, unstoppable);
+  const unstoppable = new RegExp(UNSTOPPABLE_HOOKS_VERSION).test(output);
+  if (key !== null) unstoppableHooksByBinary.set(key, unstoppable);
   return unstoppable;
 });
 
@@ -326,6 +359,8 @@ const canRetryFullFsync = (stderr: string) =>
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const backgroundProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY - 1);
@@ -343,7 +378,6 @@ export const make = Effect.gen(function* () {
     input: VcsProcessInput,
     baseError: VcsProcessErrorContext,
   ) {
-    const hostEnvironment = yield* HostProcess.Environment;
     const env = {
       ...(input.command === "git" ? unsetInheritedRepositoryEnv(process.env, hostPlatform) : {}),
       // Failures are read by English patterns; without LANG, macOS Git follows the system language.
@@ -357,11 +391,15 @@ export const make = Effect.gen(function* () {
         ? asksForNoHooks(input.args)
         : input.env?.GIT_CONFIG_PARAMETERS?.endsWith(UNATTENDED_GIT_CONFIG_PARAMETERS)) &&
       (yield* cannotStopConfiguredHooks(
-        input.env?.PATH ?? hostEnvironment.PATH,
+        "git",
+        { ...process.env, ...env },
         processRunner.run({ command: "git", args: ["version"], cwd: input.cwd, env }).pipe(
           Effect.map((result) => result.stdout),
           Effect.orElseSucceed(() => null),
         ),
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ))
     ) {
       return yield* new VcsUnsupportedOperationError({

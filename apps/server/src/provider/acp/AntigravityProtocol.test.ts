@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
@@ -539,6 +540,28 @@ describe("Antigravity tool results", () => {
       expect(normalize(outside).data.content).toMatchObject([
         { patch: { format: "snippet", text: expect.stringContaining("snippet, line unknown") } },
       ]);
+
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        const deep = NodePath.join(workspace, "a", "b", "c", "d");
+        const validated = NodePath.join(workspace, "a", "b", "secret");
+        const misleading = NodePath.join(temporary, "secret");
+        NodeFS.mkdirSync(deep, { recursive: true });
+        NodeFS.writeFileSync(validated, preEdit);
+        NodeFS.writeFileSync(
+          misleading,
+          [
+            replace.TargetContent,
+            ...Array.from({ length: 11 }, (_, index) => `line ${index + 2}`),
+          ].join("\n"),
+        );
+        NodeFS.symlinkSync(deep, NodePath.join(workspace, "link"), "dir");
+        const crafted = `${workspace}${NodePath.sep}link${NodePath.sep}..${NodePath.sep}..${NodePath.sep}secret`;
+
+        // The validated file is inside the workspace; path.resolve would open the other one.
+        expect(acpToolCallDiffPatch(normalize(crafted).data.content)).toContain(
+          "@@ -10,1 +10,1 @@",
+        );
+      }
     } finally {
       NodeFS.rmSync(temporary, { recursive: true, force: true });
     }

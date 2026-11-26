@@ -12,7 +12,9 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -50,7 +52,6 @@ const makeHarness = Effect.fn(function* (options: {
   readonly previousSession?: TerminalSessionSnapshot;
   readonly shell?: string | null;
   readonly observe?: boolean;
-  readonly gitVersion?: string;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const opens: TerminalOpenInput[] = [];
@@ -100,19 +101,6 @@ const makeHarness = Effect.fn(function* (options: {
       Layer.mergeAll(
         terminals,
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitVcsDriver.GitVcsDriver)({
-          execute: () =>
-            Effect.succeed({
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: `git version ${options.gitVersion ?? "2.43.0"}\n`,
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }),
-        }),
-        Layer.succeed(HostProcess.Environment, {
-          PATH: `test-project-setup-${options.gitVersion ?? "2.43.0"}`,
-        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(null),
         }),
@@ -162,24 +150,6 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
-  it.effect("refuses an unasked script with Git 2.54 before opening a terminal", () =>
-    Effect.gen(function* () {
-      const { start, opens, writes } = yield* makeHarness({
-        observe: false,
-        gitVersion: "2.54.0",
-      });
-      const error = yield* start.pipe(
-        Effect.provideService(GitVcsDriver.UnattendedGit, true),
-        Effect.flip,
-      );
-      assert.instanceOf(error, ProjectSetupScriptRunner.ProjectSetupScriptOperationError);
-      assert.instanceOf(error.cause, Error);
-      expect(error.cause.message).toContain("Update Git to 2.55 or later.");
-      expect(opens).toHaveLength(0);
-      expect(yield* Queue.size(writes)).toBe(0);
-    }),
-  );
-
   it.effect("keeps setup scripts independent of the interactive shell preference", () =>
     Effect.gen(function* () {
       const { opens } = yield* setup();
@@ -364,7 +334,7 @@ describe("ProjectSetupScriptRunner", () => {
   );
 });
 
-const runObservedSetup = Effect.fnUntraced(function* (command: string) {
+const runObservedSetup = Effect.fnUntraced(function* (command: string, pathOverride?: string) {
   const { writes, outputLines, emit, completion, opens } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
@@ -382,7 +352,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
         ["--noprofile", "--norc", "-c", shellInput.replaceAll("\r", "\n")],
         {
           cwd,
-          env: { PATH: env.PATH },
+          env: { PATH: pathOverride ?? env.PATH },
         },
       ),
     );
@@ -408,6 +378,31 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup completion", () => {
+  it.live("checks unsupported Git with the PATH of the script's shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const bin = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-shell-path-" });
+        const fakeGit = path.join(bin, "git");
+        yield* fileSystem.writeFileString(
+          fakeGit,
+          "#!/bin/sh\nprintf '%s\\n' 'git version 2.54.0'\n",
+        );
+        yield* fileSystem.chmod(fakeGit, 0o755);
+        const environment = yield* HostProcess.Environment;
+
+        const result = yield* runObservedSetup(
+          "printf '%s\\n' ran",
+          `${bin}:${environment.PATH ?? ""}`,
+        ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+
+        assert.equal(result.exitCode, 1);
+        assert.notInclude(result.lines, "ran");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("submits one line while preserving multiline shell syntax and literal text", () =>
     Effect.gen(function* () {
       const result = yield* runObservedSetup(

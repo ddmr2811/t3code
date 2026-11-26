@@ -7571,6 +7571,7 @@ describe("AcpAdapterV2", () => {
       readonly elsewhere: string;
     }) => Readonly<Record<string, string>>,
     antigravityPolicy = false,
+    childSessionId?: string,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -7599,6 +7600,18 @@ describe("AcpAdapterV2", () => {
           }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
       }),
     });
+    const extractSubagentUpdate: AcpAdapterV2Flavor["extractSubagentUpdate"] = (toolCall) =>
+      toolCall.toolCallId === "launch-child" && childSessionId !== undefined
+        ? {
+            nativeTaskId: "launch-child",
+            prompt: "Copy a file",
+            title: "Copy a file",
+            model: null,
+            status: "running",
+            childSessionId,
+            result: null,
+          }
+        : undefined;
     const instanceId = ProviderInstanceId.make(`acp-test-${name}`);
     const adapter = yield* makeAcpAdapterV2({
       instanceId,
@@ -7614,6 +7627,7 @@ describe("AcpAdapterV2", () => {
               ) => antigravityPermissionDisposition(policy, request, []),
             }
           : {}),
+        ...(childSessionId === undefined ? {} : { extractSubagentUpdate }),
         makeRuntime: (input) =>
           Effect.sync(() => {
             runtimeInput = input;
@@ -7875,6 +7889,64 @@ describe("AcpAdapterV2", () => {
       ],
       true,
     ),
+  );
+
+  it.effect("asks about a copy source from a child ACP session", () =>
+    Effect.gen(function* () {
+      const childSessionId = "mock-child-copy";
+      const turn = yield* startAutoAcceptEditsTurn(
+        "edit-child-copy",
+        undefined,
+        true,
+        childSessionId,
+      );
+      const inside = turn.path.join(turn.workspace, "src", "a.ts");
+      const outside = turn.path.join(turn.elsewhere, "b.ts");
+      const first = yield* turn
+        .requestEdit("edit-first", { target: inside })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-first-request");
+      assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+      yield* turn.sessionUpdate({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "launch-child",
+          kind: "other",
+          title: "Launch child",
+          status: "in_progress",
+        },
+      });
+      yield* turn.sessionUpdate({
+        sessionId: childSessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-tracked",
+          title: "Copy file",
+          kind: "edit",
+          status: "pending",
+          locations: [{ path: inside }],
+        },
+      });
+      yield* turn.sessionUpdate({
+        sessionId: childSessionId,
+        update: {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "edit-tracked",
+          content: {
+            type: "diff",
+            changes: [{ operation: "copy", oldPath: outside, path: inside }],
+          },
+        },
+      });
+
+      // The request names only the copy's target, which is inside the workspace.
+      const fiber = yield* turn.requestEdit("edit-tracked", {
+        sessionId: childSessionId,
+        target: inside,
+      });
+      yield* turn.declinePendingAndStop("edit-tracked-request", fiber);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("auto-accepts an edit named by id whose updates from the agent were all read", () =>

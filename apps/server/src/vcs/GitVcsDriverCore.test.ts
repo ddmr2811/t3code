@@ -55,7 +55,7 @@ import {
 import { autoPullProjects } from "../serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
-import { gitConfigEnv } from "./VcsProcess.ts";
+import { gitConfigEnv, UNATTENDED_GIT_CONFIG, UNSTOPPABLE_HOOKS_DETAIL } from "./VcsProcess.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
@@ -797,32 +797,44 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("runs no post-index-change hook while preparing an untracked review diff", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const cwd = yield* makeTmpDir();
-      yield* initRepoWithCommit(cwd);
-      const fileSystem = yield* FileSystem.FileSystem;
-      const ran = NodePath.join(yield* makeTmpDir("git-review-hook-ran-"), "ran");
-      const hook = NodePath.join(cwd, "hooks", "post-index-change");
-      yield* writeTextFile(cwd, "hooks/post-index-change", `#!/bin/sh\necho ran >> '${ran}'\n`);
-      yield* fileSystem.chmod(hook, 0o755);
-      yield* git(cwd, ["config", "core.hooksPath", "hooks"]);
-      yield* writeTextFile(cwd, "new.txt", "new\n");
-      const driver = yield* GitVcsDriver.GitVcsDriver;
+it.effect.each(["missing", "split"] as const)(
+  "runs no post-index-change hook with a %s index while preparing an untracked review diff",
+  (indexKind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        if (indexKind === "missing") {
+          yield* fileSystem.remove(NodePath.join(cwd, ".git", "index"));
+        } else {
+          yield* git(cwd, ["config", "core.splitIndex", "true"]);
+          yield* git(cwd, ["update-index", "--split-index"]);
+        }
+        const ran = NodePath.join(yield* makeTmpDir("git-review-hook-ran-"), "ran");
+        const hook = NodePath.join(cwd, "hooks", "post-index-change");
+        yield* writeTextFile(
+          cwd,
+          "hooks/post-index-change",
+          `#!/bin/sh\nps -o args= -p $PPID >> '${ran}'\n`,
+        );
+        yield* fileSystem.chmod(hook, 0o755);
+        yield* git(cwd, ["config", "core.hooksPath", "hooks"]);
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
 
-      const preview = yield* driver.getReviewDiffPreview({
-        cwd,
-        file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
-      });
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
 
-      assert.include(
-        preview.sources.flatMap((source) => source.files?.map((file) => file.path) ?? []),
-        "new.txt",
-      );
-      assert.isFalse(yield* fileSystem.exists(ran));
-    }),
-  ).pipe(Effect.provide(layerTest)),
+        assert.include(
+          preview.sources.flatMap((source) => source.files?.map((file) => file.path) ?? []),
+          "new.txt",
+        );
+        assert.isFalse(
+          yield* fileSystem.exists(ran),
+          NodeFS.existsSync(ran) ? NodeFS.readFileSync(ran, "utf8") : undefined,
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["an existing", "a new"] as const)(
@@ -6778,40 +6790,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("refuses unattended Git 2.54 before starting its command", () =>
+    it.effect("asks the version of the Git the command's own environment runs", () =>
       Effect.gen(function* () {
         const environment = yield* HostProcess.Environment;
-        const calls: Array<ReadonlyArray<string>> = [];
+        const versions = ["2.43.0", "2.54.0"] as const;
+        const calls: Array<{ readonly args: ReadonlyArray<string>; readonly path?: string }> = [];
         const spawner = ChildProcessSpawner.make((command) => {
           const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
-          calls.push(args);
+          const path = ChildProcess.isStandardCommand(command)
+            ? command.options.env?.PATH
+            : undefined;
+          const versionChecks = calls.filter((call) => call.args[0] === "version").length;
+          calls.push({ args, ...(typeof path === "string" ? { path } : {}) });
+          const version = args[0] === "version" ? versions[versionChecks] : undefined;
           return Effect.succeed(
-            makeSuccessfulHandle(args[0] === "version" ? "git version 2.54.0\n" : ""),
+            makeSuccessfulHandle(version === undefined ? "" : `git version ${version}\n`),
           );
         });
         const driver = yield* makeGitVcsDriverCore().pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
-        const run = driver.execute({
-          operation: "test.unattended",
-          cwd: "/repo",
-          args: ["status"],
-        });
-
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const error = yield* run.pipe(
+        const run = driver
+          .execute({
+            operation: "test.unattended",
+            cwd: "/repo",
+            args: ["status"],
+            env: { PATH: "command-git-path" },
+          })
+          .pipe(
             Effect.provideService(GitVcsDriver.UnattendedGit, true),
             Effect.provideService(HostProcess.Environment, {
               ...environment,
-              PATH: "test-core-git-2.54",
+              PATH: "host-git-path",
             }),
-            Effect.flip,
           );
-          assert.instanceOf(error, GitCommandError);
-          assert.include(error.detail, "Git 2.54");
-          assert.include(error.detail, "Update Git to 2.55 or later.");
-        }
-        assert.deepStrictEqual(calls, [["version"]]);
+
+        yield* run;
+        const error = yield* run.pipe(Effect.flip);
+        assert.instanceOf(error, GitCommandError);
+        assert.strictEqual(error.detail, UNSTOPPABLE_HOOKS_DETAIL);
+        assert.deepStrictEqual(
+          calls.map((call) => call.args),
+          [
+            ["version"],
+            [...UNATTENDED_GIT_CONFIG.flatMap((setting) => ["-c", setting]), "status"],
+            ["version"],
+          ],
+        );
+        assert.deepStrictEqual(
+          calls.map((call) => call.path),
+          ["command-git-path", "command-git-path", "command-git-path"],
+        );
       }),
     );
 
