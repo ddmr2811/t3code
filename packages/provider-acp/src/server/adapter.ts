@@ -110,6 +110,7 @@ import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpChangedPathsOfToolCall,
+  acpCopySourcesOfToolCall,
   acpPermissionDisposition,
   mergeAcpChangedPaths,
   type AcpPermissionDisposition,
@@ -680,7 +681,10 @@ export interface AcpAdapterV2Flavor {
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
-  readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  readonly normalizeToolCall?: (
+    toolCall: AcpToolCallState,
+    turn?: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "threadId" | "runtimePolicy">,
+  ) => AcpToolCallState;
   readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
@@ -4666,7 +4670,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const normalized = flavor.normalizeToolCall?.(merged, context.input) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
@@ -6500,6 +6504,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : undefined;
               // A diff chunk names files the call changes; the tracked call keeps them for policy.
               const chunkPaths = acpChangedPathsOfToolCall({ content: [update.content] });
+              // A copy also reads its source, which the read checks need.
+              const chunkSources = acpCopySourcesOfToolCall({ content: [update.content] });
               const namesPaths = chunkPaths === "unknown" || chunkPaths.length > 0;
               if (text !== undefined || namesPaths) {
                 const stored: AcpToolCallState = context.tools.get(update.toolCallId) ?? {
@@ -6511,6 +6517,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? {
                       ...stored,
                       changedPaths: mergeAcpChangedPaths(stored.changedPaths, chunkPaths),
+                      copySources: mergeAcpChangedPaths(stored.copySources, chunkSources),
                     }
                   : stored;
                 // Text chunks extend the content list so a later content replacement still shows.

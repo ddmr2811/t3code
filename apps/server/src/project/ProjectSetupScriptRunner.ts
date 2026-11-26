@@ -10,6 +10,7 @@ import {
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -22,7 +23,11 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { UNATTENDED_GIT_CONFIG_PARAMETERS } from "../vcs/VcsProcess.ts";
+import {
+  cannotStopConfiguredHooks,
+  UNATTENDED_GIT_CONFIG_PARAMETERS,
+  UNSTOPPABLE_HOOKS_DETAIL,
+} from "../vcs/VcsProcess.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -289,6 +294,8 @@ export const make = Effect.gen(function* () {
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const hostEnvironment = yield* HostProcess.Environment;
   const serviceScope = yield* Effect.scope;
 
   const observeTerminalCompletion = Effect.fn("ProjectSetupScriptRunner.observeTerminalCompletion")(
@@ -556,6 +563,29 @@ export const make = Effect.gen(function* () {
       T3CODE_TERMINAL_SHELL: "",
     };
     const unattendedGit = yield* GitVcsDriver.UnattendedGit;
+    if (
+      unattendedGit &&
+      (yield* cannotStopConfiguredHooks(
+        hostEnvironment.PATH,
+        git
+          .execute({
+            operation: "ProjectSetupScriptRunner.gitVersion",
+            cwd,
+            args: ["version"],
+          })
+          .pipe(
+            Effect.provideService(GitVcsDriver.UnattendedGit, false),
+            Effect.map((result) => result.stdout),
+            Effect.orElseSucceed(() => null),
+          ),
+      ))
+    ) {
+      return yield* new ProjectSetupScriptOperationError({
+        ...errorContext,
+        operation: "openTerminal",
+        cause: new Error(UNSTOPPABLE_HOOKS_DETAIL),
+      });
+    }
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
     const echoedWrapperLines: string[] = [];

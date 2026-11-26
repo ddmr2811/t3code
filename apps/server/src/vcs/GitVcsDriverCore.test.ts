@@ -797,6 +797,34 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("runs no post-index-change hook while preparing an untracked review diff", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const ran = NodePath.join(yield* makeTmpDir("git-review-hook-ran-"), "ran");
+      const hook = NodePath.join(cwd, "hooks", "post-index-change");
+      yield* writeTextFile(cwd, "hooks/post-index-change", `#!/bin/sh\necho ran >> '${ran}'\n`);
+      yield* fileSystem.chmod(hook, 0o755);
+      yield* git(cwd, ["config", "core.hooksPath", "hooks"]);
+      yield* writeTextFile(cwd, "new.txt", "new\n");
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+
+      const preview = yield* driver.getReviewDiffPreview({
+        cwd,
+        file: { path: "new.txt", previousPath: null, sourceKind: "working-tree" },
+      });
+
+      assert.include(
+        preview.sources.flatMap((source) => source.files?.map((file) => file.path) ?? []),
+        "new.txt",
+      );
+      assert.isFalse(yield* fileSystem.exists(ran));
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["an existing", "a new"] as const)(
   "follows a checkout of %s branch made outside the driver after refs were cached",
   (branch) =>
@@ -6747,6 +6775,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* pushRemoteCommit("asked.txt");
         yield* driver.pullCurrentBranch(cwd);
         assert.isTrue(yield* fs.exists(ran));
+      }),
+    );
+
+    it.effect("refuses unattended Git 2.54 before starting its command", () =>
+      Effect.gen(function* () {
+        const environment = yield* HostProcess.Environment;
+        const calls: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
+          calls.push(args);
+          return Effect.succeed(
+            makeSuccessfulHandle(args[0] === "version" ? "git version 2.54.0\n" : ""),
+          );
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const run = driver.execute({
+          operation: "test.unattended",
+          cwd: "/repo",
+          args: ["status"],
+        });
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const error = yield* run.pipe(
+            Effect.provideService(GitVcsDriver.UnattendedGit, true),
+            Effect.provideService(HostProcess.Environment, {
+              ...environment,
+              PATH: "test-core-git-2.54",
+            }),
+            Effect.flip,
+          );
+          assert.instanceOf(error, GitCommandError);
+          assert.include(error.detail, "Git 2.54");
+          assert.include(error.detail, "Update Git to 2.55 or later.");
+        }
+        assert.deepStrictEqual(calls, [["version"]]);
       }),
     );
 

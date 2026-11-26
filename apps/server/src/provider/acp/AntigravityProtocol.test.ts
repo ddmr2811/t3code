@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - the pre-edit reader under test is synchronous
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -488,6 +493,54 @@ describe("Antigravity tool results", () => {
       );
       expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
+  });
+
+  it("locates pending edits only from files inside the thread's roots", () => {
+    const temporary = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agy-edit-root-"));
+    const workspace = NodePath.join(temporary, "workspace");
+    const elsewhere = NodePath.join(temporary, "elsewhere");
+    const inside = NodePath.join(workspace, "app.ts");
+    const outside = NodePath.join(elsewhere, "secret.ts");
+    const replace = {
+      TargetContent: "const target = 10;",
+      ReplacementContent: "const target = 100;",
+    };
+    const preEdit = Array.from({ length: 12 }, (_, index) =>
+      index === 9 ? replace.TargetContent : `line ${index + 1}`,
+    ).join("\n");
+    const pending = (path: string) => ({
+      toolCallId: `edit-${path}`,
+      kind: "edit" as const,
+      status: "pending" as const,
+      data: {
+        rawInput: { ...replace, TargetFile: path },
+        content: [
+          {
+            type: "diff",
+            path,
+            oldText: replace.TargetContent,
+            newText: replace.ReplacementContent,
+          },
+        ],
+      },
+    });
+    try {
+      NodeFS.mkdirSync(workspace, { recursive: true });
+      NodeFS.mkdirSync(elsewhere, { recursive: true });
+      NodeFS.writeFileSync(inside, preEdit);
+      NodeFS.writeFileSync(outside, preEdit);
+      const normalize = (path: string) =>
+        normalizeAntigravityToolCall(pending(path), undefined, {
+          runtimePolicy: { runtimeMode: "auto-accept-edits", cwd: workspace },
+        });
+
+      expect(acpToolCallDiffPatch(normalize(inside).data.content)).toContain("@@ -10,1 +10,1 @@");
+      expect(normalize(outside).data.content).toMatchObject([
+        { patch: { format: "snippet", text: expect.stringContaining("snippet, line unknown") } },
+      ]);
+    } finally {
+      NodeFS.rmSync(temporary, { recursive: true, force: true });
     }
   });
 

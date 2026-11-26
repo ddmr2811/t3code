@@ -18,6 +18,7 @@ import {
   VcsProcessSpawnError,
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
+  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
@@ -141,7 +142,9 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
 // githooks(5). Git 2.54 also runs hooks set in its configuration, which `core.hooksPath` does not
-// reach; from 2.55 `hook.<event>.enabled=false` turns those off per event. 2.54 has no fixed switch.
+// reach; from 2.55 `hook.<event>.enabled=false` turns those off per event. 2.54 only turns them
+// off by the name their owner gave them (its Documentation/config/hook.adoc), so no-hooks Git is
+// refused there.
 const HOOK_EVENTS = [
   "applypatch-msg",
   "pre-applypatch",
@@ -178,6 +181,33 @@ export const NO_HOOKS_GIT_CONFIG = [
   ...HOOK_EVENTS.map((event) => `hook.${event}.enabled=false`),
 ];
 export const NO_HOOKS_GIT_ARGS = NO_HOOKS_GIT_CONFIG.flatMap((setting) => ["-c", setting]);
+
+/** Reads only the options before the subcommand: a branch can be named like the setting. */
+export const asksForNoHooks = (args: ReadonlyArray<string>) => {
+  for (let index = 0; args[index] === "-c" || args[index] === "-C"; index += 2) {
+    if (args[index] === "-c" && args[index + 1] === NO_HOOKS_GIT_CONFIG[0]) return true;
+  }
+  return false;
+};
+
+export const UNSTOPPABLE_HOOKS_DETAIL =
+  "Git 2.54 cannot turn off the hooks set in its configuration, so T3 Code does not run its own Git with it. Update Git to 2.55 or later.";
+
+// Asked once per PATH, which is once per process outside tests.
+const unstoppableHooksByPath = new Map<string | undefined, boolean>();
+/** `version` is the output of `git version`, or null when it could not be read. */
+export const cannotStopConfiguredHooks = Effect.fnUntraced(function* <R>(
+  path: string | undefined,
+  version: Effect.Effect<string | null, never, R>,
+) {
+  const known = unstoppableHooksByPath.get(path);
+  if (known !== undefined) return known;
+  const output = yield* version;
+  if (output === null) return false;
+  const unstoppable = /^git version 2\.54(?!\d)/.test(output);
+  unstoppableHooksByPath.set(path, unstoppable);
+  return unstoppable;
+});
 
 /**
  * For processes that run Git nobody asked for and that the driver does not start, such as a
@@ -313,6 +343,33 @@ export const make = Effect.gen(function* () {
     input: VcsProcessInput,
     baseError: VcsProcessErrorContext,
   ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const env = {
+      ...(input.command === "git" ? unsetInheritedRepositoryEnv(process.env, hostPlatform) : {}),
+      // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+      // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+      ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
+      ...input.env,
+      ...serverGitConfigEnv({ ...process.env, ...input.env }, hostPlatform),
+    };
+    if (
+      (input.command === "git"
+        ? asksForNoHooks(input.args)
+        : input.env?.GIT_CONFIG_PARAMETERS?.endsWith(UNATTENDED_GIT_CONFIG_PARAMETERS)) &&
+      (yield* cannotStopConfiguredHooks(
+        input.env?.PATH ?? hostEnvironment.PATH,
+        processRunner.run({ command: "git", args: ["version"], cwd: input.cwd, env }).pipe(
+          Effect.map((result) => result.stdout),
+          Effect.orElseSucceed(() => null),
+        ),
+      ))
+    ) {
+      return yield* new VcsUnsupportedOperationError({
+        operation: input.operation,
+        kind: "git",
+        detail: UNSTOPPABLE_HOOKS_DETAIL,
+      });
+    }
     let failedExit = false;
     const execution = processRunner
       .run({
@@ -323,16 +380,7 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
-        env: {
-          ...(input.command === "git"
-            ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
-            : {}),
-          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
-          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
-          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
-          ...input.env,
-          ...serverGitConfigEnv({ ...process.env, ...input.env }, hostPlatform),
-        },
+        env,
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",

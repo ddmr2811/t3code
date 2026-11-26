@@ -21,6 +21,7 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { antigravityPermissionDisposition } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { assert, beforeAll, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -7569,6 +7570,7 @@ describe("AcpAdapterV2", () => {
       readonly workspace: string;
       readonly elsewhere: string;
     }) => Readonly<Record<string, string>>,
+    antigravityPolicy = false,
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -7604,6 +7606,14 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         capabilities: AcpProviderCapabilitiesV2,
         interruptPromptOnCancel: true,
+        ...(antigravityPolicy
+          ? {
+              permissionDisposition: (
+                policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+                request: EffectAcpSchema.RequestPermissionRequest,
+              ) => antigravityPermissionDisposition(policy, request, []),
+            }
+          : {}),
         makeRuntime: (input) =>
           Effect.sync(() => {
             runtimeInput = input;
@@ -7677,15 +7687,21 @@ describe("AcpAdapterV2", () => {
       requestId: string,
       fiber: Effect.Success<ReturnType<typeof requestEdit>>,
     ) {
-      const pending = Option.getOrThrow(
-        yield* runtime.events.pipe(
+      const first = yield* Effect.raceFirst(
+        runtime.events.pipe(
           Stream.filter(
             (event) =>
               event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
           ),
           Stream.runHead,
+          Effect.map((event) => ({ type: "pending" as const, event })),
         ),
+        Fiber.join(fiber).pipe(Effect.map((outcome) => ({ type: "answered" as const, outcome }))),
       );
+      if (first.type === "answered") {
+        return yield* Effect.die("The ACP request was answered without asking the user");
+      }
+      const pending = Option.getOrThrow(first.event);
       if (
         pending.type !== "runtime_request.updated" ||
         pending.runtimeRequest.providerTurnId === null
@@ -7774,9 +7790,10 @@ describe("AcpAdapterV2", () => {
       readonly inside: string;
       readonly outside: string;
     }) => ReadonlyArray<Record<string, unknown>>,
+    antigravityPolicy = false,
   ) =>
     Effect.gen(function* () {
-      const turn = yield* startAutoAcceptEditsTurn(name);
+      const turn = yield* startAutoAcceptEditsTurn(name, undefined, antigravityPolicy);
       const inside = turn.path.join(turn.workspace, "src", "a.ts");
       // The first request waits for the turn, so the tool call below lands in it.
       const first = yield* turn
@@ -7835,6 +7852,29 @@ describe("AcpAdapterV2", () => {
         content: { type: "diff", changes: [{ operation: "modify", path: outside }] },
       },
     ]),
+  );
+
+  it.effect("asks about a copy source named only by a tool call content chunk", () =>
+    editNamedByIdAsks(
+      "edit-chunk-copy-source",
+      ({ inside, outside }) => [
+        {
+          sessionUpdate: "tool_call",
+          title: "Copy file",
+          kind: "edit",
+          status: "pending",
+          locations: [{ path: inside }],
+        },
+        {
+          sessionUpdate: "tool_call_content_chunk",
+          content: {
+            type: "diff",
+            changes: [{ operation: "copy", oldPath: outside, path: inside }],
+          },
+        },
+      ],
+      true,
+    ),
   );
 
   it.effect("auto-accepts an edit named by id whose updates from the agent were all read", () =>

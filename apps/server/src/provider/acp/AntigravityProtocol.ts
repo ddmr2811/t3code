@@ -14,6 +14,7 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 import {
   ACP_RAW_INPUT_PATH_KEYS,
   acpChangedPathsOfToolCall,
+  type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
 import {
   extractMcpToolCallIdentity,
@@ -626,8 +627,18 @@ function withAntigravityEditPatches(
 
 export function normalizeAntigravityToolCall(
   toolCall: AcpToolCallState,
-  readPreEditFile = readAntigravityPreEditFile,
+  readPreEditFile?: ((path: string) => string | undefined) | undefined,
+  readContext?: {
+    readonly runtimePolicy: AcpRuntimePolicy;
+    readonly readRoots?: ReadonlyArray<string>;
+  },
 ): AcpToolCallState {
+  const locateEdit =
+    readPreEditFile ??
+    (readContext === undefined
+      ? undefined
+      : (path: string) =>
+          readAntigravityPreEditFile(path, readContext.runtimePolicy, readContext.readRoots));
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
   const nativeCommand =
@@ -666,7 +677,7 @@ export function normalizeAntigravityToolCall(
       ? withAntigravityEditPatches(
           content,
           data,
-          toolCall.status === "pending" ? readPreEditFile : undefined,
+          toolCall.status === "pending" ? locateEdit : undefined,
         )
       : [...content, { type: "diff", patch: { format: "omitted" } }];
   }

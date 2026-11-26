@@ -16,7 +16,11 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
-import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
+import {
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsUnsupportedOperationError,
+} from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -53,6 +57,58 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect.each([
+    { version: "2.54.0", refused: true },
+    { version: "2.54.1", refused: true },
+    { version: "2.55.0", refused: false },
+    { version: "2.53.9", refused: false },
+  ])("checks configured-hook suppression once with Git $version", ({ version, refused }) =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Effect.sync(() => {
+                calls.push(input.args);
+                return {
+                  stdout: input.args[0] === "version" ? `git version ${version}\n` : "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        ),
+      );
+      const input = {
+        ...baseInput,
+        args: [...VcsProcess.NO_HOOKS_GIT_ARGS, "status", "--short"],
+        env: { PATH: `test-git-${version}` },
+      };
+
+      if (refused) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const error = yield* Effect.flip(service.run(input));
+          assert.instanceOf(error, VcsUnsupportedOperationError);
+          expect(error.detail).toBe(VcsProcess.UNSTOPPABLE_HOOKS_DETAIL);
+        }
+      } else {
+        yield* service.run(input);
+        yield* service.run(input);
+      }
+
+      expect(calls.filter((args) => args[0] === "version")).toHaveLength(1);
+      expect(calls).toHaveLength(refused ? 1 : 3);
+      if (!refused) expect(calls.slice(1)).toEqual([input.args, input.args]);
+    }),
+  );
+
   it.effect("explains a locked Git index and allows restore after the lock is released", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

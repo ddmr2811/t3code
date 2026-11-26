@@ -212,7 +212,7 @@ function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
 }
 
 /** True when the paths name at least one file and each is inside `cwd`, one of `extraRoots` or one of the thread's other folders. */
-function acpPathsStayWithinRoots(
+export function acpPathsStayWithinRoots(
   runtimePolicy: AcpRuntimePolicy,
   extraRoots: ReadonlyArray<unknown>,
   changedPaths: AcpChangedPaths,

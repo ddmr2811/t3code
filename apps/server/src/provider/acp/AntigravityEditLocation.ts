@@ -1,7 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tool-call normalizer is synchronous
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import { PositiveInt } from "@t3tools/contracts";
+import {
+  acpPathsStayWithinRoots,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch, type StructuredPatchHunk } from "diff";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -61,12 +66,18 @@ const pascalKeys = (value: unknown): unknown => {
   return result;
 };
 
-/** Reads a small file for snippet matching; edits to large or unreadable files stay unlocated. */
-export function readAntigravityPreEditFile(path: string): string | undefined {
+/** Reads a small file for snippet matching only when the thread may read it. */
+export function readAntigravityPreEditFile(
+  path: string,
+  runtimePolicy: AcpRuntimePolicy,
+  readRoots: ReadonlyArray<string> = [],
+): string | undefined {
+  if (!acpPathsStayWithinRoots(runtimePolicy, readRoots, [path])) return undefined;
+  const resolved = NodePath.resolve(runtimePolicy.cwd ?? "", path);
   try {
-    const stat = NodeFS.statSync(path);
+    const stat = NodeFS.statSync(resolved);
     return stat.isFile() && stat.size <= PRE_EDIT_FILE_LIMIT
-      ? NodeFS.readFileSync(path, "utf8")
+      ? NodeFS.readFileSync(resolved, "utf8")
       : undefined;
   } catch {
     return undefined;

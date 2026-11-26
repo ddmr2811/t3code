@@ -320,6 +320,18 @@ export function makeAntigravityAcpAdapterFlavor(
     ),
   );
 
+  const attachmentReadRoots = (threadId: ThreadId) => {
+    const opened = openedFolders.get(threadId);
+    const folder =
+      opened === undefined
+        ? null
+        : threadAttachmentsDirIfUnchanged(
+            { attachmentsDir: options.host.paths.attachmentsDir, threadId },
+            opened,
+          );
+    return folder === null ? [] : [folder];
+  };
+
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
@@ -390,17 +402,8 @@ export function makeAntigravityAcpAdapterFlavor(
           ),
         ),
     },
-    permissionDisposition: (policy, request, threadId) => {
-      const opened = openedFolders.get(threadId);
-      const folder =
-        opened === undefined
-          ? null
-          : threadAttachmentsDirIfUnchanged(
-              { attachmentsDir: options.host.paths.attachmentsDir, threadId },
-              opened,
-            );
-      return antigravityPermissionDisposition(policy, request, folder === null ? [] : [folder]);
-    },
+    permissionDisposition: (policy, request, threadId) =>
+      antigravityPermissionDisposition(policy, request, attachmentReadRoots(threadId)),
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -410,7 +413,17 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
-    normalizeToolCall: normalizeAntigravityToolCall,
+    normalizeToolCall: (toolCall, turn) =>
+      normalizeAntigravityToolCall(
+        toolCall,
+        undefined,
+        turn === undefined
+          ? undefined
+          : {
+              runtimePolicy: turn.runtimePolicy,
+              readRoots: attachmentReadRoots(turn.threadId),
+            },
+      ),
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,

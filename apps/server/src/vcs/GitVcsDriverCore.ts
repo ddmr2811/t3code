@@ -52,6 +52,9 @@ import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
   NO_HOOKS_GIT_ARGS,
   UNATTENDED_GIT_CONFIG,
+  UNSTOPPABLE_HOOKS_DETAIL,
+  asksForNoHooks,
+  cannotStopConfiguredHooks,
   gitConfigEnv,
   serverGitConfigEnv,
   unsetInheritedRepositoryEnv,
@@ -1445,6 +1448,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ];
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
+        if (
+          (unattended || asksForNoHooks(commandInput.args)) &&
+          (yield* cannotStopConfiguredHooks(
+            input.env?.PATH ?? hostEnv.PATH,
+            executeRaw({
+              operation: "GitVcsDriver.version",
+              cwd: input.cwd,
+              args: ["version"],
+            }).pipe(
+              Effect.provideService(GitVcsDriver.UnattendedGit, false),
+              Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "all" }),
+              Effect.map((result) => result.stdout),
+              Effect.orElseSucceed(() => null),
+            ),
+          ))
+        ) {
+          return yield* new GitCommandError({
+            ...gitCommandContext(commandInput),
+            detail: UNSTOPPABLE_HOOKS_DETAIL,
+          });
+        }
         const spawnError = (cause: unknown) =>
           new GitCommandError({
             ...gitCommandContext(commandInput),
@@ -5010,6 +5034,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.addUntracked",
       cwd,
       [
+        // Writing the index fires `post-index-change`, which an agent can write.
+        ...NO_HOOKS_GIT_ARGS,
         ...tempIndexConfig,
         // Avoid redundant tracked-entry pathspec matching in this disposable index.
         "-c",

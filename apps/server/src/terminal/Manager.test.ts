@@ -52,6 +52,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
@@ -75,6 +76,16 @@ const POWERSHELL_ARGS = [
   "[Console]::OutputEncoding = $OutputEncoding = [System.Text.UTF8Encoding]::new()",
 ];
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const layerGitForProjectScripts = Layer.mock(GitVcsDriver.GitVcsDriver)({
+  execute: () =>
+    Effect.succeed({
+      exitCode: ChildProcessSpawner.ExitCode(0),
+      stdout: "git version 2.43.0\n",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }),
+});
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly writes: Array<string | Buffer> = [];
@@ -2611,12 +2622,16 @@ it.layer(
             Layer.mergeAll(
               Layer.succeed(TerminalManager.TerminalManager, terminals),
               Layer.mock(ProjectService.ProjectService)({}),
+              layerGitForProjectScripts,
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getThreadShell: () => Effect.succeed(null),
               }),
               ServerSettings.layerTest(),
               Layer.succeed(HostProcess.Platform, "linux"),
-              Layer.succeed(HostProcess.Environment, env),
+              Layer.succeed(HostProcess.Environment, {
+                ...env,
+                PATH: "test-manager-project-setup",
+              }),
             ),
           ),
         );
@@ -2845,6 +2860,8 @@ it.layer(
           Layer.mergeAll(
             Layer.succeed(TerminalManager.TerminalManager, manager),
             Layer.mock(ProjectService.ProjectService)({}),
+            layerGitForProjectScripts,
+            Layer.succeed(HostProcess.Environment, { PATH: "test-manager-project-setup-cmd" }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getThreadShell: () => Effect.succeed(null),
             }),

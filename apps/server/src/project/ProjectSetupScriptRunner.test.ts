@@ -50,6 +50,7 @@ const makeHarness = Effect.fn(function* (options: {
   readonly previousSession?: TerminalSessionSnapshot;
   readonly shell?: string | null;
   readonly observe?: boolean;
+  readonly gitVersion?: string;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const opens: TerminalOpenInput[] = [];
@@ -99,6 +100,19 @@ const makeHarness = Effect.fn(function* (options: {
       Layer.mergeAll(
         terminals,
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          execute: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: `git version ${options.gitVersion ?? "2.43.0"}\n`,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        }),
+        Layer.succeed(HostProcess.Environment, {
+          PATH: `test-project-setup-${options.gitVersion ?? "2.43.0"}`,
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(null),
         }),
@@ -148,6 +162,24 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect("refuses an unasked script with Git 2.54 before opening a terminal", () =>
+    Effect.gen(function* () {
+      const { start, opens, writes } = yield* makeHarness({
+        observe: false,
+        gitVersion: "2.54.0",
+      });
+      const error = yield* start.pipe(
+        Effect.provideService(GitVcsDriver.UnattendedGit, true),
+        Effect.flip,
+      );
+      assert.instanceOf(error, ProjectSetupScriptRunner.ProjectSetupScriptOperationError);
+      assert.instanceOf(error.cause, Error);
+      expect(error.cause.message).toContain("Update Git to 2.55 or later.");
+      expect(opens).toHaveLength(0);
+      expect(yield* Queue.size(writes)).toBe(0);
+    }),
+  );
+
   it.effect("keeps setup scripts independent of the interactive shell preference", () =>
     Effect.gen(function* () {
       const { opens } = yield* setup();
