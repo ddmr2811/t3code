@@ -140,16 +140,55 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
+// githooks(5). Git 2.54 also runs hooks set in its configuration, which `core.hooksPath` does not
+// reach; from 2.55 `hook.<event>.enabled=false` turns those off per event. 2.54 has no fixed switch.
+const HOOK_EVENTS = [
+  "applypatch-msg",
+  "pre-applypatch",
+  "post-applypatch",
+  "pre-commit",
+  "pre-merge-commit",
+  "prepare-commit-msg",
+  "commit-msg",
+  "post-commit",
+  "pre-rebase",
+  "post-checkout",
+  "post-merge",
+  "pre-push",
+  "pre-receive",
+  "update",
+  "proc-receive",
+  "post-receive",
+  "post-update",
+  "reference-transaction",
+  "push-to-checkout",
+  "pre-auto-gc",
+  "post-rewrite",
+  "sendemail-validate",
+  "fsmonitor-watchman",
+  "p4-changelist",
+  "p4-prepare-changelist",
+  "p4-post-changelist",
+  "p4-pre-submit",
+  "post-index-change",
+] as const;
+/** Fork: Git this server starts with no hooks at all, from its hooks folder or its configuration. */
+export const NO_HOOKS_GIT_CONFIG = [
+  "core.hooksPath=/dev/null",
+  ...HOOK_EVENTS.map((event) => `hook.${event}.enabled=false`),
+];
+export const NO_HOOKS_GIT_ARGS = NO_HOOKS_GIT_CONFIG.flatMap((setting) => ["-c", setting]);
+
 /**
  * For processes that run Git nobody asked for and that the driver does not start, such as a
  * project's layout command: an agent can write the repository's hooks, fsmonitor and SSH commands.
  * The server's own `GIT_SSH_COMMAND` still beats `core.sshCommand`.
  */
 export const UNATTENDED_GIT_CONFIG = [
-  "core.hooksPath=/dev/null",
+  ...NO_HOOKS_GIT_CONFIG,
   "core.fsmonitor=false",
   "core.sshCommand=ssh",
-] as const;
+];
 /** In `GIT_CONFIG_PARAMETERS` syntax: appended there it beats inherited entries, which beat `GIT_CONFIG_COUNT`. */
 export const UNATTENDED_GIT_CONFIG_PARAMETERS = UNATTENDED_GIT_CONFIG.map(
   (setting) => `'${setting}'`,

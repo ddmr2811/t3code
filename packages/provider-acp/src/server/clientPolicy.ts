@@ -280,12 +280,28 @@ export function acpReadLeavesRoots(
     return true;
   }
   // A copy reads its source, which its changed paths leave out.
-  const copied = acpCopySourcesOfToolCall(request.toolCall);
+  const copied = mergeAcpChangedPaths(
+    acpCopySourcesOfToolCall(request.toolCall),
+    acpTrackedCopySources(request.toolCall._meta),
+  );
   return copied.length > 0 && !acpPathsStayWithinRoots(runtimePolicy, readRoots, copied);
 }
 
+/** Fork: where a request asked by tool-call id carries the copy sources its tracked call named. */
+export const ACP_TRACKED_COPY_SOURCES_META = "t3code/copySources";
+
+function acpTrackedCopySources(meta: unknown): AcpChangedPaths {
+  const sources = unknownRecord(meta)?.[ACP_TRACKED_COPY_SOURCES_META];
+  if (sources === undefined) return [];
+  return Array.isArray(sources) && sources.every((source) => typeof source === "string")
+    ? sources
+    : "unknown";
+}
+
 /** The sources of a tool call's copies; one policy cannot check makes them all unknown. */
-function acpCopySourcesOfToolCall(toolCall: { readonly content?: unknown }): AcpChangedPaths {
+export function acpCopySourcesOfToolCall(toolCall: {
+  readonly content?: unknown;
+}): AcpChangedPaths {
   if (!Array.isArray(toolCall.content)) return [];
   const sources = toolCall.content.flatMap((value) => {
     const changes = unknownRecord(value)?.changes;

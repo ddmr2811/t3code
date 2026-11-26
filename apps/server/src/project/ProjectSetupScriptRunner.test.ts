@@ -402,10 +402,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
   it.live("turns the repository's hooks off for an unasked script, not for its terminal", () =>
     Effect.gen(function* () {
       const result = yield* runObservedSetup(
-        "printenv GIT_CONFIG_PARAMETERS\nexit 3 # trailing comment",
+        [
+          "printenv GIT_CONFIG_PARAMETERS | tr ' ' '\\n' | grep -v '^.hook\\.'",
+          // Hooks set in Git's configuration too, which the hooks folder setting does not reach.
+          "printenv GIT_CONFIG_PARAMETERS | grep -o \"'hook.post-checkout.enabled=false'\"",
+          "exit 3 # trailing comment",
+        ].join("\n"),
       ).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
       assert.deepEqual(result.lines, [
-        "'core.hooksPath=/dev/null' 'core.fsmonitor=false' 'core.sshCommand=ssh'",
+        "'core.hooksPath=/dev/null'",
+        "'core.fsmonitor=false'",
+        "'core.sshCommand=ssh'",
+        "'hook.post-checkout.enabled=false'",
       ]);
       assert.equal(result.exitCode, 3);
       assert.deepEqual(

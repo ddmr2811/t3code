@@ -879,11 +879,15 @@ it.live.each([
         Effect.gen(function* () {
           const { fileSystem, path, tmp, repository } = yield* fixture;
           const mono = yield* repository("mono");
+          // Git 2.54 also runs hooks set in its configuration, out of `core.hooksPath`'s reach.
+          const configuredOff = path.join(tmp, "layout-configured-hooks");
           yield* fileSystem.writeFileString(
             path.join(mono, "t3.json"),
             JSON.stringify({
               worktreeLayout: {
-                create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
+                create:
+                  'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"' +
+                  ` && git config --get hook.post-checkout.enabled > '${configuredOff}'; true`,
               },
             }),
           );
@@ -904,6 +908,10 @@ it.live.each([
           );
 
           assert.equal(yield* fileSystem.exists(hookRan), !unattended);
+          assert.equal(
+            (yield* fileSystem.readFileString(configuredOff)).trim(),
+            unattended ? "false" : "",
+          );
         }),
       ).pipe(
         Effect.provideService(HostProcess.Environment, {

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -11,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
-import { describe, expect } from "vite-plus/test";
+import { describe, expect, vi } from "vite-plus/test";
 
 import * as Base64Url from "effect/encoding/Base64Url";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
@@ -768,6 +769,25 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           yield* git(tmp, ["config", "core.hooksPath", "hooks"]);
           yield* fileSystem.remove(ran, { force: true });
           const checkpointRef = CheckpointRef.make("refs/t3/test/hooks/0");
+          // Git 2.54 also runs hooks set in its configuration, which `core.hooksPath` does not
+          // reach: record the ref update's command line.
+          const path = (yield* HostProcess.Environment).PATH ?? "";
+          const realGit = path
+            .split(NodePath.delimiter)
+            .map((directory) => NodePath.join(directory, "git"))
+            .find((candidate) => NodeFS.existsSync(candidate));
+          const bin = yield* makeTmpDir("checkpoint-git-recorder-");
+          const configured = NodePath.join(bin, "configured");
+          NodeFS.writeFileSync(
+            NodePath.join(bin, "git"),
+            `#!/bin/sh\ncase " $* " in *" update-ref "*) echo "$*" >> '${configured}' ;; esac\nexec '${realGit}' "$@"\n`,
+            { mode: 0o755 },
+          );
+          // The checkpoint's Git takes the server process's own environment.
+          yield* Effect.acquireRelease(
+            Effect.sync(() => vi.stubEnv("PATH", `${bin}${NodePath.delimiter}${path}`)),
+            () => Effect.sync(() => vi.unstubAllEnvs()),
+          );
 
           yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
           yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
@@ -778,7 +798,10 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           });
 
           expect(yield* fileSystem.exists(ran)).toBe(false);
-        }),
+          expect(NodeFS.readFileSync(configured, "utf8")).toContain(
+            "-c hook.reference-transaction.enabled=false",
+          );
+        }).pipe(Effect.scoped),
     );
 
     it.effect("reads a folder as clean only when nothing in it differs from HEAD", () =>

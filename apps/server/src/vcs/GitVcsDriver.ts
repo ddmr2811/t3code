@@ -803,7 +803,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // What this driver runs by itself, checkpoints above all, runs no hook: index writes, ref updates
   // and restores each fire one, and an agent can write the repository's hooks.
   const execute: typeof executeAsAsked = (input) =>
-    executeAsAsked({ ...input, args: ["-c", "core.hooksPath=/dev/null", ...input.args] });
+    executeAsAsked({ ...input, args: [...VcsProcess.NO_HOOKS_GIT_ARGS, ...input.args] });
 
   // --diff-merges=remerge needs Git 2.36.
   let remergeDiffSupported: boolean | undefined;

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Git index stat data needs bigint lstat, which FileSystem lacks.
+import { NO_HOOKS_GIT_ARGS, NO_HOOKS_GIT_CONFIG } from "./VcsProcess.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
@@ -47,7 +48,7 @@ const CACHE_INDEX_CONFIG = [
   "core.fsmonitor=false",
   "core.sparseCheckout=false",
   // Private builds must not run the repository's hooks.
-  "core.hooksPath=/dev/null",
+  ...NO_HOOKS_GIT_CONFIG,
   "checkout.workers=0",
 ].flatMap((setting) => ["-c", setting]);
 
@@ -603,8 +604,7 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       const moved = yield* git("update", worktreePath, [
         "-c",
         `checkout.workers=${input.checkoutWorkers}`,
-        "-c",
-        "core.hooksPath=/dev/null",
+        ...NO_HOOKS_GIT_ARGS,
         "read-tree",
         "-m",
         "-u",

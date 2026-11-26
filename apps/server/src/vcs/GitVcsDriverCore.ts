@@ -50,6 +50,7 @@ import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
+  NO_HOOKS_GIT_ARGS,
   UNATTENDED_GIT_CONFIG,
   gitConfigEnv,
   serverGitConfigEnv,
@@ -1145,8 +1146,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const command = { operation: "GitVcsDriver.configuredHooks", cwd, args, env };
     const listed = yield* executeRaw({ ...command, allowNonZeroExit: true }).pipe(
       Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "all" }),
-      // Reading the configuration runs no hook, and must not ask for its own limits again.
-      Effect.provideService(GitVcsDriver.UnattendedGit, false),
     );
     // Git exits 1 when no key matches.
     if (listed.exitCode === 1 && listed.stdout === "") return [];
@@ -1364,11 +1363,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    * the approved ones fails the command instead of running.
    */
   const hookLimits = Effect.fnUntraced(function* (input: GitVcsDriver.ExecuteGitInput) {
-    // Fork: Git nobody asked for, or that turns the hooks folder off, runs no configured hook either.
-    const policy: typeof GitVcsDriver.RepositoryHooks.Service =
-      (yield* GitVcsDriver.UnattendedGit) || input.args.includes("core.hooksPath=/dev/null")
-        ? { _tag: "none" }
-        : yield* GitVcsDriver.RepositoryHooks;
+    const policy = yield* GitVcsDriver.RepositoryHooks;
     if (policy._tag === "all") return undefined;
     const none = (configured: ReadonlyArray<ConfiguredHook>) => ({
       hooksPath: "/dev/null",
@@ -7178,7 +7173,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const branch =
       parseRemoteRefWithRemoteNames(input.refName, [input.remoteName])?.branchName ?? input.refName;
     const scopedArgs = [
-      ...(input.noHooks ? ["-c", "core.hooksPath=/dev/null"] : []),
+      ...(input.noHooks ? NO_HOOKS_GIT_ARGS : []),
       "fetch",
       "--quiet",
       "--no-tags",
@@ -7324,8 +7319,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Storage cleanup runs this every sweep, and a killed fetch strands a `tmp_pack_*`.
       // It moves a ref by itself, so like the status fetch it runs none of the repository's hooks.
       const args = [
-        "-c",
-        "core.hooksPath=/dev/null",
+        ...NO_HOOKS_GIT_ARGS,
         "fetch",
         "--quiet",
         "--no-tags",

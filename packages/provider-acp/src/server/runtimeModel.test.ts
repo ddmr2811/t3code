@@ -26,7 +26,7 @@ import {
   withUnknownChangedPaths,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
-import { acpChangedPathsOfToolCall } from "./clientPolicy.ts";
+import { acpChangedPathsOfToolCall, acpReadLeavesRoots } from "./clientPolicy.ts";
 
 describe("AcpRuntimeModel", () => {
   it("parses session mode state from typed ACP session setup responses", () => {
@@ -633,6 +633,21 @@ describe("AcpRuntimeModel", () => {
     ).toEqual(["/work/d.ts", "/work/a.ts", "/elsewhere/b.ts", "/elsewhere/c.ts"]);
     expect(withTrackedChangedPaths(idOnlyRequest, undefined)).toBe(idOnlyRequest);
     expect(withTrackedChangedPaths(idOnlyRequest, trackedToolCall({}))).toBe(idOnlyRequest);
+
+    // Fork: a copy reads its source, which its changed paths leave out; asked by id, it still shows.
+    const copied = trackedToolCall({
+      content: [
+        {
+          type: "diff",
+          changes: [{ operation: "copy", oldPath: "/elsewhere/e.ts", path: "/work/e.ts" }],
+        },
+      ],
+    });
+    expect(changedPathsWith(copied)).toEqual(["/work/e.ts"]);
+    const policy = { runtimeMode: "auto-accept-edits", cwd: "/work" } as const;
+    expect(acpReadLeavesRoots(policy, withTrackedChangedPaths(idOnlyRequest, copied), [])).toBe(
+      true,
+    );
   });
 
   it("reads the session and tool call of a dropped tool-call notification", () => {

@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import { NO_HOOKS_GIT_ARGS } from "../vcs/VcsProcess.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -307,8 +308,7 @@ const make = Effect.gen(function* () {
       cwd: workspaceRoot,
       // Scratch checkout for reading the change: repository hooks (installs, LFS) only slow or fail it.
       args: [
-        "-c",
-        "core.hooksPath=/dev/null",
+        ...NO_HOOKS_GIT_ARGS,
         "worktree",
         "add",
         "--detach",

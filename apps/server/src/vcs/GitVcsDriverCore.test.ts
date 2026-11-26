@@ -6751,50 +6751,46 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     // Git 2.54 runs hooks set up in its configuration, which `core.hooksPath` does not reach.
-    it.effect.each(["UnattendedGit", "hooksPath"] as const)(
-      "turns configured hooks off in Git nobody asked for (%s)",
-      (marked) =>
-        Effect.gen(function* () {
-          if ((yield* HostProcess.Platform) === "win32") return;
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          yield* git(cwd, ["config", "hook.agent.command", "echo agent"]);
-          yield* git(cwd, ["config", "hook.agent.event", "post-checkout"]);
-          // Records whether the checkout's Git sees the hook switched off, whatever its version runs.
-          const env = yield* HostProcess.Environment;
-          const realGit = (env.PATH ?? "")
-            .split(NodePath.delimiter)
-            .map((directory) => NodePath.join(directory, "git"))
-            .find((candidate) => NodeFS.existsSync(candidate));
-          assert.isDefined(realGit);
-          const bin = yield* makeTmpDir("git-config-recorder-");
-          const seen = NodePath.join(bin, "seen");
-          NodeFS.writeFileSync(
-            NodePath.join(bin, "git"),
-            `#!/bin/sh\ncase " $* " in *" checkout "*) '${realGit}' config --get hook.agent.enabled >> '${seen}' ;; esac\nexec '${realGit}' "$@"\n`,
-            { mode: 0o755 },
-          );
-          const recorded = Effect.provideService(HostProcess.Environment, {
-            ...env,
-            PATH: `${bin}${NodePath.delimiter}${env.PATH}`,
+    it.effect("turns configured hooks off in Git nobody asked for", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["config", "hook.agent.command", "echo agent"]);
+        yield* git(cwd, ["config", "hook.agent.event", "post-checkout"]);
+        // Records the checkout's command line, whatever this Git's version runs.
+        const env = yield* HostProcess.Environment;
+        const realGit = (env.PATH ?? "")
+          .split(NodePath.delimiter)
+          .map((directory) => NodePath.join(directory, "git"))
+          .find((candidate) => NodeFS.existsSync(candidate));
+        assert.isDefined(realGit);
+        const bin = yield* makeTmpDir("git-config-recorder-");
+        const seen = NodePath.join(bin, "seen");
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "git"),
+          `#!/bin/sh\ncase " $* " in *" checkout "*) echo "$*" >> '${seen}' ;; esac\nexec '${realGit}' "$@"\n`,
+          { mode: 0o755 },
+        );
+        const recorded = Effect.provideService(HostProcess.Environment, {
+          ...env,
+          PATH: `${bin}${NodePath.delimiter}${env.PATH}`,
+        });
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const checkout = (branch: string) =>
+          driver.execute({
+            operation: "test.checkout",
+            cwd,
+            args: ["checkout", "-q", "-b", branch],
           });
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const checkout = (args: ReadonlyArray<string>) =>
-            driver.execute({
-              operation: "test.checkout",
-              cwd,
-              args: [...args, "checkout", "-q", "-b", "agent"],
-            });
-          const configured = () =>
-            NodeFS.existsSync(seen) ? NodeFS.readFileSync(seen, "utf8") : "";
+        const configured = () => (NodeFS.existsSync(seen) ? NodeFS.readFileSync(seen, "utf8") : "");
 
-          yield* (
-            marked === "UnattendedGit"
-              ? checkout([]).pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true))
-              : checkout(["-c", "core.hooksPath=/dev/null"])
-          ).pipe(recorded);
-          assert.equal(configured(), "false\n");
-        }),
+        yield* checkout("agent").pipe(
+          Effect.provideService(GitVcsDriver.UnattendedGit, true),
+          recorded,
+        );
+        assert.include(configured(), "-c hook.post-checkout.enabled=false");
+      }),
     );
 
     // An agent can write both settings in the checkout's config; each names a command Git runs.

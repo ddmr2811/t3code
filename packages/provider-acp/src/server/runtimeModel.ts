@@ -12,7 +12,9 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import {
+  ACP_TRACKED_COPY_SOURCES_META,
   acpChangedPathsOfToolCall,
+  acpCopySourcesOfToolCall,
   mergeAcpChangedPaths,
   type AcpChangedPaths,
 } from "./clientPolicy.ts";
@@ -54,6 +56,8 @@ export interface AcpToolCallState {
    * It only grows: `data.locations` is what the tool card shows and a later update replaces it.
    */
   readonly changedPaths?: AcpChangedPaths;
+  /** Fork: every copy source any notification of this call named, as sent, or unknown. */
+  readonly copySources?: AcpChangedPaths;
 }
 
 export interface AcpAgentTerminalState {
@@ -941,11 +945,16 @@ function makeToolCallState(
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
     data,
     ...changedPathsField(acpChangedPathsOfToolCall(input)),
+    ...copySourcesField(acpCopySourcesOfToolCall(input)),
   };
 }
 
 function changedPathsField(changedPaths: AcpChangedPaths): Pick<AcpToolCallState, "changedPaths"> {
   return changedPaths === "unknown" || changedPaths.length > 0 ? { changedPaths } : {};
+}
+
+function copySourcesField(copySources: AcpChangedPaths): Pick<AcpToolCallState, "copySources"> {
+  return copySources === "unknown" || copySources.length > 0 ? { copySources } : {};
 }
 
 function parseTypedToolCallState(
@@ -991,6 +1000,7 @@ export function mergeToolCallState(
     ...(detail ? { detail } : {}),
     data,
     ...changedPathsField(mergeAcpChangedPaths(previous?.changedPaths, next.changedPaths)),
+    ...copySourcesField(mergeAcpChangedPaths(previous?.copySources, next.copySources)),
   };
 }
 
@@ -1318,14 +1328,34 @@ export function withTrackedChangedPaths(
   params: EffectAcpSchema.RequestPermissionRequest,
   tracked: AcpToolCallState | undefined,
 ): EffectAcpSchema.RequestPermissionRequest {
+  const withCopies = withTrackedCopySources(params, tracked?.copySources);
   const seen = tracked?.changedPaths;
-  if (seen === undefined || (seen !== "unknown" && seen.length === 0)) return params;
+  if (seen === undefined || (seen !== "unknown" && seen.length === 0)) return withCopies;
   const own: unknown = params.toolCall.locations;
   const locations =
     seen === "unknown" || (own !== undefined && own !== null && !Array.isArray(own))
       ? [UNREADABLE_LOCATION]
       : [...(params.toolCall.locations ?? []), ...seen.map((path) => ({ path }))];
-  return { ...params, toolCall: { ...params.toolCall, locations } };
+  return { ...withCopies, toolCall: { ...withCopies.toolCall, locations } };
+}
+
+/** Fork: the read checks see the copy sources of the tracked call, which no location carries. */
+function withTrackedCopySources(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  copySources: AcpChangedPaths | undefined,
+): EffectAcpSchema.RequestPermissionRequest {
+  if (copySources === undefined) return params;
+  const meta = isRecord(params.toolCall._meta) ? params.toolCall._meta : {};
+  return {
+    ...params,
+    toolCall: {
+      ...params.toolCall,
+      _meta: {
+        ...meta,
+        [ACP_TRACKED_COPY_SOURCES_META]: copySources === "unknown" ? null : copySources,
+      },
+    },
+  };
 }
 
 const TOOL_CALL_SESSION_UPDATES: ReadonlySet<unknown> = new Set([
