@@ -6581,7 +6581,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             // T3's Full access policy is granular, under which Codex still asks before commands it
             // deems dangerous. Managed-network asks enforce the user's allowlist, so they still ask.
+            // Fork: a delegated task runs in a sandbox it may not leave, so it is declined below.
             if (
+              !asksForDelegatedTask(context) &&
               context.input.runtimePolicy.runtimeMode === "full-access" &&
               context.input.runtimePolicy.approvalPolicy === undefined &&
               context.input.runtimePolicy.sandboxPolicy === undefined &&

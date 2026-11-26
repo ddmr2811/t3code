@@ -370,7 +370,7 @@ export async function withAntigravityDataDirectory<A>(
 }
 
 /** Runs `use` on a folder opened without following a link at its name. Linux only. */
-export async function withAntigravityFolder<A>(
+async function withAntigravityFolder<A>(
   path: string,
   use: (directory: string) => Promise<A>,
   mode?: number,

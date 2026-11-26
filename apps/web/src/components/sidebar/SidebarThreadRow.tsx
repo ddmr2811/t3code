@@ -1246,41 +1246,41 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : null;
   const mutedIndicator =
     notificationsMuted && !sortable?.isDragging ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              role="img"
-              aria-label={gt("Notifications muted")}
-              className="inline-flex shrink-0 items-center text-muted-foreground/65"
-            />
-          }
-        >
-          <BellOffIcon aria-hidden className="size-3" />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          <T>Notifications muted</T>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={gt("Notifications muted")}
+            className="inline-flex shrink-0 items-center text-muted-foreground/65"
+          />
+        }
+        label={
+          <>
+            <T>Notifications muted</T>
+          </>
+        }
+      >
+        <BellOffIcon aria-hidden className="size-3" />
+      </SharedTooltipTrigger>
     ) : null;
   const homeIndicator =
     isHomeThread && !sortable?.isDragging ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              role="img"
-              aria-label={gt("Home thread")}
-              className="inline-flex shrink-0 items-center text-muted-foreground/65"
-            />
-          }
-        >
-          <HouseIcon aria-hidden className="size-3" />
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          <T>Home thread: the app opens here</T>
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={gt("Home thread")}
+            className="inline-flex shrink-0 items-center text-muted-foreground/65"
+          />
+        }
+        label={
+          <>
+            <T>Home thread: the app opens here</T>
+          </>
+        }
+      >
+        <HouseIcon aria-hidden className="size-3" />
+      </SharedTooltipTrigger>
     ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));

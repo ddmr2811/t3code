@@ -3050,12 +3050,18 @@ export const make = Effect.gen(function* () {
     const status = yield* gitCore.statusDetails(cwd);
     const branch = status.branch;
     if (!branch) return yield* fail("Cannot create a pull request from detached HEAD.");
-    const resolved = yield* resolvePrBase(cwd, branch, status.upstreamRef, {
-      isCrossRepository: false,
-      remoteName: publishedRemoteName(
-        yield* readConfigValueNullable(cwd, `branch.${branch}.remote`),
-      ),
-    });
+    const resolved = yield* resolvePrBase(
+      cwd,
+      branch,
+      status.upstreamRef,
+      {
+        isCrossRepository: false,
+        remoteName: publishedRemoteName(
+          yield* readConfigValueNullable(cwd, `branch.${branch}.remote`),
+        ),
+      },
+      yield* forkTargetBranchOf({ cwd, projectId: input.projectId }),
+    );
     const baseBranch = input.baseBranch ?? resolved.baseBranch;
     if (baseBranch === branch) {
       return yield* fail(

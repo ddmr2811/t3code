@@ -23,7 +23,7 @@ import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
-import { subscribeI18n } from "../../i18n/runtime";
+import { subscribeI18n } from "../../i18n/subscribe";
 
 const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;

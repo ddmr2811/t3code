@@ -973,7 +973,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         };
         const nativeSessionId = yield* Effect.scoped(
           Effect.gen(function* () {
-            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-thought-" });
+            const workspace = yield* h.fs.makeTempDirectoryScoped(
+              antigravityHelperFolder(hostPlatform, "t3-ag-thought-"),
+            );
             const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "approval-required",
               interactionMode: "default",
@@ -1069,9 +1071,9 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         // Resuming a session whose saved level is xhigh must also keep the catalog default.
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const workspace = yield* h.fs.makeTempDirectoryScoped({
-              prefix: "t3-ag-thought-resume-",
-            });
+            const workspace = yield* h.fs.makeTempDirectoryScoped(
+              antigravityHelperFolder(hostPlatform, "t3-ag-thought-resume-"),
+            );
             const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "approval-required",
               interactionMode: "default",

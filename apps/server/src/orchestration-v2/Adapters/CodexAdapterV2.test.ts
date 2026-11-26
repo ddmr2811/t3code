@@ -9543,88 +9543,86 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("still asks the user when a native subagent of their thread needs approval", () =>
-    Effect.gen(function* () {
-      const interruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
-        (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
-      );
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario: "codex-native-subagent-approval",
-          entries: [
-            ...interruptSubagentCommandTranscript.entries.slice(0, interruptIndex),
-            {
-              type: "emit_inbound",
-              label: "child approval",
-              frame: {
-                id: 90,
-                method: "item/commandExecution/requestApproval",
-                params: {
-                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
-                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
-                  itemId: INTERRUPT_CHILD_COMMAND_ITEM,
-                  startedAtMs: 1782622441600,
-                  command: "rm -rf /tmp/review",
+  it.effect(
+    "treats a native subagent of the user's Full access thread as theirs, never as delegated",
+    () =>
+      Effect.gen(function* () {
+        const interruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
+          (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+        );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-native-subagent-approval",
+            entries: [
+              ...interruptSubagentCommandTranscript.entries.slice(0, interruptIndex),
+              {
+                type: "emit_inbound",
+                label: "child approval",
+                frame: {
+                  id: 90,
+                  method: "item/commandExecution/requestApproval",
+                  params: {
+                    threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                    turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                    itemId: INTERRUPT_CHILD_COMMAND_ITEM,
+                    startedAtMs: 1782622441600,
+                    command: "rm -rf /tmp/review",
+                  },
                 },
               },
-            },
-            {
-              type: "expect_outbound",
-              label: "child approval decision",
-              frame: { id: 90, result: { decision: "accept" } },
-            },
-            ...interruptSubagentCommandTranscript.entries.slice(interruptIndex),
-          ],
-        }),
-      );
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-codex-native-subagent-approval"),
-          text: INTERRUPT_PROMPT,
-        }),
-      );
-      const requests = () =>
-        harness.events.flatMap((event) =>
-          event.type === "runtime_request.updated" ? [event] : [],
+              {
+                type: "expect_outbound",
+                label: "child approval decision",
+                frame: { id: 90, result: { decision: "accept" } },
+              },
+              ...interruptSubagentCommandTranscript.entries.slice(interruptIndex),
+            ],
+          }),
         );
-      yield* harness.until(() => requests().length === 1);
-      const pending = requests()[0]!;
-      assert.deepEqual(
-        [pending.threadId, pending.runtimeRequest.kind, pending.runtimeRequest.status],
-        [harness.threadId, "command", "pending"],
-      );
-      yield* harness.runtime.respondToRuntimeRequest({
-        requestId: pending.runtimeRequest.id,
-        decision: "accept",
-      });
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-native-subagent-approval"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        // Full access accepts the child's request as it would the thread's own; a delegated task
+        // would be declined instead.
+        const requests = () =>
+          harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated" ? [event] : [],
+          );
 
-      const providerTurnId = harness.events.find(
-        (
-          event,
-        ): event is Extract<
-          ProviderAdapter.ProviderAdapterV2Event,
-          { type: "provider_turn.updated" }
-        > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
-      )?.providerTurn.id;
-      assert.isDefined(providerTurnId);
-      yield* harness.runtime.interruptTurn({
-        providerThread: harness.providerThread,
-        providerTurnId,
-      });
-      yield* harness.awaitTerminal(1);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        const providerTurnOf = () =>
+          harness.events.find(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "provider_turn.updated" }
+            > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
+          );
+        yield* harness.until(() => providerTurnOf() !== undefined);
+        const providerTurnId = providerTurnOf()?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+        yield* harness.awaitTerminal(1);
+        assert.deepEqual(requests(), []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   const rootCompletionIndex = interruptSubagentCommandTranscript.entries.findIndex(

@@ -897,6 +897,7 @@ it.live.each([
           yield* fileSystem.chmod(hook, 0o755);
           state.workspaceRoot = mono;
           state.trackedFolders = [];
+          yield* approveLayoutCommands;
 
           yield* create("feature").pipe(
             Effect.provideService(GitVcsDriver.UnattendedGit, unattended),

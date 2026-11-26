@@ -214,11 +214,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
             attachmentsByQuestionId,
             attachmentsDir: config.attachmentsDir,
             threadId: command.threadId,
-          }).pipe(
-            Effect.mapError(
-              (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
-            ),
-          );
+          });
       return { answers, attachmentsByQuestionId };
     }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
     return yield* threads

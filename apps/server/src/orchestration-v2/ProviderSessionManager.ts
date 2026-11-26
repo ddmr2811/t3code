@@ -2784,7 +2784,10 @@ export const layerWithOptions = (
             ),
           startTurn: (input) =>
             busyTurn(input, () =>
-              Effect.all([deliverableMessage(input.threadId, input.message), agentFeedbackMode]).pipe(
+              Effect.all([
+                deliverableMessage(input.threadId, input.message),
+                agentFeedbackMode,
+              ]).pipe(
                 Effect.flatMap(([message, agentFeedback]) =>
                   runtime
                     .startTurn({ ...input, message, agentFeedback })

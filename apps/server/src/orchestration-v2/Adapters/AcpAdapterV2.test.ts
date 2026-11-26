@@ -13765,7 +13765,8 @@ describe("AcpAdapterV2", () => {
       );
       assert.include(
         blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
-        `[Attached image "screenshot.png" is saved at: ${screenshotPath}]`,
+        // Fork: the agent gets the thread's own copy of the file.
+        `[Attached image "screenshot.png" is saved at: ${host.resolveThreadAttachmentPath(threadId, screenshot)}]`,
       );
     }).pipe(Effect.provide(layerTest)),
   );

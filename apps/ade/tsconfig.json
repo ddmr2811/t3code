@@ -5,6 +5,8 @@
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // The terminal surface shared with apps/web uses a parameter property, as web allows.
+    "erasableSyntaxOnly": false,
     "paths": {
       "~/*": ["./src/*"]
     },

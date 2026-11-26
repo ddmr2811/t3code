@@ -73,8 +73,7 @@ export function setServerRelayTelemetry(allowed: boolean | null): void {
 export function relayTelemetryEnabled(): boolean | null {
   // Fork: a browser exports relay traces only when built with the explicit opt-in or when its
   // server opted in; the hosted app has no server to answer, so it stays off.
-  const buildOptIn =
-    import.meta.env.VITE_T3CODE_TELEMETRY_ENABLED?.trim().toLowerCase() === "true";
+  const buildOptIn = import.meta.env.VITE_T3CODE_TELEMETRY_ENABLED?.trim().toLowerCase() === "true";
   if (typeof window === "undefined") return buildOptIn;
   if (window.desktopBridge) {
     desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();

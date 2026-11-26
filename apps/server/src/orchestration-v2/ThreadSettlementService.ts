@@ -831,16 +831,18 @@ export const make = Effect.gen(function* () {
         );
         if (parent?.worktreePath === worktreePath) return;
       }
-      const run = yield* projectScripts
-        .runForThread({
-          threadId,
-          projectId: thread.projectId,
-          worktreePath,
-          trigger: "settle",
-          observeCompletion: {},
-        })
-        // It runs by itself once the thread settles, so its Git runs no repository hook.
-        .pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true));
+      const run = yield* (
+        projectScripts
+          .runForThread({
+            threadId,
+            projectId: thread.projectId,
+            worktreePath,
+            trigger: "settle",
+            observeCompletion: {},
+          })
+          // It runs by itself once the thread settles, so its Git runs no repository hook.
+          .pipe(Effect.provideService(GitVcsDriver.UnattendedGit, true))
+      );
       settleActionRunAt.set(threadId, settledAtMs);
       if (run.status === "started" && run.completion) {
         yield* run.completion.pipe(Effect.forkDetach);

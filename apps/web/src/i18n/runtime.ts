@@ -8,6 +8,7 @@ import {
 import { initializeI18n } from "./initializeI18n";
 import { DEFAULT_LOCALE, resolveWebLocaleSelection } from "./locales";
 import { setActiveLocale } from "./messages";
+import { notifyI18n, subscribeI18n } from "./subscribe";
 
 type LocaleTranslations = Awaited<ReturnType<typeof getTranslationsSnapshot>>;
 
@@ -19,7 +20,6 @@ export interface I18nSnapshot {
 
 const loadedTranslations: LocaleTranslations = { [DEFAULT_LOCALE]: {} };
 const pendingLoads = new Map<string, Promise<void>>();
-const listeners = new Set<() => void>();
 let snapshot: I18nSnapshot = {
   locale: DEFAULT_LOCALE,
   formattingLocale: undefined,
@@ -61,7 +61,7 @@ function activateLocale(locale: string): void {
   snapshot = { locale, formattingLocale, translations: { ...loadedTranslations } };
   setActiveLocale(locale);
   document.documentElement.lang = locale;
-  for (const listener of listeners) listener();
+  notifyI18n();
 }
 
 function applyLanguageSetting(): void {
@@ -87,12 +87,7 @@ export function whenLocaleReady(): Promise<void> {
   return loadLocale(locale).then(() => activateLocale(locale));
 }
 
-export function subscribeI18n(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+export { subscribeI18n };
 
 export function getI18nSnapshot(): I18nSnapshot {
   return snapshot;
