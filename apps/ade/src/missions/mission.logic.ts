@@ -4,6 +4,7 @@ import type {
   WorkflowQuestion,
   WorkflowRun,
   WorkflowRunDetail,
+  WorkflowRunReference,
   WorkflowStep,
 } from "@t3tools/contracts";
 
@@ -224,4 +225,106 @@ export function parseMissionKey(
   const at = key.lastIndexOf("~");
   if (at <= 0 || at === key.length - 1) return null;
   return { environmentId: key.slice(0, at), runId: key.slice(at + 1) };
+}
+
+export interface MissionAnswer {
+  readonly key: string;
+  readonly title: string;
+  readonly choice: string;
+}
+
+/** The questions the run already had answered, with the choice, in the order they were asked. */
+export function missionAnswers(steps: ReadonlyArray<WorkflowStep>): ReadonlyArray<MissionAnswer> {
+  return steps.flatMap((step) => {
+    const choice = step.kind === "ask" ? field(step.result, "choice") : undefined;
+    return typeof choice === "string"
+      ? [{ key: step.name, title: stepTitle(step.name.split("/", 1)[0]!), choice }]
+      : [];
+  });
+}
+
+export interface MissionDeliverable {
+  readonly key: string;
+  readonly kind: string;
+  readonly label: string;
+  /** Where it lives, such as «acme/app #12», when the address says. */
+  readonly where: string | null;
+  readonly title: string;
+  readonly url: string | null;
+  /** Backroom's piece states: green for done, blue for open, amber for what waits, grey for the rest. */
+  readonly state: "published" | "scheduled" | "waiting" | "preparing" | null;
+  readonly stateWord: string | null;
+  readonly steps: ReadonlyArray<string>;
+}
+
+const KIND_LABEL: Readonly<Record<string, string>> = {
+  issue: "Issue",
+  pullRequest: "Pull request",
+  thread: "Hilo",
+  url: "Enlace",
+};
+const STATE: Readonly<Record<string, readonly [MissionDeliverable["state"], string]>> = {
+  open: ["scheduled", "Abierta"],
+  draft: ["waiting", "Borrador"],
+  merged: ["published", "Fusionada"],
+  closed: ["preparing", "Cerrada"],
+};
+
+const whereOf = (reference: WorkflowRunReference): string | null => {
+  const { address } = reference;
+  const repository = field(address, "repository") ?? field(address, "scope");
+  const number = field(address, "number") ?? field(address, "key");
+  if (typeof repository === "string") {
+    return typeof number === "string" || typeof number === "number"
+      ? `${repository} #${number}`
+      : repository;
+  }
+  if (reference.url === null) return null;
+  try {
+    return new URL(reference.url).host;
+  } catch {
+    return null;
+  }
+};
+
+/** What the run's steps touched, as its deliverables; what started the run is not one. */
+export function missionDeliverables(
+  references: ReadonlyArray<WorkflowRunReference>,
+): ReadonlyArray<MissionDeliverable> {
+  return references
+    .filter((reference) => reference.origin === "step")
+    .map((reference) => {
+      const state = reference.state === null ? undefined : STATE[reference.state];
+      return {
+        key: `${reference.kind}:${reference.key}`,
+        kind: reference.kind,
+        label: KIND_LABEL[reference.kind] ?? reference.kind,
+        where: whereOf(reference),
+        title: reference.title || reference.key,
+        url: reference.url,
+        state: reference.state === null ? null : (state?.[0] ?? "waiting"),
+        stateWord: reference.state === null ? null : (state?.[1] ?? reference.state),
+        steps: reference.steps.map(stepTitle),
+      };
+    });
+}
+
+const WEEKDAY: Readonly<Record<string, string>> = {
+  Sun: "dom",
+  Mon: "lun",
+  Tue: "mar",
+  Wed: "mié",
+  Thu: "jue",
+  Fri: "vie",
+  Sat: "sáb",
+};
+
+/** The server says what starts a workflow in English («daily at 09:00 on Mon»); the chip says it here. */
+export function triggerLabel(text: string): string {
+  const every = /^every (.+)$/.exec(text);
+  if (every !== null) return `Cada ${every[1]}`;
+  const daily = /^daily at (\d\d:\d\d)(?: on (.+))?$/.exec(text);
+  if (daily === null) return text;
+  const days = daily[2]?.split(", ").map((day) => WEEKDAY[day] ?? day);
+  return days === undefined ? `Cada día, ${daily[1]}` : `Cada ${days.join(", ")}, ${daily[1]}`;
 }

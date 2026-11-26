@@ -1,18 +1,18 @@
 import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { ArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
 import { FlowArrowIcon } from "@phosphor-icons/react/dist/csr/FlowArrow";
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { ChatCircleIcon } from "@phosphor-icons/react/dist/csr/ChatCircle";
+import { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
+import { GithubLogoIcon } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { LinkIcon } from "@phosphor-icons/react/dist/csr/Link";
+import { PaperclipIcon } from "@phosphor-icons/react/dist/csr/Paperclip";
 import { TargetIcon } from "@phosphor-icons/react/dist/csr/Target";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import {
-  groupWorkflowRuns,
-  listedWorkflowRuns,
-  type WorkflowRunNode,
-  workflowRunLists,
-} from "@t3tools/client-runtime/workflows";
 import type { EnvironmentId, ForkBot, ThreadId, WorkflowRunDetail } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -45,44 +45,26 @@ import { useConfirm } from "../ui/primitives/confirm.tsx";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/primitives/tabs.tsx";
 import {
   MISSION_COLUMNS,
+  type MissionAnswer,
   type MissionCard,
+  missionAnswers,
   missionCards,
+  type MissionDeliverable,
+  missionDeliverables,
   missionKey,
   missionState,
   parseMissionKey,
+  triggerLabel,
 } from "./mission.logic.ts";
+import {
+  missionKeyAtom,
+  missionRowsAtom,
+  missionsLiveAtom,
+  openQuestions,
+} from "./missions.state.ts";
 
 /** Backroom's stylesheet names the middle columns «running» and «review». */
 const BACKROOM_COLUMN = { todo: "todo", doing: "running", you: "review", done: "done" } as const;
-
-const readMission = () => new URLSearchParams(window.location.search).get("mision");
-
-/** The open mission, in `?mision=` beside `?vista=misiones`, so Back closes it. */
-const missionKeyAtom = Atom.writable(
-  (get) => {
-    const onPopState = () => get.setSelf(readMission());
-    window.addEventListener("popstate", onPopState);
-    get.addFinalizer(() => window.removeEventListener("popstate", onPopState));
-    return readMission();
-  },
-  (ctx, key: string | null) => {
-    const url = new URL(window.location.href);
-    if (key === null) url.searchParams.delete("mision");
-    else url.searchParams.set("mision", key);
-    if (url.href === window.location.href) return;
-    window.history.pushState(null, "", url);
-    ctx.setSelf(key);
-  },
-).pipe(Atom.keepAlive);
-
-// The same live lists the inbox reads its questions from: one subscription per machine.
-const missionsLiveAtom = Atom.make((get) => {
-  const environmentIds = [...get(operableEnvironmentIdsAtom)].toSorted();
-  return get(serverEnvironment.workflowsLiveAcross(JSON.stringify(environmentIds)));
-}).pipe(Atom.withLabel("ade-missions-live"));
-
-const openQuestions = (node: WorkflowRunNode): number =>
-  node.questions.length + node.children.reduce((sum, child) => sum + openQuestions(child), 0);
 
 const DAY = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" });
 const CLOCK = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" });
@@ -103,29 +85,9 @@ export function Missions() {
 }
 
 function MissionList() {
-  const across = useAtomValue(missionsLiveAtom);
+  const { rows, loaded } = useAtomValue(missionRowsAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const open = useAtomSet(missionKeyAtom);
-  const loaded = across.filter(({ result }) => Option.isSome(AsyncResult.value(result))).length;
-  const rows = across
-    .flatMap(({ environmentId, result }) => {
-      const snapshot = Option.getOrUndefined(AsyncResult.value(result));
-      if (snapshot === undefined) return [];
-      const { runs } = listedWorkflowRuns(snapshot.runs, false);
-      const lists = workflowRunLists(
-        groupWorkflowRuns(snapshot.workflows, runs, snapshot.questions),
-      );
-      const needsYou = new Set(lists["needs-you"].map((node) => node.run.runId));
-      return lists.all.map((node) => ({
-        environmentId,
-        node,
-        rank: needsYou.has(node.run.runId) ? 0 : node.run.endedAt === null ? 1 : 2,
-      }));
-    })
-    .sort(
-      (left, right) =>
-        left.rank - right.rank || right.node.run.updatedAt.localeCompare(left.node.run.updatedAt),
-    );
   return (
     <Window crumb="Misiones" labelledBy="ade-missions-title" className="ade-missions">
       <header className="br-heading">
@@ -186,6 +148,7 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
     operable ? serverEnvironment.workflowRun({ environmentId, input: { runId } }) : NO_DETAIL,
   );
   const across = useAtomValue(missionsLiveAtom);
+  const { rows } = useAtomValue(missionRowsAtom);
   const snapshot = Option.getOrUndefined(
     AsyncResult.value(
       across.find((entry) => entry.environmentId === environmentId)?.result ??
@@ -284,8 +247,14 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
         const ref = parseScopedThreadKey(key);
         if (ref !== null && ref.environmentId === environmentId) pick(ref.threadId);
       }}
+      created={{ title: run.title || run.workflow, at: run.startedAt }}
+      answers={missionAnswers(detail.steps)}
     />
   );
+  const deliverables = missionDeliverables(detail.references);
+  const triggers =
+    rows.find((row) => row.environmentId === environmentId && row.node.run.runId === runId)
+      ?.triggers ?? [];
   const board = (
     <div className="v4-board" aria-label="Tablero de la misión">
       {MISSION_COLUMNS.map((column) => {
@@ -348,6 +317,12 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
               ))}
             </span>
           )}
+          {triggers.length === 0 ? null : (
+            <span className="v4-chip">
+              <ArrowsClockwiseIcon size={13} aria-hidden />
+              {triggers.map(triggerLabel).join(" · ")}
+            </span>
+          )}
           <span className="v4-chip ade-mission-state" data-tone={state.tone}>
             {state.word}
           </span>
@@ -382,6 +357,7 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
             <h3 id="ade-mission-title">{run.title || run.workflow}</h3>
             <p className="v4-goal">
               <TargetIcon size={15} aria-hidden />
+              <span>Objetivo</span>
               <strong>{run.subject?.title ? run.subject.title : `Flujo ${run.workflow}`}</strong>
               <span>· {machine?.target.label ?? environmentId}</span>
             </p>
@@ -421,6 +397,18 @@ function Mission(props: { environmentId: EnvironmentId; runId: string }) {
             </Tabs>
           ) : (
             board
+          )}
+          {deliverables.length === 0 ? null : (
+            <section className="br-pieces" aria-labelledby="ade-mission-deliverables">
+              <h4 id="ade-mission-deliverables" className="br-label">
+                Entregables <span>{deliverables.length}</span>
+              </h4>
+              <div className="v4-pieces">
+                {deliverables.map((piece) => (
+                  <Deliverable key={piece.key} piece={piece} />
+                ))}
+              </div>
+            </section>
           )}
         </div>
       </div>
@@ -491,12 +479,75 @@ function MissionCardView(props: {
 
 const NO_THREAD = Atom.make(null);
 
+/** Backroom's channels stand for the kinds a run can touch: GitHub, a thread or a web page. */
+const CHANNEL: Readonly<Record<string, "x" | "instagram" | "youtube">> = {
+  issue: "x",
+  pullRequest: "x",
+  thread: "instagram",
+  url: "youtube",
+};
+const CHANNEL_ICON = {
+  x: GithubLogoIcon,
+  instagram: ChatCircleIcon,
+  youtube: LinkIcon,
+} as const;
+
+/** One deliverable as Backroom's channel piece: where it lives, its state, and the steps on it. */
+function Deliverable(props: { piece: MissionDeliverable }) {
+  const { piece } = props;
+  const channel = CHANNEL[piece.kind] ?? "youtube";
+  const Icon = CHANNEL_ICON[channel];
+  return (
+    <article className="v4-piece" data-channel={channel}>
+      <header className="v4-piece-head">
+        <span className="v4-channel-dot" data-channel={channel} aria-hidden>
+          <Icon size={15} weight="fill" />
+        </span>
+        <span className="v4-piece-name">
+          <strong>{piece.label}</strong>
+          {piece.where === null ? null : <small>{piece.where}</small>}
+        </span>
+        {piece.state === null ? null : (
+          <span className="v4-state" data-state={piece.state}>
+            <i aria-hidden />
+            {piece.stateWord}
+          </span>
+        )}
+      </header>
+      <div className="v4-preview v4-x">
+        <p>
+          {piece.url === null ? (
+            piece.title
+          ) : (
+            <a href={piece.url} target="_blank" rel="noreferrer">
+              {piece.title}
+            </a>
+          )}
+        </p>
+      </div>
+      <p className="v4-used">
+        <PaperclipIcon size={13} aria-hidden />
+        {piece.steps.length === 1 ? "Lo tocó" : "Lo tocaron"}: {piece.steps.join(", ")}
+      </p>
+    </article>
+  );
+}
+
+const CREATED = new Intl.DateTimeFormat("es-ES", {
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function MissionChat(props: {
   environmentId: EnvironmentId;
   threadId: string | null;
   bot: ForkBot | null;
   botStatus: ReturnType<typeof botState>["status"] | null;
   onOpenThread: (threadKey: string) => void;
+  created: { readonly title: string; readonly at: string };
+  answers: ReadonlyArray<MissionAnswer>;
 }) {
   const ref =
     props.threadId === null
@@ -540,6 +591,24 @@ function MissionChat(props: {
           </button>
         )}
       </header>
+      <div className="br-thread-facts">
+        {props.answers.map((answer) => (
+          <div key={answer.key} className="v4-question">
+            <span>{answer.title}</span>
+            <strong>
+              <CheckIcon size={13} weight="bold" aria-hidden />
+              {answer.choice}
+            </strong>
+          </div>
+        ))}
+        <span className="v4-created">
+          <TargetIcon size={14} aria-hidden />
+          <span>
+            <small>Misión creada · {CREATED.format(Date.parse(props.created.at))}</small>
+            {props.created.title}
+          </span>
+        </span>
+      </div>
       {ref === null ? null : (
         <>
           <ThreadTimeline

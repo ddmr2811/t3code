@@ -13,7 +13,11 @@ import {
   useDecisionsPanel,
 } from "../sidebar/Sidebar.tsx";
 import { environmentProjects, threadEnvironment } from "../state.ts";
-import { ForYou, HomeActivity, HomeRail } from "./ForYou.tsx";
+import { allBotsAtom } from "../bots/bots.state.ts";
+import { FeaturedMission } from "./FeaturedMission.tsx";
+import { ForYou, HomeActivity } from "./ForYou.tsx";
+import { HomeRail } from "./HomeRail.tsx";
+import { ReviewToast } from "./ReviewToast.tsx";
 import { forYouSentence, homeChips, homeProjects } from "./home.logic.ts";
 
 export const homeProjectsAtom = Atom.make((get) => {
@@ -66,10 +70,18 @@ export function Home() {
     projects[0] ??
     null;
   const chips = homeChips(projects, selected);
+  const bots = [...useAtomValue(allBotsAtom).byEnv.values()].flat().filter((bot) => !bot.archived);
+  const coordinators = bots.filter((bot) => bot.coordinator);
+  const coordinator =
+    coordinators.find((bot) => bot.projectId === selected?.project.id) ?? coordinators[0] ?? null;
+  const team = bots.filter(
+    (bot) => coordinator !== null && bot.projectId === coordinator.projectId,
+  );
   const multipleMachines = machineCount > 1;
 
   return (
     <section className="ade-home br" aria-label="Inicio">
+      <ReviewToast />
       <div className="v2-app">
         <div className="v2-app-main">
           <header className="v2-app-greeting">
@@ -77,7 +89,8 @@ export function Home() {
             <h1 className="v2-h3">{greeting()}</h1>
             <p data-pending={needsYouCount > 0 || undefined}>{forYouSentence(needsYouCount)}</p>
           </header>
-          <div className="v2-focus-card">
+          <FeaturedMission />
+          <div className="v2-focus-card br-compose">
             <h2 className="v2-h4">¿En qué trabajamos?</h2>
             {selected === null ? (
               <p role="status">
@@ -138,7 +151,7 @@ export function Home() {
           <ForYou onOpenThread={openThread} />
           <HomeActivity multipleMachines={multipleMachines} />
         </div>
-        <HomeRail projectId={selected?.project.id ?? null} needsYouCount={needsYouCount} />
+        <HomeRail coordinator={coordinator} team={team} needsYouCount={needsYouCount} />
       </div>
     </section>
   );

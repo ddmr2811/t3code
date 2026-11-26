@@ -8,14 +8,12 @@ import type { EnvironmentId, ForkBot } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { AgentAvatar, botMascot } from "../backroom/AgentAvatar.tsx";
-import { WorkTile } from "../backroom/WorkTile.tsx";
 import { allBotsAtom } from "../bots/bots.state.ts";
 import { environmentCatalog } from "../connection/runtime.ts";
 import { formatUpdatedShort } from "../coordination/ProjectBoard.tsx";
 import { QuickBotNotice, useBotNotices } from "../decisions/BotNotices.tsx";
 import { KIND_LABELS } from "../decisions/DecisionsPanel.tsx";
 import { QuickRequest } from "../decisions/Requests.tsx";
-import { viewAtom } from "../overview/Overview.tsx";
 import { buildPendingTrayItems } from "../decisions/tray.logic.ts";
 import {
   listedThreadsAtom,
@@ -24,23 +22,22 @@ import {
   useDecisionsPanel,
 } from "../sidebar/Sidebar.tsx";
 import { forYouEntries, homeActivity, workingThreadCount } from "./home.logic.ts";
-import { Overnight } from "./Overnight.tsx";
 
 const FOR_YOU_SHOWN = 4;
 
-const activityAtom = Atom.make((get) => {
+export const activityAtom = Atom.make((get) => {
   const threads = get(listedThreadsAtom);
   return { ...homeActivity(threads), workingCount: workingThreadCount(threads) };
 }).pipe(Atom.withLabel("ade-home-activity"));
 
 /** The bot whose own thread this is, so it reads as the bot. */
-function useBotOf() {
+export function useBotOf() {
   const { byEnv } = useAtomValue(allBotsAtom);
   return (environmentId: EnvironmentId, threadId: string) =>
     byEnv.get(environmentId)?.find((bot) => bot.threadId === threadId) ?? null;
 }
 
-function useMachineLabel() {
+export function useMachineLabel() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   return (environmentId: EnvironmentId) =>
     catalog.entries.get(environmentId)?.target.label ?? environmentId;
@@ -186,7 +183,7 @@ function ActivityRow(props: {
   );
 }
 
-function useActivityRow(multipleMachines: boolean) {
+export function useActivityRow(multipleMachines: boolean) {
   const machineOf = useMachineLabel();
   const botOf = useBotOf();
   const openThread = useAtomSet(selectedThreadKeyAtom);
@@ -219,65 +216,5 @@ export function HomeActivity(props: { multipleMachines: boolean }) {
         <ul className="v2-mission-group">{working.map((thread) => row(thread, false))}</ul>
       )}
     </section>
-  );
-}
-
-/** The right rail: who coordinates, what finished last, the screens at hand and the night. */
-export function HomeRail(props: { projectId: string | null; needsYouCount: number }) {
-  const { finished, workingCount } = useAtomValue(activityAtom);
-  const { byEnv } = useAtomValue(allBotsAtom);
-  const setView = useAtomSet(viewAtom);
-  const row = useActivityRow(false);
-  const coordinators = [...byEnv.values()].flat().filter((bot) => bot.coordinator && !bot.archived);
-  const coordinator =
-    coordinators.find((bot) => bot.projectId === props.projectId) ?? coordinators[0] ?? null;
-  return (
-    <aside className="v2-app-rail" aria-label="Coordinación">
-      <div className="v2-rail-piece">
-        <div className="v2-rail-card">
-          {coordinator === null ? null : (
-            <div className="v2-rail-profile">
-              <AgentAvatar kind="orbit" />
-              <div className="v2-h4">{coordinator.name}</div>
-              <p>Coordinación</p>
-              <small>
-                <i />
-                {coordinator.role}
-              </small>
-            </div>
-          )}
-          <div className="v2-rail-stats">
-            <span>
-              <strong>{workingCount}</strong>
-              En marcha
-            </span>
-            <span>
-              <strong>{props.needsYouCount}</strong>
-              Para ti
-            </span>
-          </div>
-        </div>
-        {finished.length === 0 ? null : (
-          <div className="v2-rail-block">
-            <div className="v2-h5">Lo último terminado</div>
-            <ul className="br-rail-list">{finished.map((thread) => row(thread, true))}</ul>
-          </div>
-        )}
-        <div className="v2-rail-block">
-          <div className="v2-h5">A mano</div>
-          <div className="v2-rail-tools">
-            <button type="button" onClick={() => setView("misiones")}>
-              <WorkTile kind="check" size="sm" />
-              Misiones
-            </button>
-            <button type="button" onClick={() => setView("memoria")}>
-              <WorkTile kind="book" size="sm" />
-              Memoria
-            </button>
-          </div>
-        </div>
-        <Overnight needsYouCount={props.needsYouCount} />
-      </div>
-    </aside>
   );
 }

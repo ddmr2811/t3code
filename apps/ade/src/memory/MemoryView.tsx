@@ -2,6 +2,7 @@ import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom
 import { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
 import { ArrowCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
+import { FileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
@@ -24,6 +25,7 @@ import {
   forkMemoryCorrectCommand,
   forkMemoryListQuery,
   forkMemoryRestoreCommand,
+  refreshBots,
   refreshMemory,
 } from "../bots/bots.state.ts";
 import { runCommand } from "../composer/Composer.tsx";
@@ -173,7 +175,37 @@ function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
         />
       </article>
 
-      <aside className="v4-memory-side" aria-label="Quién la lee">
+      <aside className="v4-memory-side" aria-label="Fuentes y quién la lee">
+        <section>
+          <h4>Fuentes</h4>
+          {memory.notes.length === 0 && memory.previous === undefined ? (
+            <p className="br-empty">Aún no hay fuentes: la primera nota abre la memoria.</p>
+          ) : (
+            <ul className="v4-sources">
+              {(
+                [
+                  ["Escritas por ti", memory.notes.filter((note) => note.origin === "user").length],
+                  ["De los agentes", memory.notes.filter((note) => note.origin === "agent").length],
+                ] as const
+              ).map(([label, count]) =>
+                count === 0 ? null : (
+                  <li key={label}>
+                    <FileTextIcon size={15} aria-hidden />
+                    <span>{label}</span>
+                    <small>{count === 1 ? "1 nota" : `${count} notas`}</small>
+                  </li>
+                ),
+              )}
+              {memory.previous === undefined ? null : (
+                <li>
+                  <FileTextIcon size={15} aria-hidden />
+                  <span>{previousLabel(memory.previous)}</span>
+                  <small>v{memory.previous.revision}</small>
+                </li>
+              )}
+            </ul>
+          )}
+        </section>
         <section>
           <h4>En su próximo encargo</h4>
           {readers.length === 0 ? (
@@ -275,6 +307,8 @@ function Correction(props: {
   // Also after a refusal, so the next try is made against what the server holds now.
   const finish = (failure: string | null) => {
     refreshMemory(registry, environmentId, projectId);
+    // A correction may open the coordinator's thread; its readers should show it now.
+    refreshBots(registry, environmentId);
     inFlight.current = false;
     setBusy(false);
     if (failure !== null) setError(failure);

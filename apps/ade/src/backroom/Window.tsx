@@ -2,6 +2,8 @@ import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
 import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
 import type { ReactNode } from "react";
 
+import { ReviewToast } from "../home/ReviewToast.tsx";
+
 // Adaptado de AppWindow.tsx de Backroom (github.com/AdrianAlonsoDev/backroom, 4ca0ae9), MIT,
 // © 2026 Adrián Alonso. Ver ./NOTICE. Sin el riel de iconos: la barra lateral del ADE ya navega.
 /** Backroom's product window around a screen: its bar with the crumbs, then the panel. */
@@ -23,6 +25,7 @@ export function Window(props: {
       aria-labelledby={props.labelledBy}
       aria-label={props.label}
     >
+      <ReviewToast />
       <div className="v4-window br-window" data-flush={props.flush ? "" : undefined}>
         <div className="v4-body">
           <div className="v4-bar">

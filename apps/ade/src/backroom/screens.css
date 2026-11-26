@@ -598,3 +598,213 @@
   padding-block: 6px;
   white-space: normal;
 }
+
+/* ---------- Vuelta 2: las piezas de Backroom con el dato del ADE que más se parece ---------- */
+
+/* «Listo para que lo revises»: el aviso de FrameStatus sobre el borde de la ventana. */
+/* Fuera de la rejilla: la ventana no se mueve cuando el aviso aparece o se cierra. */
+.br-review {
+  position: absolute;
+  z-index: 3;
+  top: clamp(12px, 2.2vw, 40px);
+  right: 0;
+  left: 0;
+  width: min(100%, 1280px);
+  margin-inline: auto;
+}
+.br .v3-status-pill {
+  gap: 4px;
+  padding-right: 8px;
+}
+.br-review-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+.br-review-open > svg {
+  width: 34px;
+  height: 34px;
+}
+.br-review-open > strong {
+  font-weight: 650;
+  color: var(--cl-ink);
+}
+.br-review-open > small {
+  font-size: 12px;
+  color: var(--cl-subtle);
+}
+.br-review-glyph {
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--cl-surface-raised);
+  color: var(--cl-muted);
+}
+.br-review-close {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--cl-subtle);
+}
+.br-review-close:hover {
+  background: var(--cl-surface-raised);
+  color: var(--cl-ink);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .br-review .v3-status-pill {
+    animation: br-review-in 0.35s ease-out both;
+  }
+}
+@keyframes br-review-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Misión destacada y compositor, dos tarjetas de foco seguidas. */
+.br .v2-focus-bottom button {
+  border: 0;
+}
+.br .v2-team-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* El riel: el conmutador funciona y las filas son botones. */
+.br .v2-rail-switch button {
+  padding: 5px 2px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+.br .v2-rail-switch button[aria-pressed="true"] {
+  background: var(--app-hover);
+  box-shadow: var(--app-float-sm);
+  color: var(--app-text);
+}
+.br .v2-rail-block .v2-h5 > button {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--app-faint);
+}
+.br .v2-rail-block > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 9px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--app-fill);
+  color: var(--app-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+.br .v2-rail-block > button:hover {
+  background: var(--app-hover);
+}
+.br .v2-rail-block > button > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.br .v2-rail-tools > a {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  min-width: 0;
+  padding: 10px 10px 9px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--app-fill);
+  color: var(--app-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.br-rail-empty {
+  padding: 0 4px;
+}
+
+/* Memoria: las fuentes con su número de notas o su versión. */
+.br .v4-sources small {
+  white-space: nowrap;
+}
+.br .v4-sources {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Misión: los entregables como las piezas de canal de «Hazlo llegar». */
+.br-pieces {
+  margin-top: 22px;
+}
+.br-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text);
+}
+.br-label > span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--app-hover);
+  color: var(--app-muted);
+  font-size: 11px;
+}
+.br-pieces .v4-preview {
+  height: auto;
+  min-height: 72px;
+}
+.br-pieces .v4-preview a {
+  color: inherit;
+  text-decoration: none;
+}
+.br-pieces .v4-preview a:hover {
+  text-decoration: underline;
+}
+.br-thread-facts {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+/* Como en Backroom, en pantallas estrechas el aviso va encima de la ventana y no tapa su barra. */
+@media (max-width: 939px) {
+  .br:has(> .br-review) {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .br-review {
+    position: relative;
+    top: 0;
+    margin-bottom: 6px;
+  }
+  .br-review-open > small {
+    display: none;
+  }
+}

@@ -10,6 +10,7 @@ import {
   deriveInitialThreadTitle,
   forYouEntries,
   homeActivity,
+  reviewEvent,
   homeChips,
   homeProjects,
 } from "./home.logic.ts";
@@ -176,5 +177,22 @@ describe("homeActivity", () => {
       thread("busy", "running", "2026-11-26T13:00:00.000Z"),
     ]);
     expect(finished.map((item) => item.id)).toEqual(["new", "old"]);
+  });
+});
+
+describe("reviewEvent", () => {
+  const since = Date.parse("2026-11-26T10:00:00.000Z");
+  const entry = (key: string, at: string | null) => ({ key, at });
+
+  it("shows the newest arrival after the ADE opened, and none once it is closed", () => {
+    const entries = [
+      entry("already-waiting", "2026-11-26T09:00:00.000Z"),
+      entry("first", "2026-11-26T10:01:00.000Z"),
+      entry("newest", "2026-11-26T10:05:00.000Z"),
+      entry("undated", null),
+    ];
+    expect(reviewEvent(entries, since, new Set())?.key).toBe("newest");
+    expect(reviewEvent(entries, since, new Set(["newest"]))?.key).toBe("first");
+    expect(reviewEvent(entries, since, new Set(["newest", "first"]))).toBeNull();
   });
 });

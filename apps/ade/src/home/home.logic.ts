@@ -209,3 +209,21 @@ export function homeActivity<T extends ActivityInput>(
     finished: finished.slice(0, ACTIVITY_FINISHED),
   };
 }
+
+/**
+ * The newest thing that came to wait on the user after `since` and was not closed: the one
+ * «Listo para que lo revises» shows. What already waited when the app opened is no news.
+ */
+export function reviewEvent<E extends { readonly key: string; readonly at: string | null }>(
+  entries: ReadonlyArray<E>,
+  since: number,
+  dismissed: ReadonlySet<string>,
+): E | null {
+  let newest: E | null = null;
+  for (const entry of entries) {
+    const at = entry.at === null ? Number.NaN : Date.parse(entry.at);
+    if (!(at > since) || dismissed.has(entry.key)) continue;
+    if (newest === null || at > Date.parse(newest.at!)) newest = entry;
+  }
+  return newest;
+}

@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { missionCards, missionKey, parseMissionKey } from "./mission.logic.ts";
+import { missionCards, missionDeliverables, missionKey, parseMissionKey } from "./mission.logic.ts";
 
 const AT = "2026-11-26T10:00:00.000Z";
 const NOW = Date.parse(AT);
@@ -176,5 +176,24 @@ describe("mission keys", () => {
     });
     expect(parseMissionKey("sin-separador")).toBeNull();
     expect(parseMissionKey("env~")).toBeNull();
+  });
+});
+
+describe("missionDeliverables", () => {
+  it("lists what the steps touched, not what started the run", () => {
+    const reference = (key: string, origin: "trigger" | "step") => ({
+      kind: "issue",
+      key,
+      address: { scope: "acme/app", key },
+      title: `Issue ${key}`,
+      url: null,
+      state: "open",
+      steps: ["leer-issues"],
+      origin,
+    });
+    const pieces = missionDeliverables([reference("3", "trigger"), reference("12", "step")]);
+    expect(pieces.map((piece) => [piece.where, piece.steps])).toEqual([
+      ["acme/app #12", ["Leer issues"]],
+    ]);
   });
 });
