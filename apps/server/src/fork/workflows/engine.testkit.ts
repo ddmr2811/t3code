@@ -23,11 +23,12 @@ import { type ForkWorkflowHooks, ForkWorkflowLink } from "./ForkWorkflowLink.ts"
 
 /**
  * `use` runs against an engine holding `definitions`, with the fork's agent steps in front of
- * `agents` (upstream's threads, which a test stands in for) and `hooks` behind the link.
+ * `agents` (upstream's threads, which a test stands in for) and `hooks` behind the link, or
+ * none, as before the fork's services are up.
  */
 export const withWorkflowEngine = <A, E>(
   definitions: ReadonlyArray<WorkflowDefinition>,
-  hooks: ForkWorkflowHooks,
+  hooks: ForkWorkflowHooks | undefined,
   agents: WorkflowAgents["Service"],
   use: Effect.Effect<A, E, Workflows.Workflows>,
 ) =>

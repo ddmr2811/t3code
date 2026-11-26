@@ -141,49 +141,112 @@ it.layer(layerTest)("DispatchModeLimit", (it) => {
   );
 });
 
-it.layer(layerTest)("DispatchModeLimit on a queued run", (it) => {
-  it.effect("cancels a limited sender's queued run once its user raised the thread", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("thread:limit-queued");
-      yield* createThread(threadId);
-      const send = (
-        key: string,
-        dispatchMode: { readonly type: "start_immediately" | "queue_after_active" },
-      ) =>
-        orchestrator.dispatch({
+/**
+ * A running turn, then `queued` behind it (sent under `supervised` where listed in `limited`),
+ * and the thread raised by its user while they wait.
+ */
+const raisedBehindActive = (name: string, queued: ReadonlyArray<string>, limited: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:${name}`);
+    yield* createThread(threadId);
+    for (const key of ["active", ...queued]) {
+      yield* orchestrator
+        .dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`limit-queued-${key}`),
+          commandId: CommandId.make(`${name}-${key}`),
           threadId,
-          messageId: MessageId.make(`limit-queued-${key}`),
+          messageId: MessageId.make(`${name}-${key}`),
           text: key,
           attachments: [],
           modelSelection: { instanceId, model: "gpt-5" },
-          dispatchMode,
+          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
           createdBy: "agent",
           creationSource: "server",
-        });
-      yield* send("active", { type: "start_immediately" });
-      yield* send("queued", { type: "queue_after_active" }).pipe(
-        Effect.provideService(DispatchModeLimit, supervised),
+        })
+        .pipe(Effect.provideService(DispatchModeLimit, key === limited ? supervised : undefined));
+    }
+    yield* orchestrator.dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: CommandId.make(`${name}-raise`),
+      threadId,
+      runtimeMode: "full-access",
+    });
+    const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+    const run = (key: string) =>
+      runs.find((candidate) => candidate.userMessageId === `${name}-${key}`)!;
+    const statusOf = (key: string) =>
+      Effect.map(
+        orchestrator.getThreadProjection(threadId),
+        (projection) => projection.runs.find((candidate) => candidate.id === run(key).id)?.status,
       );
-      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
-      assert.equal(queued?.status, "queued");
-      // The user raises the thread while the sender's run waits, then the active one ends.
-      yield* orchestrator.dispatch({
-        type: "thread.runtime-mode.set",
-        commandId: CommandId.make("limit-queued-raise"),
-        threadId,
-        runtimeMode: "full-access",
-      });
+    return { orchestrator, threadId, run, statusOf };
+  });
+
+it.layer(layerTest)("DispatchModeLimit on a queued run", (it) => {
+  it.effect("cancels a limited sender's queued run once its user raised the thread", () =>
+    Effect.gen(function* () {
+      const { orchestrator, threadId, run, statusOf } = yield* raisedBehindActive(
+        "limit-queued",
+        ["queued"],
+        "queued",
+      );
+      const active = run("active");
+      const queued = run("queued");
       yield* orchestrator.dispatch({
         type: "run.interrupt",
         commandId: CommandId.make("limit-queued-interrupt"),
         threadId,
-        runId: active!.id,
+        runId: active.id,
       });
-      const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(after.runs.find((run) => run.id === queued!.id)?.status, "cancelled");
+      assert.equal(yield* statusOf("queued"), "cancelled");
+      assert.equal(queued.status, "queued");
+    }),
+  );
+
+  it.effect("steers no turn with a limited sender's queued message above its limit", () =>
+    Effect.gen(function* () {
+      const { orchestrator, threadId, run, statusOf } = yield* raisedBehindActive(
+        "limit-steer",
+        ["queued"],
+        "queued",
+      );
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("limit-steer-promote"),
+          threadId,
+          queuedRunId: run("queued").id,
+          targetRunId: run("active").id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorDispatchError");
+      assert.equal(yield* statusOf("queued"), "queued");
+    }),
+  );
+
+  it.effect("a start asked for a limited run it cancels starts no other in its place", () =>
+    Effect.gen(function* () {
+      const { orchestrator, threadId, run, statusOf } = yield* raisedBehindActive(
+        "limit-start",
+        ["mine", "limited"],
+        "limited",
+      );
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("limit-start-stop"),
+        threadId,
+        runId: run("active").id,
+        holdQueue: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "queued-run.start",
+        commandId: CommandId.make("limit-start-start"),
+        threadId,
+        runId: run("limited").id,
+      });
+      assert.equal(yield* statusOf("limited"), "cancelled");
+      assert.equal(yield* statusOf("mine"), "queued");
     }),
   );
 });

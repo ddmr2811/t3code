@@ -41,9 +41,16 @@ export const layerFill = Layer.effectDiscard(
   }),
 ).pipe(Layer.provide(layer));
 
-/** The fork's hooks, or why a bot step cannot run here. */
-export const hooks = Effect.flatMap(Effect.serviceOption(ForkWorkflowLink), (link) =>
-  Option.isSome(link) && link.value.current !== undefined
-    ? Effect.succeed(link.value.current)
-    : Effect.fail("Bots are not available to workflows on this server."),
+/**
+ * The fork's hooks as a step reads them when it runs, or why it cannot: the engine starts before
+ * the fork's services and stops after them, so a step there fails and the run can be resumed.
+ */
+export const slot = Effect.map(Effect.serviceOption(ForkWorkflowLink), (link) =>
+  Effect.suspend(() =>
+    Option.isSome(link) && link.value.current !== undefined
+      ? Effect.succeed(link.value.current)
+      : Effect.fail("Bots are not available to workflows on this server right now."),
+  ),
 );
+
+export const hooks = Effect.flatten(slot);

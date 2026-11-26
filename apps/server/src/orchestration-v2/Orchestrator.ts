@@ -2576,7 +2576,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           queuedRunCancellationEvents(projection, storedQueuedRun, yield* DateTime.now),
         );
         projection = yield* readCommandProjection(threadId);
-        storedQueuedRun = nextQueuedRun(projection);
+        // A start asked for one run starts no other in its place.
+        storedQueuedRun =
+          options?.queuedRunId === undefined ? nextQueuedRun(projection) : undefined;
       }
       // A wake that outlived some of its pull requests tells only the current ones.
       const currentWake =
@@ -12136,6 +12138,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Queued run ${command.queuedRunId} is not queued.`,
+      });
+    }
+    // A sender's run steers no turn above its limit, as it starts none.
+    const steeredRun = projection.runs.find((candidate) => candidate.id === command.targetRunId);
+    const { modeLimit } = queuedRun;
+    if (
+      modeLimit !== undefined &&
+      [
+        projection.thread,
+        ...(steeredRun === undefined ? [] : [turnStartedModes(projection.attempts, steeredRun)]),
+      ].some((modes) => exceededDispatchModeLimit(modeLimit, modes) !== undefined)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Queued run ${queuedRun.id} may not run above ${modeLimit.runtimeMode}/${modeLimit.interactionMode}.`,
       });
     }
     const queuedRootNode =

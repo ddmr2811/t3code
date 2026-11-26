@@ -9,7 +9,7 @@ import { checkOptions } from "../../workflows/options.ts";
 import { RunContext, step } from "../../workflows/workflow.ts";
 import { ask } from "../../workflows/workflowAgent.ts";
 import { sortKeys } from "../integrations/ForkIntegrations.ts";
-import { hooks } from "./ForkWorkflowLink.ts";
+import { slot } from "./ForkWorkflowLink.ts";
 
 /** The exact call a question puts to the user, kept with the step so a yes runs only this. */
 const Asked = Schema.Struct({
@@ -58,19 +58,19 @@ export const integration = Effect.fn("workflow.integration")(function* (
   const input = { app: options.app, action: options.action, arguments: options.arguments };
   const call = { bot: options.bot, ...input };
   // Read in the body: a step's code sees only the step's own services.
-  const fork = yield* Effect.orDie(hooks);
+  const fork = yield* slot;
   const run = yield* RunContext;
   const first = yield* step(
     name,
     { returns: Outcome },
-    fork.callAsBot({ handle: options.bot }, input, false).pipe(
-      Effect.map(({ status, text, botId }) =>
-        status === "ask" && botId !== undefined
-          ? { status, text, asked: { ...call, botId } }
-          : { status, text },
-      ),
-      Effect.mapError((error) => error.message),
-    ),
+    Effect.gen(function* () {
+      const { status, text, botId } = yield* (yield* fork)
+        .callAsBot({ handle: options.bot }, input, false)
+        .pipe(Effect.mapError((error) => error.message));
+      return status === "ask" && botId !== undefined
+        ? { status, text, asked: { ...call, botId } }
+        : { status, text };
+    }),
   );
   if (first.status !== "ask" || first.asked === undefined) return first as IntegrationResult;
   const asked = first.asked;
@@ -103,13 +103,14 @@ export const integration = Effect.fn("workflow.integration")(function* (
   }
   // Counted before GitHub is called: a step resumed after a lost answer must not send it again.
   const yes = Effect.gen(function* () {
+    const bots = yield* fork;
     if ((yield* run.store.mark(run.runId, `${name}/si/enviado`)) > 1) {
       return {
         status: "unknown",
         text: "The yes was already sent once and its answer was lost; check the app before asking again.",
       } satisfies IntegrationResult;
     }
-    const { status, text } = yield* fork
+    const { status, text } = yield* bots
       .callAsBot(
         { id: asked.botId },
         { app: asked.app, action: asked.action, arguments: asked.arguments },

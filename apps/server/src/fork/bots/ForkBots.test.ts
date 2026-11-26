@@ -4,6 +4,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   FORK_BOTS_MAX_FILE_BYTES,
+  FORK_BOTS_PROTOCOL_VERSION,
   type ForkBotUpsertInput,
   MessageId,
   ProjectId,
@@ -47,6 +48,7 @@ import { agent } from "../../workflows/workflowAgent.ts";
 import { WorkflowAgents } from "../../workflows/WorkflowAgents.ts";
 import * as Workflows from "../../workflows/Workflows.ts";
 import { withWorkflowEngine } from "../workflows/engine.testkit.ts";
+import { integration } from "../workflows/integration.ts";
 import * as ForkBots from "./ForkBots.ts";
 import { FORK_BOTS_VETOES_PER_PROJECT } from "./store.ts";
 
@@ -174,7 +176,7 @@ const withBots = <A, E, R>(
               return Deferred.succeed(stall, undefined).pipe(Effect.andThen(Effect.never));
             return Effect.sync(() => {
               texts.push(input.initialMessage?.text ?? "");
-              const threadId = ThreadId.make(`thread-bot-${launched.length + 1}`);
+              const threadId = input.threadId ?? ThreadId.make(`thread-bot-${launched.length + 1}`);
               launched.push(threadId);
               liveThreads.add(threadId);
               threadModels.set(threadId, input.modelSelection);
@@ -352,6 +354,57 @@ const byThread = workflow(
       return continued.outcome;
     }),
 );
+
+/** One read as a bot, which needs the fork's services behind the engine. */
+const readAsBot = workflow(
+  "leer-como-bot",
+  { version: 1, payload: Schema.Struct({}), returns: Schema.String },
+  () =>
+    Effect.gen(function* () {
+      const read = yield* integration("leer", {
+        bot: "triaje",
+        app: "github",
+        action: "get_me",
+        arguments: {},
+      });
+      return read.status;
+    }),
+);
+
+/** Upstream's threads behind the fork's steps: what reaches them skips the bot's queue. */
+const upstreamAgents = (upstream: Array<string | undefined>) =>
+  WorkflowAgents.of({
+    start: (input) =>
+      Effect.sync(() => {
+        upstream.push(input.thread);
+        return { threadId: input.thread ?? "nuevo", turnId: input.key };
+      }),
+    result: () => Effect.succeed({ ending: "completed", detail: "", reply: "hecho" }),
+    interrupt: () => Effect.succeed("ended"),
+  });
+
+/** Runs `byThread` on `threadId`, with the bots behind the engine or, given none, without them. */
+const byThreadThrough = (service: ForkBots.ForkBots["Service"] | undefined, threadId: string) =>
+  Effect.gen(function* () {
+    const upstream: Array<string | undefined> = [];
+    const result = yield* withWorkflowEngine(
+      [byThread],
+      service === undefined
+        ? undefined
+        : {
+            workflowTurn: service.workflowTurn,
+            wasBotThread: service.wasBotThread,
+            callAsBot: () => Effect.die("not used"),
+          },
+      upstreamAgents(upstream),
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("por-hilo", { threadId }, { idempotencyKey: "1" });
+        return (yield* workflows.waitFor(runId, (run) => run.status === "completed")).result;
+      }),
+    );
+    return { result, upstream };
+  });
 
 const baseBot = {
   handle: "revisor",
@@ -917,50 +970,59 @@ describe("ForkBots", () => {
       ),
     );
 
-    it.live("a workflow does not continue by id a thread the bot has left", () =>
-      withBots(({ service }) =>
+    it.live(
+      "a workflow does not continue by id a thread a bot started, whatever the directory says now",
+      () =>
+        withBots(({ service, botsFile, fs }) =>
+          Effect.gen(function* () {
+            const bot = yield* service.upsert({
+              ...baseBot,
+              handle: "triaje",
+              runtimeMode: "auto",
+            });
+            const { threadId } = yield* service.sendMessage({ id: bot.id, text: "hola" });
+            // A directory restored from before the bot, or one whose last write was lost.
+            yield* fs.writeFileString(
+              botsFile,
+              JSON.stringify({ version: FORK_BOTS_PROTOCOL_VERSION, updatedAt: null, bots: [] }),
+            );
+            expect((yield* service.list({})).bots).toEqual([]);
+            const { result, upstream } = yield* byThreadThrough(service, threadId);
+            expect(result).toBe("failed");
+            expect(upstream).toEqual([]);
+          }),
+        ),
+    );
+
+    it.live("without the bots, a workflow continues no thread by id", () =>
+      Effect.gen(function* () {
+        const { result, upstream } = yield* byThreadThrough(undefined, "thread-de-alguien");
+        expect(result).toBe("failed");
+        expect(upstream).toEqual([]);
+      }),
+    );
+
+    it.live(
+      "without the bots, an integration step fails as a step, which a resume runs again",
+      () =>
         Effect.gen(function* () {
-          const bot = yield* service.upsert({ ...baseBot, handle: "triaje", runtimeMode: "auto" });
-          const { threadId } = yield* service.sendMessage({ id: bot.id, text: "hola" });
-          // Lowering the bot's mode leaves that thread in the mode it had.
-          yield* service.upsert({
-            ...baseBot,
-            id: bot.id,
-            handle: "triaje",
-            runtimeMode: "approval-required",
-          });
-          const upstream: Array<string | undefined> = [];
-          const agents = WorkflowAgents.of({
-            start: (input) =>
-              Effect.sync(() => {
-                upstream.push(input.thread);
-                return { threadId: input.thread ?? "nuevo", turnId: input.key };
-              }),
-            result: () => Effect.succeed({ ending: "completed", detail: "", reply: "hecho" }),
-            interrupt: () => Effect.succeed("ended"),
-          });
-          const result = yield* withWorkflowEngine(
-            [byThread],
-            {
-              workflowTurn: service.workflowTurn,
-              wasBotThread: service.wasBotThread,
-              callAsBot: () => Effect.die("not used"),
-            },
-            agents,
+          const steps = yield* withWorkflowEngine(
+            [readAsBot],
+            undefined,
+            upstreamAgents([]),
             Effect.gen(function* () {
               const workflows = yield* Workflows.Workflows;
               const { runId } = yield* workflows.start(
-                "por-hilo",
-                { threadId },
+                "leer-como-bot",
+                {},
                 { idempotencyKey: "1" },
               );
-              return (yield* workflows.waitFor(runId, (run) => run.status === "completed")).result;
+              yield* workflows.waitFor(runId, (current) => current.status === "paused");
+              return (yield* workflows.get(runId)).steps;
             }),
           );
-          expect(result).toBe("failed");
-          expect(upstream).toEqual([]);
+          expect(steps.find((step) => step.name === "leer")?.status).toBe("failed");
         }),
-      ),
     );
 
     it.effect("refuses an agent handing work to a bot that may do more in an outside app", () =>

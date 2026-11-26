@@ -22,15 +22,19 @@ export const layer = Layer.effect(
         const link = yield* Effect.option(hooks);
         if (input.bot === undefined) {
           // Continuing a bot's thread by its id would skip the bot's queue and its ceiling, and
-          // one the bot has left keeps the modes the bot had there.
-          if (
-            input.thread !== undefined &&
-            Option.isSome(link) &&
-            (yield* link.value.wasBotThread(ThreadId.make(input.thread)))
-          ) {
-            return yield* refused(
-              `Thread ${input.thread} is a bot's. Name the bot with \`bot\` instead of continuing its thread.`,
-            );
+          // one the bot has left keeps the modes the bot had there. Without the bots, no thread
+          // can be told apart, so none is continued.
+          if (input.thread !== undefined) {
+            if (Option.isNone(link)) {
+              return yield* refused(
+                "Bots are not available to workflows on this server right now, so no thread is continued.",
+              );
+            }
+            if (yield* link.value.wasBotThread(ThreadId.make(input.thread))) {
+              return yield* refused(
+                `Thread ${input.thread} is a bot's. Name the bot with \`bot\` instead of continuing its thread.`,
+              );
+            }
           }
           return yield* base.start(input);
         }
