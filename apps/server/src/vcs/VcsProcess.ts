@@ -142,6 +142,7 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
 
 // githooks(5). Git 2.54 also runs hooks set in its configuration, which `core.hooksPath` does not
 // reach; from 2.55 `hook.<event>.enabled=false` turns those off per event. 2.54 has no fixed switch.
+// Accepted risk: on exactly 2.54 configured hooks still run under these options (hosts run 2.43).
 const HOOK_EVENTS = [
   "applypatch-msg",
   "pre-applypatch",

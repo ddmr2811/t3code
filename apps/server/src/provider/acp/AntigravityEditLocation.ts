@@ -2,6 +2,11 @@
 import * as NodeFS from "node:fs";
 
 import { PositiveInt } from "@t3tools/contracts";
+import {
+  acpPathsStayWithinRoots,
+  type AcpRuntimePolicy,
+  resolveAcpPermissionPath,
+} from "@t3tools/provider-acp/server/clientPolicy";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch, type StructuredPatchHunk } from "diff";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -61,12 +66,21 @@ const pascalKeys = (value: unknown): unknown => {
   return result;
 };
 
-/** Reads a small file for snippet matching; edits to large or unreadable files stay unlocated. */
-export function readAntigravityPreEditFile(path: string): string | undefined {
+/** Reads a small file for snippet matching only when the thread may read it. */
+export function readAntigravityPreEditFile(
+  path: string,
+  runtimePolicy: AcpRuntimePolicy,
+  readRoots: ReadonlyArray<string> = [],
+): string | undefined {
+  const requested = resolveAcpPermissionPath(path, runtimePolicy.cwd ?? null);
+  if (requested === undefined) return undefined;
   try {
-    const stat = NodeFS.statSync(path);
+    // The file read is the one checked: symlinks resolve before `..`, as the system opens it.
+    const resolved = NodeFS.realpathSync.native(requested);
+    if (!acpPathsStayWithinRoots(runtimePolicy, readRoots, [resolved])) return undefined;
+    const stat = NodeFS.statSync(resolved);
     return stat.isFile() && stat.size <= PRE_EDIT_FILE_LIMIT
-      ? NodeFS.readFileSync(path, "utf8")
+      ? NodeFS.readFileSync(resolved, "utf8")
       : undefined;
   } catch {
     return undefined;

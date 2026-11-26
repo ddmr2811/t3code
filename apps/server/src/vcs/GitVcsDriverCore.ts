@@ -4978,6 +4978,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : yield* fileSystem.makeTempFileScoped({ prefix });
     const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
     const tempIndexConfig = [
+      // Every write to the disposable index can fire `post-index-change`.
+      ...NO_HOOKS_GIT_ARGS,
       "-c",
       "core.splitIndex=false",
       "-c",
@@ -4995,9 +4997,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : 0;
         yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
       } else {
-        yield* executeGit("GitVcsDriver.review.emptyIndex", cwd, ["read-tree", "--empty"], {
-          env,
-        });
+        yield* executeGit(
+          "GitVcsDriver.review.emptyIndex",
+          cwd,
+          [...tempIndexConfig, "read-tree", "--empty"],
+          { env },
+        );
       }
       yield* executeGit(
         "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.expandSplitIndex",
@@ -5257,7 +5262,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
         // Plumbing: porcelain diff refreshes and rewrites the real index, taking index.lock.
-        ["diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [
+          ...(untracked.env === undefined ? [] : NO_HOOKS_GIT_ARGS),
+          "diff-index",
+          "-M",
+          "--numstat",
+          "-z",
+          ref,
+          "--",
+        ],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
@@ -5610,11 +5623,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...REVIEW_DIFF_ARGS,
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
     ];
+    // Git refreshes and rewrites the disposable index while it diffs against it.
+    const privateIndexDiffArgs = (env?: NodeJS.ProcessEnv) =>
+      env === undefined ? diffArgs : [...NO_HOOKS_GIT_ARGS, ...diffArgs];
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
       ref: string,
       env?: NodeJS.ProcessEnv,
     ) {
-      const args = [...diffArgs, "--raw", "--numstat", "-z"];
+      const args = [...privateIndexDiffArgs(env), "--raw", "--numstat", "-z"];
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
         cwd,
@@ -5670,7 +5686,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
         cwd,
-        [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
+        [...privateIndexDiffArgs(env), "--patch", stat.ref, "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true, env },
       );
       return { ...patch, files: stat.files };

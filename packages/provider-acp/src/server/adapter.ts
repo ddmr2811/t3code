@@ -110,6 +110,7 @@ import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpChangedPathsOfToolCall,
+  acpCopySourcesOfToolCall,
   acpPermissionDisposition,
   mergeAcpChangedPaths,
   type AcpPermissionDisposition,
@@ -680,7 +681,10 @@ export interface AcpAdapterV2Flavor {
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
-  readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  readonly normalizeToolCall?: (
+    toolCall: AcpToolCallState,
+    turn?: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "threadId" | "runtimePolicy">,
+  ) => AcpToolCallState;
   readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
@@ -2005,6 +2009,14 @@ interface ActiveAcpSubagent {
   // ACP has no interrupted tool status; keep forced interruption across late updates.
   readonly interruptedToolIds: Set<string>;
   readonly toolSessionIds: Map<string, string>;
+}
+
+// Tool ids are only unique within a session, and a child can report tools of a session of its own.
+function subagentToolKey(subagent: ActiveAcpSubagent, sessionId: string, toolCallId: string) {
+  const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+  return sessionId === subagent.childSessionId
+    ? `${nativeTaskId}:tool:${toolCallId}`
+    : `${nativeTaskId}:session:${sessionId}:tool:${toolCallId}`;
 }
 
 interface AcpNativeChildSession {
@@ -3765,23 +3777,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           owner?: ActiveAcpTurn,
         ) {
-          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-          const key =
-            sessionId === subagent.childSessionId
-              ? `${nativeTaskId}:tool:${toolCall.toolCallId}`
-              : `${nativeTaskId}:session:${sessionId}:tool:${toolCall.toolCallId}`;
+          const key = subagentToolKey(subagent, sessionId, toolCall.toolCallId);
           const context = subagent.toolState;
           const rootSessionId = yield* Ref.get(activeSessionId);
           subagent.toolSessionIds.set(key, sessionId);
           const previous = context.tools.get(key);
           if ("sessionUpdate" in toolCall) {
-            if (toolCall.content.type !== "content") return;
-            const text = acpContentBlockDisplayText(toolCall.content.content);
-            if (text === undefined || text.length === 0) return;
-            toolCall = {
-              toolCallId: toolCall.toolCallId,
-              data: { content: appendToolContentText(previous?.data.content, text) },
-            };
+            if (toolCall.content.type === "content") {
+              const text = acpContentBlockDisplayText(toolCall.content.content);
+              if (text === undefined || text.length === 0) return;
+              toolCall = {
+                toolCallId: toolCall.toolCallId,
+                data: { content: appendToolContentText(previous?.data.content, text) },
+              };
+            } else {
+              // A diff chunk names the files the call changes and copies; policy reads them.
+              const changedPaths = acpChangedPathsOfToolCall({ content: [toolCall.content] });
+              if (changedPaths !== "unknown" && changedPaths.length === 0) return;
+              toolCall = {
+                toolCallId: toolCall.toolCallId,
+                changedPaths,
+                copySources: acpCopySourcesOfToolCall({ content: [toolCall.content] }),
+                data: {},
+              };
+            }
           }
           const merged = mergeToolCallState(previous, toolCall);
           projectedStatus ??= owner === undefined ? undefined : stoppedToolStatus(owner, merged);
@@ -4666,7 +4685,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const normalized = flavor.normalizeToolCall?.(merged, context.input) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
           const backgroundCommandTaskId =
             flavor.isBackgroundCommandTool?.(normalized) === true
@@ -6500,6 +6519,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : undefined;
               // A diff chunk names files the call changes; the tracked call keeps them for policy.
               const chunkPaths = acpChangedPathsOfToolCall({ content: [update.content] });
+              // A copy also reads its source, which the read checks need.
+              const chunkSources = acpCopySourcesOfToolCall({ content: [update.content] });
               const namesPaths = chunkPaths === "unknown" || chunkPaths.length > 0;
               if (text !== undefined || namesPaths) {
                 const stored: AcpToolCallState = context.tools.get(update.toolCallId) ?? {
@@ -6511,6 +6532,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? {
                       ...stored,
                       changedPaths: mergeAcpChangedPaths(stored.changedPaths, chunkPaths),
+                      copySources: mergeAcpChangedPaths(stored.copySources, chunkSources),
                     }
                   : stored;
                 // Text chunks extend the content list so a later content replacement still shows.
@@ -7687,9 +7709,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ? acpPermissionDisposition(policy, request)
                   : flavor.permissionDisposition(policy, request, input.threadId);
               // Kiro leaves the kind off the permission request for a `tool_call` it already
-              // sent, so policy takes it and the call's changed paths from that tool. Tool ids
-              // are only unique within a session and these are the root session's tools, so
-              // callers pass no tool for another session's request.
+              // sent, so policy takes it and the call's changed paths from that tool: the root
+              // session's, or the child session's own. A request whose call was never tracked is
+              // asked about.
+              const policyTool = (context: ActiveAcpTurn | null, rootSessionId: string | null) => {
+                const id = params.toolCall.toolCallId;
+                if (params.sessionId === rootSessionId) return context?.tools.get(id);
+                const subagent = context?.subagentsBySessionId.get(params.sessionId);
+                return (
+                  (subagent &&
+                    subagent.toolState.tools.get(
+                      subagentToolKey(subagent, params.sessionId, id),
+                    )) ??
+                  withUnknownChangedPaths(undefined, id)
+                );
+              };
               const policyRequest = (knownTool: AcpToolCallState | undefined) =>
                 withTrackedChangedPaths(
                   params.toolCall.kind == null && knownTool?.kind !== undefined
@@ -7699,10 +7733,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ? withUnknownChangedPaths(knownTool, params.toolCall.toolCallId)
                     : knownTool,
                 );
-              const arrivalTool =
-                trackedTurn !== null && params.sessionId === (yield* Ref.get(activeSessionId))
-                  ? trackedTurn.tools.get(params.toolCall.toolCallId)
-                  : undefined;
+              const arrivalTool = policyTool(trackedTurn, yield* Ref.get(activeSessionId));
               if (
                 (followsAgentWorkState &&
                   dispositionFor(latestRuntimePolicy, policyRequest(arrivalTool)) === "ask") ||
@@ -7719,11 +7750,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : yield* activeContext;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    policyRequest(
-                      params.sessionId === (yield* Ref.get(activeSessionId))
-                        ? context?.tools.get(params.toolCall.toolCallId)
-                        : undefined,
-                    ),
+                    policyRequest(policyTool(context, yield* Ref.get(activeSessionId))),
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(answerableParams);

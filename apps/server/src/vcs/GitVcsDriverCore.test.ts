@@ -797,6 +797,46 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["missing", "split"] as const)(
+  "runs no post-index-change hook with a %s index while preparing an untracked review diff",
+  (indexKind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        if (indexKind === "missing") {
+          yield* fileSystem.remove(NodePath.join(cwd, ".git", "index"));
+        } else {
+          yield* git(cwd, ["config", "core.splitIndex", "true"]);
+          yield* git(cwd, ["update-index", "--split-index"]);
+        }
+        const ran = NodePath.join(yield* makeTmpDir("git-review-hook-ran-"), "ran");
+        const hook = NodePath.join(cwd, "hooks", "post-index-change");
+        yield* writeTextFile(
+          cwd,
+          "hooks/post-index-change",
+          `#!/bin/sh\nps -o args= -p $PPID >> '${ran}'\n`,
+        );
+        yield* fileSystem.chmod(hook, 0o755);
+        yield* git(cwd, ["config", "core.hooksPath", "hooks"]);
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+
+        assert.include(
+          preview.sources.flatMap((source) => source.files?.map((file) => file.path) ?? []),
+          "new.txt",
+        );
+        assert.isFalse(
+          yield* fileSystem.exists(ran),
+          NodeFS.existsSync(ran) ? NodeFS.readFileSync(ran, "utf8") : undefined,
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["an existing", "a new"] as const)(
   "follows a checkout of %s branch made outside the driver after refs were cached",
   (branch) =>
