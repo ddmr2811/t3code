@@ -5,8 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 
 import { WorkflowAgentError, WorkflowAgents } from "../../workflows/WorkflowAgents.ts";
+import { isBotThreadId } from "../bots/ForkBots.ts";
 import { hooks } from "./ForkWorkflowLink.ts";
 
 const refused = (reason: string) => new WorkflowAgentError({ reason });
@@ -19,18 +21,16 @@ export const layer = Layer.effect(
     return WorkflowAgents.of({
       ...base,
       start: Effect.fn("ForkWorkflowAgents.start")(function* (input) {
-        const link = yield* Effect.option(hooks);
         if (input.bot === undefined) {
           // Continuing a bot's thread by its id would skip the bot's queue and its ceiling, and
-          // one the bot has left keeps the modes the bot had there. Without the bots, no thread
-          // can be told apart, so none is continued.
+          // one the bot has left keeps the modes the bot had there.
           if (input.thread !== undefined) {
-            if (Option.isNone(link)) {
-              return yield* refused(
-                "Bots are not available to workflows on this server right now, so no thread is continued.",
-              );
-            }
-            if (yield* link.value.wasBotThread(ThreadId.make(input.thread))) {
+            const threadId = ThreadId.make(input.thread);
+            const link = yield* Effect.option(hooks);
+            if (
+              isBotThreadId(threadId) ||
+              (Option.isSome(link) && (yield* link.value.wasBotThread(threadId)))
+            ) {
               return yield* refused(
                 `Thread ${input.thread} is a bot's. Name the bot with \`bot\` instead of continuing its thread.`,
               );
@@ -38,9 +38,12 @@ export const layer = Layer.effect(
           }
           return yield* base.start(input);
         }
-        if (Option.isNone(link))
-          return yield* refused("Bots are not available to workflows on this server.");
-        const fork = link.value;
+        // The engine starts before the bots' services: a bot's step waits for them a while.
+        const fork = yield* hooks.pipe(
+          Effect.retry(Schedule.spaced("200 millis")),
+          Effect.timeout("30 seconds"),
+          Effect.mapError(() => refused("Bots are not available to workflows on this server.")),
+        );
         const hash = yield* digest
           .digest(Digest.sha256, new TextEncoder().encode(input.key))
           .pipe(Effect.mapError(() => refused("Could not derive the turn's id.")));

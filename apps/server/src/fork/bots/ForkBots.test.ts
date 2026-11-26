@@ -994,11 +994,19 @@ describe("ForkBots", () => {
         ),
     );
 
-    it.live("without the bots, a workflow continues no thread by id", () =>
+    it.live("without the bots, a workflow still continues any thread but a bot's", () =>
       Effect.gen(function* () {
-        const { result, upstream } = yield* byThreadThrough(undefined, "thread-de-alguien");
-        expect(result).toBe("failed");
-        expect(upstream).toEqual([]);
+        for (const [threadId, continued] of [
+          ["thread-de-alguien", true],
+          ["fork-bot-thread:fork-bot-launch:triaje:1", false],
+        ] as const) {
+          const { result, upstream } = yield* byThreadThrough(undefined, threadId);
+          expect({ threadId, result, upstream }).toEqual({
+            threadId,
+            result: continued ? "done" : "failed",
+            upstream: continued ? [threadId] : [],
+          });
+        }
       }),
     );
 

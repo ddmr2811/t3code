@@ -348,6 +348,8 @@ function providerIsSelectable(provider: ServerProvider): boolean {
 
 /** A bot's thread says so in its id, which it keeps when the bot leaves it. */
 const BOT_THREAD_PREFIX = "fork-bot-thread:";
+/** Known without the bots' services, which a workflow may run before or after. */
+export const isBotThreadId = (threadId: string) => threadId.startsWith(BOT_THREAD_PREFIX);
 
 const make = Effect.gen(function* () {
   const rawStore = yield* makeForkJsonFileStore({
@@ -1522,7 +1524,7 @@ const make = Effect.gen(function* () {
       return (yield* Ref.get(botThreads)).has(threadId);
     }),
     wasBotThread: Effect.fnUntraced(function* (threadId: ThreadId) {
-      return threadId.startsWith(BOT_THREAD_PREFIX) || (yield* Ref.get(botThreads)).has(threadId);
+      return isBotThreadId(threadId) || (yield* Ref.get(botThreads)).has(threadId);
     }),
     // Untraced: /mcp calls it on every tool list a bot's thread asks for.
     noteHandoffToolsListed: Effect.fnUntraced(function* (
