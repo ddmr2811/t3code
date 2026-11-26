@@ -6,6 +6,7 @@ import { UserCircleIcon } from "@phosphor-icons/react/dist/csr/UserCircle";
 import { KanbanIcon } from "@phosphor-icons/react/dist/csr/Kanban";
 import { PlugsIcon } from "@phosphor-icons/react/dist/csr/Plugs";
 import { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
+import { TargetIcon } from "@phosphor-icons/react/dist/csr/Target";
 import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -24,6 +25,7 @@ import { ExtensionPanel, MachineExtensions } from "../extensions/Extensions.tsx"
 import { allFailoverStatesAtom } from "../failover/failover.state.ts";
 import { FailoverPanel } from "../failover/FailoverPanel.tsx";
 import { Home } from "../home/Home.tsx";
+import { Missions } from "../missions/Missions.tsx";
 import { useMachineStatus } from "../Machines.tsx";
 import {
   closePanelsOnPhone,
@@ -39,7 +41,15 @@ import { GastoView } from "./Gasto.tsx";
 import { SpendCard } from "./Spend.tsx";
 import { limitAccountsAtom } from "./spend.state.ts";
 
-export type View = "inicio" | "resumen" | "gasto" | "proyectos" | "tablero" | "respaldo" | "bots";
+export type View =
+  | "inicio"
+  | "resumen"
+  | "gasto"
+  | "proyectos"
+  | "tablero"
+  | "misiones"
+  | "respaldo"
+  | "bots";
 
 // The view lives in `?vista=` beside `?hilo=`. Choosing a view also closes the open thread, in
 // one history entry; the popstate tells the thread's atom to read the address again.
@@ -49,6 +59,7 @@ const readView = (): View => {
     value === "resumen" ||
     value === "gasto" ||
     value === "tablero" ||
+    value === "misiones" ||
     value === "proyectos" ||
     value === "respaldo" ||
     value === "bots"
@@ -72,6 +83,7 @@ export const viewAtom = Atom.writable(
     if (view === "inicio") url.searchParams.delete("vista");
     else url.searchParams.set("vista", view);
     url.searchParams.delete("hilo");
+    url.searchParams.delete("mision");
     if (url.href === window.location.href) return;
     window.history.pushState(null, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
@@ -118,6 +130,7 @@ export const VIEW_LINKS = [
   { target: "gasto", label: "Gasto", Icon: ChartBarIcon },
   { target: "proyectos", label: "Proyectos", Icon: FoldersIcon },
   { target: "tablero", label: "Tablero", Icon: KanbanIcon },
+  { target: "misiones", label: "Misiones", Icon: TargetIcon },
   { target: "bots", label: "Bots", Icon: UserCircleIcon },
   { target: "respaldo", label: "Respaldo", Icon: ArrowsLeftRightIcon },
 ] as const;
@@ -538,5 +551,6 @@ export function Overview() {
   if (view === "bots") return <BotsView />;
   if (view === "respaldo") return <FailoverPanel />;
   if (view === "gasto") return <GastoView />;
+  if (view === "misiones") return <Missions />;
   return view === "tablero" ? <Board /> : <Summary />;
 }

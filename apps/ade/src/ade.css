@@ -2244,7 +2244,15 @@ button.ade-subagent:hover .ade-subagent-open {
 }
 
 /* Inicio, Resumen, Proyectos and Tablero: hairlines and tonal steps, colour only for what needs you or is full. */
-.ade-main:has(.ade-home, .ade-summary, .ade-gasto, .ade-board, .ade-projects) {
+.ade-main:has(
+  .ade-home,
+  .ade-summary,
+  .ade-gasto,
+  .ade-board,
+  .ade-projects,
+  .ade-missions,
+  .ade-mission
+) {
   place-items: stretch;
 }
 
@@ -5485,4 +5493,523 @@ button.ade-subagent:hover .ade-subagent-open {
 
 .ade-tray .ade-button-quiet {
   margin-top: 0;
+}
+
+/* Misiones: un run de Workflows como chat + tablero. Un solo acento, para lo que espera al usuario. */
+.ade-missions {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  width: 100%;
+  max-width: 960px;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 32px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.ade-missions-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ade-missions-header p,
+.ade-missions-empty,
+.ade-mission-note {
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-missions-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-mission-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "icon title state" "icon meta state";
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-bg);
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out;
+}
+
+.ade-mission-row:hover,
+.ade-mission-row:focus-visible {
+  border-color: color-mix(in srgb, var(--ade-text) 24%, var(--ade-border));
+  background: var(--ade-surface);
+}
+
+.ade-mission-row-icon {
+  grid-area: icon;
+  color: var(--ade-text-tertiary);
+}
+
+.ade-mission-row-title {
+  grid-area: title;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-mission-row-meta {
+  grid-area: meta;
+  overflow: hidden;
+  color: var(--ade-text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-mission-row .ade-mission-state {
+  grid-area: state;
+}
+
+.ade-mission-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ade-mission-state::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+}
+
+.ade-mission-state:is([data-tone="you"], [data-tone="working"]) {
+  color: var(--ade-accent);
+}
+
+.ade-mission-state[data-tone="done"] {
+  color: var(--ade-ok);
+}
+
+.ade-mission-state[data-tone="failed"] {
+  color: var(--ade-danger);
+}
+
+.ade-mission {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.ade-mission-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px 16px;
+  padding: 16px 24px 18px;
+  border-bottom: 1px solid var(--ade-divider);
+}
+
+.ade-mission-back {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: 0;
+  padding: 4px 8px 4px 6px;
+  border-color: transparent;
+}
+
+.ade-missions > .ade-mission-back {
+  margin: 0;
+}
+
+.ade-mission-heading h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ade-mission-goal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.ade-mission-goal svg {
+  color: var(--ade-accent);
+}
+
+.ade-mission-machine {
+  color: var(--ade-text-tertiary);
+  font-weight: 400;
+}
+
+.ade-mission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.ade-mission-actions .ade-button-quiet {
+  margin: 0;
+}
+
+.ade-mission-crew {
+  display: inline-flex;
+}
+
+.ade-mission-crew .ade-bot-avatar {
+  border: 2px solid var(--ade-canvas);
+}
+
+.ade-mission-crew .ade-bot-avatar + .ade-bot-avatar {
+  margin-left: -8px;
+}
+
+.ade-mission-detail {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ade-text-muted);
+  font-size: 13px;
+}
+
+.ade-mission-detail[data-tone="failed"] {
+  color: var(--ade-danger);
+}
+
+.ade-mission-body {
+  display: grid;
+  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.ade-mission-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--ade-divider);
+}
+
+.ade-mission-chat-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px 8px;
+}
+
+.ade-mission-chat-header .ade-button-quiet {
+  margin: 0;
+}
+
+.ade-mission-chat-header .ade-bot-avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.ade-mission-chat-name {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ade-mission-chat-role {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ade-text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ade-mission-chat .ade-timeline {
+  padding: 0 20px;
+}
+
+.ade-mission-chat .ade-composer {
+  padding: 12px 16px 16px;
+}
+
+.ade-mission-flow-icon {
+  color: var(--ade-text-tertiary);
+}
+
+.ade-mission-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  align-items: start;
+  gap: 12px;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.ade-mission-column {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 160px;
+  padding: 12px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--ade-radius-lg);
+}
+
+.ade-mission-column[data-column="you"]:not([data-empty]) {
+  align-self: stretch;
+  border-color: color-mix(in srgb, var(--ade-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--ade-accent) 7%, transparent);
+}
+
+.ade-mission-column h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ade-mission-column h2 > span:last-child {
+  margin-left: auto;
+  color: var(--ade-text-tertiary);
+  font: 12px var(--ade-font-mono);
+}
+
+.ade-mission-dot {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--ade-text-tertiary);
+  border-radius: 999px;
+}
+
+.ade-mission-column[data-column="doing"] .ade-mission-dot {
+  border-color: var(--ade-accent);
+  background: linear-gradient(90deg, var(--ade-accent) 50%, transparent 50%);
+}
+
+.ade-mission-column[data-column="you"] .ade-mission-dot {
+  border-color: var(--ade-accent);
+  background: var(--ade-accent);
+}
+
+.ade-mission-column[data-column="done"] .ade-mission-dot {
+  border-color: var(--ade-ok);
+  background: var(--ade-ok);
+}
+
+.ade-mission-column ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ade-mission-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--ade-border);
+  border-radius: var(--ade-radius-md);
+  background: var(--ade-surface);
+}
+
+.ade-mission-card[data-selected] {
+  border-color: color-mix(in srgb, var(--ade-text) 40%, var(--ade-border));
+}
+
+.ade-mission-card-main {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--ade-text);
+  font: inherit;
+  text-align: left;
+}
+
+button.ade-mission-card-main {
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+button.ade-mission-card-main:hover,
+button.ade-mission-card-main:focus-visible {
+  background: color-mix(in srgb, var(--ade-text) 5%, transparent);
+}
+
+.ade-mission-card h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.ade-mission-card-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ade-text-muted);
+  font-size: 12px;
+}
+
+.ade-mission-card-who .ade-bot-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.ade-mission-card-status {
+  color: var(--ade-text-tertiary);
+}
+
+.ade-mission-card-status::before {
+  margin-right: 6px;
+  content: "·";
+}
+
+.ade-mission-card-status:is([data-face="needs-you"], [data-face="working"]) {
+  color: var(--ade-accent);
+}
+
+.ade-mission-card-status[data-face="error"] {
+  color: var(--ade-danger);
+}
+
+/* La tarjeta de la bandeja, en el sitio: sin su marco ni su línea de máquina, que ya da la cabecera. */
+.ade-mission-card .ade-decision-top {
+  display: none;
+}
+
+.ade-mission-card .ade-decision {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-top: 1px solid var(--ade-divider);
+  border-radius: 0;
+  background: none;
+}
+
+@media (max-width: 1199px) {
+  .ade-mission-body {
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  }
+
+  .ade-mission-board {
+    grid-template-columns: repeat(4, minmax(220px, 260px));
+  }
+}
+
+@media (max-width: 720px) {
+  .ade-missions {
+    padding: 16px;
+  }
+
+  .ade-mission-row {
+    min-height: 44px;
+  }
+
+  .ade-mission {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .ade-mission-header {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px 16px 14px;
+  }
+
+  .ade-mission-back {
+    min-height: 44px;
+  }
+
+  .ade-mission-actions {
+    justify-content: flex-start;
+  }
+
+  .ade-mission-actions :is(.ade-button, .ade-button-quiet) {
+    min-height: 44px;
+  }
+
+  .ade-mission-tabs {
+    flex: 1;
+    align-content: start;
+    min-height: 0;
+    padding: 12px 16px 16px;
+  }
+
+  .ade-mission-board {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0;
+    overflow: visible;
+  }
+
+  .ade-mission-column {
+    min-height: 0;
+  }
+
+  .ade-mission-column[data-empty] ul {
+    display: none;
+  }
+
+  .ade-mission-chat-panel {
+    display: flex;
+    min-height: 60svh;
+  }
+
+  .ade-mission-chat {
+    flex: 1;
+    border: 1px solid var(--ade-divider);
+    border-radius: var(--ade-radius-lg);
+  }
+
+  .ade-mission-chat-header {
+    padding: 12px;
+  }
+
+  .ade-mission-chat-header .ade-button-quiet {
+    min-height: 44px;
+  }
+
+  .ade-mission-chat .ade-timeline {
+    padding: 0 12px;
+  }
 }
