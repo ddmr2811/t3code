@@ -85,7 +85,10 @@ export function MemoryView() {
 
 function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   const { environmentId, project } = props.target;
-  const query = forkMemoryListQuery({ environmentId, input: { projectId: project.id } });
+  const query = forkMemoryListQuery({
+    environmentId,
+    input: { projectId: project.id, includePrevious: true },
+  });
   const result = useAtomValue(query);
   const bots = useAtomValue(allBotsAtom).byEnv.get(environmentId) ?? [];
 
@@ -233,6 +236,8 @@ function Correction(props: {
   now: number;
 }) {
   const { environmentId, memory, projectId, coordinatorThreadId } = props;
+  // What this screen shows; the server refuses a change made against an older one.
+  const revision = memory.revision ?? 0;
   const registry = useContext(RegistryContext);
   const canCorrect = useAtomValue(forkMemoryCorrectCommand.permissionAtom(environmentId)) === true;
   const canRestore = useAtomValue(forkMemoryRestoreCommand.permissionAtom(environmentId)) === true;
@@ -242,17 +247,20 @@ function Correction(props: {
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const refresh = () =>
-    registry.refresh(forkMemoryListQuery({ environmentId, input: { projectId } }));
+    registry.refresh(
+      forkMemoryListQuery({ environmentId, input: { projectId, includePrevious: true } }),
+    );
 
   const apply = async () => {
     const text = oneLine(draft);
-    if (text === "") return;
+    // The busy check stops a second Enter; the revision stops one from another screen.
+    if (text === "" || busy || blocked !== null) return;
     setBusy(true);
     setError(null);
     const failure = await runCommand(
       registry,
       forkMemoryCorrectCommand,
-      { environmentId, input: { projectId, text } },
+      { environmentId, input: { projectId, text, revision } },
       "No se pudo enviar la corrección",
       (result) =>
         setSent(
@@ -267,7 +275,8 @@ function Correction(props: {
     refresh();
   };
 
-  const restore = async (revision: number) => {
+  const restore = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     const failure = await runCommand(
@@ -320,7 +329,7 @@ function Correction(props: {
             placeholder="«El pack cuesta 1.800 €, con una revisión incluida»"
             rows={2}
             maxLength={FORK_MEMORY_NOTE_MAX_LENGTH}
-            disabled={blocked !== null}
+            disabled={busy || blocked !== null}
           />
           <div className="ade-memory-correct-row">
             <span className="ade-memory-hint">
@@ -401,7 +410,7 @@ function Correction(props: {
               type="button"
               className="ade-button-quiet m-0!"
               disabled={busy || !canRestore || changes.length === 0}
-              onClick={() => void restore(previous.revision)}
+              onClick={() => void restore()}
             >
               <ArrowCounterClockwiseIcon size={15} aria-hidden />
               Volver a la revisión {previous.revision}

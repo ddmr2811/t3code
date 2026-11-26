@@ -1606,7 +1606,8 @@ describe("ForkBots", () => {
             { projectId: projectB, text: "Nota de B.", inclusion: "searchable" },
             "agent",
           );
-          const correction = { projectId: projectA, text: "El pack cuesta 1.800 €." };
+          const correction = { projectId: projectA, text: "El pack cuesta 1.800 €.", revision: 1 };
+          const kept = () => memory.list({ projectId: projectA, includePrevious: true });
 
           const operator = yield* client([
             AuthOrchestrationReadScope,
@@ -1616,7 +1617,7 @@ describe("ForkBots", () => {
           expect(
             yield* operator[WS_METHODS.forkMemoryCorrect](correction).pipe(Effect.flip),
           ).toMatchObject({ _tag: "ForkBotsError", reason: "notFound" });
-          expect((yield* memory.list({ projectId: projectA })).previous).toBeUndefined();
+          expect((yield* kept()).previous).toBeUndefined();
           yield* service.upsert({ ...baseBot, coordinator: true });
 
           const reader = yield* client([AuthOrchestrationReadScope]);
@@ -1632,13 +1633,18 @@ describe("ForkBots", () => {
               Effect.flip,
             ),
           ).toMatchObject(denied);
-          expect((yield* memory.list({ projectId: projectA })).previous).toBeUndefined();
+          expect((yield* kept()).previous).toBeUndefined();
           expect(texts.join("\n")).not.toContain("1.800");
 
           const sent = yield* operator[WS_METHODS.forkMemoryCorrect](correction);
           expect(texts.at(-1)).toContain("«El pack cuesta 1.800 €.»");
           expect(sent.previous).toMatchObject({ revision: 1, reason: "correction" });
           expect(sent.previous.notes.map((note) => note.text)).toEqual(["El pack cuesta 2.400 €."]);
+          // A second Enter carries the same revision, which the copy already moved.
+          expect(
+            yield* operator[WS_METHODS.forkMemoryCorrect](correction).pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ForkBotsError", reason: "conflict" });
+          expect(texts.filter((text) => text.includes("1.800"))).toHaveLength(1);
 
           // The coordinator's turn merges its note, as project_memory_save does.
           yield* memory.upsert(
@@ -1646,32 +1652,161 @@ describe("ForkBots", () => {
             "agent",
             [price.id],
           );
-          const corrected = yield* memory.list({ projectId: projectA });
-          expect(corrected.revision).toBe(2);
+          const corrected = yield* kept();
+          expect(corrected.revision).toBe(3);
+          // The Bots tab polls the notes alone.
+          expect((yield* memory.list({ projectId: projectA })).previous).toBeUndefined();
+
+          // A screen that read revision 2 has not seen the coordinator's save.
+          expect(
+            yield* operator[WS_METHODS.forkMemoryRestore]({
+              projectId: projectA,
+              revision: 2,
+            }).pipe(Effect.flip),
+          ).toMatchObject({ _tag: "ForkMemoryError", reason: "conflict" });
+          expect((yield* kept()).notes).toEqual(corrected.notes);
 
           const back = yield* operator[WS_METHODS.forkMemoryRestore]({
             projectId: projectA,
-            revision: sent.previous.revision,
+            revision: 3,
           });
-          expect(back.notes).toEqual([price]);
+          expect(back.notes).toEqual([{ ...price, origin: "user" }]);
           expect(back.previous?.notes.map((note) => note.text)).toEqual([
             "El pack cuesta 1.800 €.",
           ]);
           expect((yield* memory.list({ projectId: projectB })).notes).toEqual([other]);
-          // A screen still showing the version it just restored cannot restore it twice.
-          expect(
-            yield* operator[WS_METHODS.forkMemoryRestore]({
-              projectId: projectA,
-              revision: sent.previous.revision,
-            }).pipe(Effect.flip),
-          ).toMatchObject({ _tag: "ForkMemoryError", reason: "notFound" });
 
           // Going back is undone the same way.
           const again = yield* operator[WS_METHODS.forkMemoryRestore]({
             projectId: projectA,
-            revision: corrected.revision ?? 0,
+            revision: back.revision ?? 0,
           });
           expect(again.notes.map((note) => note.text)).toEqual(["El pack cuesta 1.800 €."]);
+        }),
+      ),
+    );
+
+    it.effect("keeps the earlier copy when the correction never reaches the coordinator", () =>
+      withBots(({ service, memory, settings, archivedThreads }) =>
+        Effect.gen(function* () {
+          yield* memory.upsert(
+            { projectId: projectA, text: "El pack cuesta 2.400 €.", inclusion: "searchable" },
+            "agent",
+          );
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          const first = yield* service.correctMemory({
+            projectId: projectA,
+            text: "El pack cuesta 1.800 €.",
+            revision: 1,
+          });
+          // Its thread is gone and its provider is off here, so a new thread cannot start.
+          archivedThreads.add(first.threadId);
+          settings.current = {
+            ...settings.current,
+            projectSettingsOverrides: {
+              [projectA]: { providerInstances: { [codex]: { enabled: false } } },
+            },
+          } as never;
+          yield* service
+            .correctMemory({ projectId: projectA, text: "Otra corrección.", revision: 2 })
+            .pipe(Effect.flip);
+          expect(yield* memory.list({ projectId: projectA, includePrevious: true })).toMatchObject({
+            revision: 2,
+            previous: { revision: 1, correction: "El pack cuesta 1.800 €." },
+          });
+        }),
+      ),
+    );
+
+    it.effect("refuses a correction whose coordinator stopped coordinating while it waited", () =>
+      withBots(({ service, memory, texts, stallNextLaunch }) =>
+        Effect.gen(function* () {
+          const coordinator = yield* service.upsert({ ...baseBot, coordinator: true });
+          // A first message holds the coordinator's lock; a demotion and the correction queue up.
+          const reached = yield* stallNextLaunch;
+          const stuck = yield* service
+            .sendMessage({ id: coordinator.id, text: "hola" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(reached);
+          const demoted = yield* service
+            .upsert({ ...baseBot, id: coordinator.id, coordinator: false })
+            .pipe(Effect.forkChild);
+          for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+          const correcting = yield* service
+            .correctMemory({ projectId: projectA, text: "Corrección de A.", revision: 0 })
+            .pipe(Effect.flip, Effect.forkChild);
+          for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+          yield* Fiber.interrupt(stuck);
+          yield* Fiber.join(demoted);
+          expect(yield* Fiber.join(correcting)).toMatchObject({ reason: "conflict" });
+          expect(
+            (yield* memory.list({ projectId: projectA, includePrevious: true })).previous,
+          ).toBeUndefined();
+          expect(texts.join("\n")).not.toContain("Corrección de A.");
+        }),
+      ),
+    );
+
+    it.effect("lets no late coordinator save merge away the notes the user went back to", () =>
+      withBots(({ service, memory }) =>
+        Effect.gen(function* () {
+          const price = yield* memory.upsert(
+            { projectId: projectA, text: "El pack cuesta 2.400 €.", inclusion: "searchable" },
+            "agent",
+          );
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          yield* service.correctMemory({ projectId: projectA, text: "1.800 €.", revision: 1 });
+          yield* memory.upsert(
+            { projectId: projectA, text: "El pack cuesta 1.800 €.", inclusion: "searchable" },
+            "agent",
+            [price.id],
+          );
+          yield* memory.restore({ projectId: projectA, revision: 3 });
+          // The same turn, still running, saves again over what the user restored.
+          expect(
+            yield* memory
+              .upsert(
+                { projectId: projectA, text: "El pack, 1.800 €.", inclusion: "searchable" },
+                "agent",
+                [price.id],
+              )
+              .pipe(Effect.flip),
+          ).toMatchObject({ reason: "invalidInput" });
+          expect((yield* memory.list({ projectId: projectA })).notes.map((n) => n.id)).toEqual([
+            price.id,
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("drops the kept copies of deleted projects when it keeps a new one", () =>
+      withBots(({ service, fs, forkDir }) =>
+        Effect.gen(function* () {
+          const gone = {
+            revision: 4,
+            updatedAt: "2026-11-20T10:00:00.000Z",
+            previous: {
+              revision: 3,
+              savedAt: "2026-11-20T10:00:00.000Z",
+              reason: "correction",
+              correction: "Una frase.",
+              notes: [],
+            },
+          };
+          yield* fs.makeDirectory(forkDir, { recursive: true });
+          yield* fs.writeFileString(
+            `${forkDir}/memory.json`,
+            JSON.stringify({
+              version: 1,
+              updatedAt: gone.updatedAt,
+              notes: [],
+              projects: { "proj-gone": gone },
+            }),
+          );
+          yield* service.upsert({ ...baseBot, coordinator: true });
+          yield* service.correctMemory({ projectId: projectA, text: "Una nota.", revision: 0 });
+          const stored = JSON.parse(yield* fs.readFileString(`${forkDir}/memory.json`));
+          expect(Object.keys(stored.projects)).toEqual([projectA]);
         }),
       ),
     );

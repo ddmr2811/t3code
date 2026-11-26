@@ -1031,16 +1031,29 @@ const make = Effect.gen(function* () {
       coordinator.id,
       Effect.gen(function* () {
         const bot = yield* readBot(coordinator.id);
+        // It may have moved, stopped coordinating or been archived while this waited for its lock.
+        if (!bot.coordinator || bot.archived || bot.projectId !== parsed.projectId) {
+          return yield* new ForkBotsError({
+            reason: "conflict",
+            message: `The coordinator of project ${parsed.projectId} changed; try again.`,
+          });
+        }
         // Kept before the coordinator can touch a note, so going back undoes all of it.
-        const previous = yield* memory
-          .checkpoint(parsed.projectId, parsed.text)
-          .pipe(Effect.mapError((error) => unavailable(error.message)));
+        const { previous, undo } = yield* memory
+          .checkpoint(parsed.projectId, parsed.text, parsed.revision)
+          .pipe(
+            Effect.mapError((error) =>
+              error.reason === "conflict"
+                ? new ForkBotsError({ reason: "conflict", message: error.message })
+                : unavailable(error.message),
+            ),
+          );
         const sent = yield* deliver(
           bot,
           memoryCorrectionMessage(parsed.text),
           { handoffHops: 0 },
           undefined,
-        );
+        ).pipe(Effect.onError(() => undo));
         return { threadId: sent.threadId, queued: sent.queued, handle: bot.handle, previous };
       }),
     );
