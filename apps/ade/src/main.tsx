@@ -16,6 +16,7 @@ import { createRoot } from "react-dom/client";
 import "./ade.css";
 import "./backroom/backroom.css";
 import "./backroom/screens.css";
+import { SideNav } from "./backroom/SideNav.tsx";
 import { BackgroundLayer, BackgroundPicker, useBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";
 import { connectionAtomRuntime, environmentCatalog } from "./connection/runtime.ts";
@@ -29,7 +30,7 @@ import {
   ConnectionSummary,
   hasInitialPairingRequest,
   MachinesSidebar,
-  RailConnectionIndicator,
+  MachineSwitch,
 } from "./Machines.tsx";
 import { Overview, viewAtom, ViewNav } from "./overview/Overview.tsx";
 import {
@@ -37,7 +38,6 @@ import {
   crowdedViewportAtom,
   narrowViewportAtom,
   NeedsYouBlock,
-  ProjectRail,
   SelectedThread,
   selectedThreadKeyAtom,
   ThreadTree,
@@ -223,6 +223,36 @@ function Shell() {
   const newThreadShortcutLabel = newThreadHint.text || "Ctrl+Shift+O";
   const isHome = hasMachines && !threadOpen && view === "inicio";
 
+  // The Backroom sidebar is the folded state; unfolding it shows the threads and the machines.
+  const sideNav = collapsed || (narrowViewport && hasMachines);
+  const sidebarToggle = (
+    <Tooltip>
+      <TooltipTrigger
+        type="button"
+        className="ade-icon-button ade-sidebar-toggle"
+        aria-label={collapsed ? "Ver hilos y máquinas" : "Volver al menú"}
+        aria-expanded={!collapsed}
+        aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
+        onClick={toggleSidebar}
+      >
+        <SidebarSimpleIcon size={17} aria-hidden />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={8} className="ade-rail-tooltip">
+        {collapsed ? "Hilos y máquinas" : "Menú"} · {shortcutLabel}
+      </TooltipContent>
+    </Tooltip>
+  );
+  const closeDrawer = (
+    <button
+      type="button"
+      className="ade-icon-button ade-mobile-drawer-close"
+      aria-label="Cerrar menú lateral"
+      onClick={() => setDrawerOpen(false)}
+    >
+      <XIcon size={18} aria-hidden />
+    </button>
+  );
+
   useEffect(
     () =>
       onMachinesChanged((environmentId) =>
@@ -241,92 +271,60 @@ function Shell() {
         data-sidebar={collapsed ? "collapsed" : "expanded"}
       >
         <aside className="ade-sidebar" aria-label="Barra lateral">
-          <div className="ade-brand-row">
-            <div className="ade-brand">
-              <AdeMark className="ade-brand-mark" />
-              {collapsed ? null : <span>ADE</span>}
-            </div>
-            <div className="ade-brand-actions">
-              {hasMachines && !collapsed ? <SearchButton variant="icon" /> : null}
-              {hasMachines && !collapsed ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    type="button"
-                    className="ade-icon-button ade-new-thread-button"
-                    aria-label="Nuevo hilo"
-                    aria-current={isHome ? "page" : undefined}
-                    aria-keyshortcuts={newThreadHint.ariaKeyshortcuts}
-                    onClick={openHome}
-                  >
-                    <NotePencilIcon size={17} aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={8} className="ade-rail-tooltip">
-                    Nuevo hilo · {newThreadShortcutLabel}
-                  </TooltipContent>
-                </Tooltip>
+          {sideNav ? (
+            <SideNav
+              brand={
+                <>
+                  <AdeMark className="ade-brand-mark" />
+                  <span>ADE</span>
+                  <SearchButton variant="icon" />
+                  {narrowViewport ? closeDrawer : sidebarToggle}
+                </>
+              }
+              isHome={isHome}
+              homeShortcut={newThreadHint.ariaKeyshortcuts}
+              onHome={openHome}
+              machines={<MachineSwitch onOpen={showMachines} />}
+              settings={<BackgroundPicker compact {...background} />}
+            >
+              {/* On a phone this is the drawer, so the threads and the machines stay in reach. */}
+              {narrowViewport ? (
+                <>
+                  <ThreadTree />
+                  <MachinesSidebar />
+                </>
               ) : null}
-              {hasMachines ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    type="button"
-                    className={
-                      collapsed
-                        ? "ade-rail-button ade-sidebar-toggle"
-                        : "ade-icon-button ade-sidebar-toggle"
-                    }
-                    aria-label={collapsed ? "Desplegar barra lateral" : "Recoger barra lateral"}
-                    aria-expanded={!collapsed}
-                    aria-keyshortcuts={toggleHint.ariaKeyshortcuts}
-                    onClick={toggleSidebar}
-                  >
-                    <SidebarSimpleIcon size={collapsed ? 19 : 17} aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-                    {collapsed ? "Desplegar" : "Recoger"} · {shortcutLabel}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-              {collapsed ? null : (
-                <button
-                  type="button"
-                  className="ade-icon-button ade-mobile-drawer-close"
-                  aria-label="Cerrar menú lateral"
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <XIcon size={18} aria-hidden />
-                </button>
-              )}
-            </div>
-          </div>
-          {collapsed ? (
-            <div className="ade-rail">
-              <Tooltip>
-                <TooltipTrigger
-                  type="button"
-                  className="ade-rail-button ade-new-thread-button"
-                  aria-label="Nuevo hilo"
-                  aria-current={isHome ? "page" : undefined}
-                  aria-keyshortcuts={newThreadHint.ariaKeyshortcuts}
-                  onClick={openHome}
-                >
-                  <NotePencilIcon size={19} aria-hidden />
-                </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-                  Nuevo hilo · {newThreadShortcutLabel}
-                </TooltipContent>
-              </Tooltip>
-              <SearchButton variant="rail" />
-              <NeedsYouBlock compact />
-              <ViewNav compact />
-              <span className="ade-rail-sep" aria-hidden />
-              <ProjectRail />
-              <div className="ade-rail-footer">
-                <RailConnectionIndicator onExpand={expandSidebar} />
-                <BackgroundPicker compact {...background} />
-              </div>
-            </div>
+            </SideNav>
           ) : (
             <>
+              <div className="ade-brand-row">
+                <div className="ade-brand">
+                  <AdeMark className="ade-brand-mark" />
+                  <span>ADE</span>
+                </div>
+                <div className="ade-brand-actions">
+                  {hasMachines ? <SearchButton variant="icon" /> : null}
+                  {hasMachines ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className="ade-icon-button ade-new-thread-button"
+                        aria-label="Nuevo hilo"
+                        aria-current={isHome ? "page" : undefined}
+                        aria-keyshortcuts={newThreadHint.ariaKeyshortcuts}
+                        onClick={openHome}
+                      >
+                        <NotePencilIcon size={17} aria-hidden />
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={8} className="ade-rail-tooltip">
+                        Nuevo hilo · {newThreadShortcutLabel}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                  {hasMachines ? sidebarToggle : null}
+                  {closeDrawer}
+                </div>
+              </div>
               <NeedsYouBlock />
               <ViewNav />
               <ThreadTree />

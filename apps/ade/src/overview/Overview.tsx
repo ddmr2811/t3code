@@ -14,7 +14,6 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { resolveThreadStatusKind } from "@t3tools/client-runtime/state/thread-status";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, PROVIDER_DISPLAY_NAMES, WS_METHODS } from "@t3tools/contracts";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { memo } from "react";
 
@@ -140,31 +139,10 @@ export const VIEW_LINKS = [
   { target: "respaldo", label: "Respaldo", Icon: ArrowsLeftRightIcon },
 ] as const;
 
-export function ViewNav(props: { compact?: boolean }) {
+export function ViewNav() {
   const [view, setView] = useAtom(viewAtom);
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const threadOpen = useAtomValue(selectedThreadKeyAtom) !== null;
-  if (props.compact) {
-    return (
-      <nav className="ade-rail-nav" aria-label="Vistas">
-        {VIEW_LINKS.map(({ target, label, Icon }) => (
-          <Tooltip key={target} type="label">
-            <TooltipTrigger
-              type="button"
-              className="ade-rail-button"
-              aria-current={!threadOpen && view === target ? "page" : undefined}
-              onClick={() => setView(target)}
-            >
-              <Icon size={19} aria-hidden />
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-              {label}
-            </TooltipContent>
-          </Tooltip>
-        ))}
-      </nav>
-    );
-  }
   return (
     <nav className="ade-views" aria-label="Vistas">
       {VIEW_LINKS.map(({ target, label, Icon }) => (

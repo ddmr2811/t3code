@@ -1,4 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { HardDrivesIcon } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
 import { TrashIcon } from "@phosphor-icons/react/dist/csr/Trash";
@@ -9,7 +10,6 @@ import {
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { readHostedPairingRequest } from "@t3tools/shared/remote";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -238,19 +238,34 @@ export function ConnectionSummary() {
   return <>{machines === 0 ? "Sin máquinas" : count(machines, "máquina")}</>;
 }
 
-/** Disconnected-machine dot in the collapsed rail footer; opens the sidebar to inspect machines. */
-export function RailConnectionIndicator(props: { onExpand: () => void }) {
+/** Backroom's business row, here the machines: what is connected, and the way to pair more. */
+export function MachineSwitch(props: { onOpen: () => void }) {
+  const labels = [...useAtomValue(environmentCatalog.catalogValueAtom).entries.values()].map(
+    (entry) => entry.target.label,
+  );
   const offline = useAtomValue(disconnectedMachinesAtom);
-  if (offline.length === 0) return null;
-  const label = `Sin conexión: ${offline.join(", ")}`;
+  const name = labels.length === 1 ? labels[0]! : count(labels.length, "máquina");
   return (
-    <Tooltip type="label">
-      <TooltipTrigger type="button" className="ade-rail-status" onClick={props.onExpand}>
-        <span className="ade-rail-status-dot" aria-hidden />
-      </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-        {label}
-      </TooltipContent>
-    </Tooltip>
+    <button
+      type="button"
+      className="v2-org"
+      aria-label={`Máquinas: ${name}`}
+      onClick={props.onOpen}
+    >
+      <span className="v2-org-mark" aria-hidden>
+        {name.charAt(0).toUpperCase()}
+      </span>
+      <span>
+        <strong>{name}</strong>
+        <small data-offline={offline.length > 0 || undefined}>
+          {offline.length > 0
+            ? `Sin conexión: ${offline.join(", ")}`
+            : labels.length === 1
+              ? "Conectada"
+              : "Conectadas"}
+        </small>
+      </span>
+      <CaretDownIcon size={14} aria-hidden />
+    </button>
   );
 }

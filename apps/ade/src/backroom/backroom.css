@@ -180,7 +180,7 @@
   width: 18px;
   height: 18px;
 }
-/* product-first/workspace-preview.css 1-78 */
+/* product-first/workspace-preview.css 1-297 */
 /* workspace-preview: public landing presentation only.
    Depth instead of borders. Three surfaces: the canvas holds the sidebar, a lighter panel holds the
    work, and cards float on the panel with layered soft shadows (at night: a lighter surface with a
@@ -259,6 +259,225 @@
   text-wrap: pretty;
 }
 
+/* Title bar: brand over the sidebar, search and notifications at the right. */
+.v2-app-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-right: 18px;
+}
+.v2-app-brand {
+  width: var(--app-side);
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-left: 20px;
+  font-weight: 650;
+  font-size: 17px;
+  letter-spacing: -0.04em;
+}
+.v2-app-brand > svg:first-child {
+  width: 21px;
+  height: 21px;
+}
+.v2-app-brand > svg:last-child {
+  margin-left: auto;
+  margin-right: 16px;
+  color: var(--app-faint);
+}
+.v2-app-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 240px;
+  height: 30px;
+  padding: 0 5px 0 11px;
+  border-radius: 999px;
+  background: var(--app-card);
+  box-shadow: var(--app-float-sm);
+  color: var(--app-faint);
+  font-size: 12.5px;
+}
+.v2-app-search kbd {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--app-fill);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--app-muted);
+}
+.v2-app-bell {
+  flex-shrink: 0;
+  color: var(--app-muted);
+}
+
+/* Sidebar on the canvas; the current view rises as a small card. */
+.v2-app-sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px 14px;
+}
+.v2-org {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 18px;
+}
+.v2-org-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(160deg, #5a4d3a, #2e281e);
+  box-shadow:
+    inset 0 1px 0 #ffffff29,
+    0 1px 2px #28221a33;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+.v2-org > span:nth-child(2) {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.v2-org strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.v2-org small {
+  font-size: 12px;
+  color: var(--app-muted);
+}
+.v2-org > svg {
+  margin-left: auto;
+  color: var(--app-faint);
+}
+.v2-app-nav {
+  display: grid;
+  gap: 2px;
+}
+.v2-app-nav > button,
+.v2-app-nav > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding-inline: 10px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--app-muted);
+}
+.v2-app-nav svg {
+  width: 16px;
+  height: 16px;
+  color: var(--app-faint);
+}
+.v2-app-nav > button:hover {
+  background: var(--app-hover);
+}
+.v2-app-nav > button[aria-pressed="true"] {
+  background: var(--app-card);
+  box-shadow: var(--app-float-sm);
+  color: var(--app-text);
+}
+.v2-app-nav > button[aria-pressed="true"] svg {
+  color: var(--app-text);
+}
+.v2-nav-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--app-hover);
+  color: var(--app-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.v2-team-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 10px 6px;
+  color: var(--app-faint);
+  font-size: 12px;
+  font-weight: 500;
+}
+.v2-sidebar-team {
+  display: grid;
+  gap: 2px;
+}
+.v2-sidebar-team > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding-inline: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.v2-sidebar-team .agent-avatar {
+  width: 20px;
+  height: 20px;
+}
+.v2-sidebar-team i {
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2fb37a;
+}
+.v2-app-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding: 10px 8px 0;
+}
+.v2-app-user > span {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #7c5b41, #4a3323);
+  color: #f3e9dc;
+  font-size: 13px;
+  font-weight: 600;
+}
+.v2-app-user > div {
+  display: grid;
+  gap: 1px;
+}
+.v2-app-user strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.v2-app-user small {
+  color: var(--app-muted);
+  font-size: 11.5px;
+}
+.v2-app-user > svg {
+  margin-left: auto;
+  color: var(--app-faint);
+}
 /* product-first/workspace-preview.css 299-786 */
 /* The work sits on one lighter panel, set into the canvas; main column and rail share it. */
 .v2-app-main {

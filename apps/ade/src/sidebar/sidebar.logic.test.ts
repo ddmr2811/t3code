@@ -6,8 +6,6 @@ import {
   groupThreads,
   listedThreads,
   projectMonogram,
-  lineageKey,
-  railProjects,
   readSidebarExpanded,
   threadState,
   writeSidebarExpanded,
@@ -212,49 +210,6 @@ describe("sidebar persistence", () => {
     expect(readSidebarExpanded(storage)).toBe(true);
     writeSidebarExpanded(false, storage);
     expect(readSidebarExpanded(storage)).toBe(false);
-  });
-});
-
-describe("railProjects", () => {
-  it("flags pending decisions only on operable machines and targets the waiting thread", () => {
-    const waiting = {
-      ...stateInput({ hasPendingApprovals: true }),
-      ...thread("a-wait", machineA, "web", "2026-11-22T10:00:00.000Z"),
-    };
-    const newer = {
-      ...stateInput(),
-      ...thread("a-new", machineA, "web", "2026-11-23T12:00:00.000Z"),
-    };
-    const readOnlyWaiting = {
-      ...stateInput({ hasPendingApprovals: true }),
-      ...thread("b-wait", machineB, "api", "2026-11-23T12:00:00.000Z"),
-    };
-    // Its only waiting thread is a subagent, which is not listed.
-    const subagentParent = {
-      ...stateInput(),
-      ...thread("a-docs", machineA, "docs", "2026-11-21T09:00:00.000Z"),
-    };
-    const docsNewer = {
-      ...stateInput(),
-      ...thread("a-docs-new", machineA, "docs", "2026-11-23T09:00:00.000Z"),
-    };
-    const projects = railProjects(
-      [newer, waiting, readOnlyWaiting, subagentParent, docsNewer],
-      [machineA, machineB],
-      new Set([machineA]),
-      new Set([lineageKey(waiting), lineageKey(readOnlyWaiting), lineageKey(subagentParent)]),
-    );
-    expect(
-      projects.map((project) => ({
-        projectId: project.projectId,
-        hasPendingDecision: project.hasPendingDecision,
-        primaryId: project.primaryThread.id,
-      })),
-    ).toEqual([
-      { projectId: "web", hasPendingDecision: true, primaryId: "a-wait" },
-      { projectId: "docs", hasPendingDecision: true, primaryId: "a-docs" },
-      { projectId: "api", hasPendingDecision: false, primaryId: "b-wait" },
-    ]);
   });
 });
 

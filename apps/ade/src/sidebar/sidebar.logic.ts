@@ -156,45 +156,6 @@ export function projectAccentColor(seed: string): string {
   return PROJECT_ACCENTS[hash % PROJECT_ACCENTS.length]!;
 }
 
-export interface RailProject<T> {
-  readonly key: string;
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly hasPendingDecision: boolean;
-  readonly primaryThread: T;
-  readonly threads: ReadonlyArray<T>;
-}
-
-/**
- * Projects for the collapsed rail, in recency order, flagging any with an operable pending
- * decision. `waitingRowKeys` (`lineageKey`s) are the listed rows that wait now, a subagent's under
- * its row and without what «Luego» set aside: the same list the decisions panel counts.
- */
-export function railProjects<T extends GroupInput & StateInput>(
-  threads: ReadonlyArray<T>,
-  machineIds: ReadonlyArray<EnvironmentId>,
-  operableIds: ReadonlySet<EnvironmentId>,
-  waitingRowKeys: ReadonlySet<string>,
-): RailProject<T>[] {
-  return groupThreads(threads, machineIds).flatMap((machine) => {
-    const canAnswer = operableIds.has(machine.environmentId);
-    return machine.projects.map((project) => {
-      const pending = canAnswer
-        ? project.threads.find((thread) => waitingRowKeys.has(lineageKey(thread)))
-        : undefined;
-      const key = `${machine.environmentId}:${project.projectId}`;
-      return {
-        key,
-        environmentId: machine.environmentId,
-        projectId: project.projectId,
-        hasPendingDecision: pending !== undefined,
-        primaryThread: pending ?? project.threads[0]!,
-        threads: project.threads,
-      };
-    });
-  });
-}
-
 /**
  * Threads by machine, in `machineIds` order, then by project. Threads and projects go most recent
  * first. Machines without threads are left out; so are threads of machines not in `machineIds`.

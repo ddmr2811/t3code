@@ -2996,16 +2996,6 @@ button.ade-subagent:hover .ade-subagent-open {
   color: var(--ade-ink);
 }
 
-.ade-rail-button.ade-new-thread-button {
-  width: 40px;
-  height: 38px;
-  border-radius: 11px;
-}
-
-.ade-rail-button.ade-new-thread-button[aria-current="page"]::before {
-  display: none;
-}
-
 /* Solo con el fondo Luna: con «Liso» o una imagen propia el Inicio queda como lo eligió el usuario.
    La foto ya viene tramada (el script está en el commit que añadió home-art.png); aquí solo se
    pinta en puntos del acento. Foto: Ansel Adams, «The Tetons – Snake River», NARA 519904, dominio público. */
@@ -4354,11 +4344,11 @@ button.ade-subagent:hover .ade-subagent-open {
   }
 
   .ade-shell[data-sidebar="collapsed"] {
-    grid-template-columns: 68px minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .ade-shell[data-sidebar="collapsed"]:has(> .ade-panel) {
-    grid-template-columns: 68px minmax(0, 1fr) min(var(--ade-panel-width), 45vw);
+    grid-template-columns: auto minmax(0, 1fr) min(var(--ade-panel-width), 45vw);
   }
 
   .ade-sidebar {
@@ -4367,8 +4357,7 @@ button.ade-subagent:hover .ade-subagent-open {
   }
 
   .ade-shell[data-sidebar="collapsed"] .ade-sidebar {
-    padding: 14px 0 12px;
-    overflow: hidden;
+    padding: 0;
   }
 
   .ade-brand-row {
@@ -4383,49 +4372,6 @@ button.ade-subagent:hover .ade-subagent-open {
     width: 30px;
     height: 30px;
     color: var(--ade-text-muted);
-  }
-
-  .ade-shell[data-sidebar="collapsed"] .ade-brand-row {
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 0 6px;
-  }
-
-  .ade-shell[data-sidebar="collapsed"] .ade-brand {
-    justify-content: center;
-    width: 38px;
-    height: 28px;
-    color: var(--ade-text);
-  }
-
-  .ade-shell[data-sidebar="collapsed"] .ade-sidebar-toggle {
-    width: 40px;
-    height: 38px;
-  }
-
-  .ade-rail {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    min-height: 0;
-  }
-
-  .ade-rail-sep {
-    flex: none;
-    width: 26px;
-    height: 1px;
-    margin: 4px 0;
-    background: var(--ade-border);
-  }
-
-  .ade-rail-nav {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
   }
 
   .ade-rail-button {
@@ -4447,177 +4393,17 @@ button.ade-subagent:hover .ade-subagent-open {
     color: var(--ade-text);
   }
 
-  .ade-rail-button:focus-visible,
-  .ade-rail-project:focus-visible,
-  .ade-rail-status:focus-visible {
+  .ade-rail-button:focus-visible {
     outline: 2px solid var(--ade-accent);
     outline-offset: 2px;
   }
 
-  .ade-rail-button[aria-current="page"],
   .ade-rail-button[data-open] {
     background: rgb(255 255 255 / 0.13);
     color: var(--ade-text);
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.2),
       inset 0 0 0 1px rgb(255 255 255 / 0.1);
-  }
-
-  .ade-rail-button.ade-new-thread-button[aria-current="page"] {
-    background: #efeae0;
-    color: var(--ade-ink);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55);
-  }
-
-  .ade-rail-button.ade-new-thread-button[aria-current="page"]:hover,
-  .ade-rail-button.ade-new-thread-button[aria-current="page"]:focus-visible {
-    background: #ffffff;
-    color: var(--ade-ink);
-  }
-
-  .ade-rail-needs-you {
-    background: color-mix(in srgb, var(--ade-accent) 15%, transparent);
-    color: var(--ade-accent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ade-accent) 40%, transparent);
-  }
-
-  .ade-rail-needs-you:hover,
-  .ade-rail-needs-you[aria-expanded="true"] {
-    background: color-mix(in srgb, var(--ade-accent) 24%, transparent);
-    color: var(--ade-accent);
-    box-shadow: inset 0 0 0 1px var(--ade-accent);
-  }
-
-  .ade-rail-count {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 4px;
-    border-radius: 999px;
-    background: var(--ade-accent);
-    color: var(--ade-ink);
-    box-shadow: 0 0 0 2px #0f1115;
-    font: 700 10.5px/18px var(--ade-font-mono);
-    text-align: center;
-  }
-
-  .ade-rail-count[data-quiet] {
-    background: var(--ade-divider);
-    color: var(--ade-text);
-  }
-
-  .ade-rail-button[aria-current="page"]::before,
-  .ade-rail-project[aria-current="true"]::before {
-    content: "";
-    position: absolute;
-    left: -14px;
-    top: 10px;
-    bottom: 10px;
-    width: 3px;
-    border-radius: 0 3px 3px 0;
-    background: var(--ade-text);
-  }
-
-  .ade-rail-projects {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    min-height: 0;
-    padding: 2px 0;
-    overflow-y: auto;
-    scrollbar-width: none;
-  }
-
-  .ade-rail-project {
-    position: relative;
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 44px;
-    height: 42px;
-    padding: 0;
-    border: 0;
-    border-radius: 12px;
-    background: none;
-    cursor: pointer;
-  }
-
-  .ade-rail-project:hover {
-    background: rgb(255 255 255 / 0.08);
-  }
-
-  .ade-rail-project[aria-current="true"] {
-    background: rgb(255 255 255 / 0.12);
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.2),
-      inset 0 0 0 1px rgb(255 255 255 / 0.09);
-  }
-
-  .ade-rail-project[aria-current="true"]::before {
-    left: -12px;
-  }
-
-  .ade-rail-mark {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--ade-project-color) 14%, rgb(16 18 23));
-    color: var(--ade-project-color);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ade-project-color) 32%, transparent);
-    font: 600 11.5px/1 var(--ade-font-mono);
-    letter-spacing: -0.02em;
-  }
-
-  .ade-rail-dot {
-    position: absolute;
-    top: 2px;
-    right: 3px;
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    background: var(--ade-accent);
-    box-shadow: 0 0 0 2px #0f1115;
-  }
-
-  .ade-rail-footer {
-    display: flex;
-    flex: none;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    margin-top: auto;
-    padding-top: 6px;
-  }
-
-  .ade-rail-status {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: 0;
-    border-radius: 999px;
-    background: none;
-    cursor: pointer;
-  }
-
-  .ade-rail-status:hover {
-    background: rgb(255 255 255 / 0.08);
-  }
-
-  .ade-rail-status-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 999px;
-    background: var(--ade-danger);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ade-danger) 25%, transparent);
   }
 
   .ade-bg-popover {

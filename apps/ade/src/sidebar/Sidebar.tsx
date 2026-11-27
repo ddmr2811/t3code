@@ -6,11 +6,9 @@ import {
   useAtomValue,
 } from "@effect/atom-react";
 import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
-import { BellSimpleRingingIcon } from "@phosphor-icons/react/dist/csr/BellSimpleRinging";
 import { ChatCircleDotsIcon } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
 import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { CircleDashedIcon } from "@phosphor-icons/react/dist/csr/CircleDashed";
-import { ClockIcon } from "@phosphor-icons/react/dist/csr/Clock";
 import { HourglassIcon } from "@phosphor-icons/react/dist/csr/Hourglass";
 import { ListChecksIcon } from "@phosphor-icons/react/dist/csr/ListChecks";
 import { PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
@@ -35,7 +33,6 @@ import type {
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@ui-sdk/react/tooltip";
 import { AsyncResult, Atom } from "effect/reactivity";
 import {
   Fragment,
@@ -94,8 +91,6 @@ import {
   listedThreads,
   projectAccentColor,
   projectMonogram,
-  type RailProject,
-  railProjects,
   threadState,
 } from "./sidebar.logic.ts";
 import { useBotNotices } from "../decisions/BotNotices.tsx";
@@ -289,42 +284,10 @@ export function ThreadStateBadge(props: { kind: ThreadStatusKind | null; withTex
   );
 }
 
-export function NeedsYouBlock(props: { compact?: boolean }) {
+export function NeedsYouBlock() {
   const { count, snoozedCount, open, setOpen } = useDecisionsPanel();
   const setMobileSidebar = useAtomSet(mobileSidebarOpenAtom);
   const words = count === 1 ? "te necesita" : "te necesitan";
-  if (props.compact) {
-    if (count === 0 && snoozedCount === 0) return null;
-    // Only snoozed ones left: a quiet way back to them, never the accent.
-    const snoozedOnly = count === 0;
-    const what = snoozedOnly
-      ? `${snoozedCount} ${snoozedCount === 1 ? "pospuesta" : "pospuestas"}`
-      : `${count} ${words}`;
-    const label = `${what} · ${open ? "ocultar decisiones" : "ver decisiones"}`;
-    return (
-      <Tooltip type="label">
-        <TooltipTrigger
-          type="button"
-          className={snoozedOnly ? "ade-rail-button" : "ade-rail-button ade-rail-needs-you"}
-          aria-expanded={open}
-          aria-controls="ade-decisions"
-          onClick={() => setOpen(!open)}
-        >
-          {snoozedOnly ? (
-            <ClockIcon size={19} aria-hidden />
-          ) : (
-            <BellSimpleRingingIcon size={19} weight="fill" aria-hidden />
-          )}
-          <span className="ade-rail-count" data-quiet={snoozedOnly ? "" : undefined} aria-hidden>
-            {snoozedOnly ? snoozedCount : count}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-          {label}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
   if (count === 0) {
     // Nothing to decide, so nothing to press.
     return (
@@ -388,93 +351,6 @@ export function ProjectTitle(props: { environmentId: EnvironmentId; projectId: P
     (index) => index.get(props.projectId)?.title ?? null,
   );
   return <>{title ?? "Proyecto sin nombre"}</>;
-}
-
-function ProjectRailButton(props: {
-  project: RailProject<EnvironmentThreadShell>;
-  machineLabel: string;
-  active: boolean;
-  onOpen: (key: string) => void;
-}) {
-  const title =
-    useAtomValue(
-      environmentProjects.environmentProjectIndexAtom(props.project.environmentId),
-      (index) => index.get(props.project.projectId)?.title ?? null,
-    ) ?? "Proyecto sin nombre";
-  const label = props.project.hasPendingDecision
-    ? `${title} · ${props.machineLabel} · espera una decisión`
-    : `${title} · ${props.machineLabel}`;
-  const threadKey = scopedThreadKey(
-    scopeThreadRef(props.project.primaryThread.environmentId, props.project.primaryThread.id),
-  );
-  const accent = projectAccentColor(`${props.project.environmentId}:${props.project.projectId}`);
-  return (
-    <Tooltip type="label">
-      <TooltipTrigger
-        type="button"
-        className="ade-rail-project"
-        aria-current={props.active ? "true" : undefined}
-        onClick={() => props.onOpen(threadKey)}
-      >
-        <span
-          className="ade-rail-mark"
-          style={{ "--ade-project-color": accent } as Record<string, string>}
-          aria-hidden
-        >
-          {projectMonogram(title)}
-        </span>
-        {props.project.hasPendingDecision ? <span className="ade-rail-dot" aria-hidden /> : null}
-      </TooltipTrigger>
-      <TooltipContent side="right" sideOffset={8} className="ade-rail-tooltip">
-        {label}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-export function ProjectRail() {
-  const listed = useAtomValue(listedThreadsAtom);
-  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
-  const operable = useAtomValue(operableEnvironmentIdsAtom);
-  const [selected, setSelected] = useAtom(selectedThreadKeyAtom);
-  const needsYou = useAtomValue(waitingThreadsAtom);
-  const snoozed = useAtomValue(snoozedKeysAtom);
-  const allShells = useAtomValue(environmentThreadShells.quietThreadShellsAtom);
-  const projects = railProjects(
-    listed,
-    [...catalog.entries.keys()],
-    operable,
-    new Set(
-      decisionsByRow(
-        needsYou.filter((thread) => !snoozed.includes(threadKeyOf(thread))),
-        allShells,
-        listed,
-      ).keys(),
-    ),
-  );
-  if (projects.length === 0) return null;
-  const selectedRef = selected === null ? null : parseScopedThreadKey(selected);
-  return (
-    <nav className="ade-rail-projects" aria-label="Proyectos">
-      {projects.map((project) => {
-        const active =
-          selectedRef !== null &&
-          selectedRef.environmentId === project.environmentId &&
-          project.threads.some((thread) => thread.id === selectedRef.threadId);
-        const machineLabel =
-          catalog.entries.get(project.environmentId)?.target.label ?? project.environmentId;
-        return (
-          <ProjectRailButton
-            key={project.key}
-            project={project}
-            machineLabel={machineLabel}
-            active={active}
-            onOpen={setSelected}
-          />
-        );
-      })}
-    </nav>
-  );
 }
 
 const ThreadRow = memo(function ThreadRow(props: {

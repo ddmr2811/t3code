@@ -49,6 +49,31 @@
   place-items: stretch;
 }
 
+/* Backroom mide su ventana en px para unos 1440 de ancho. En pantallas más anchas la ventana y la
+   barra lateral crecen enteras, letra incluida, para que el contenido llene el ancho con las
+   proporciones de Backroom en vez de quedarse pequeño en el centro. */
+:root {
+  --br-zoom: 1;
+}
+@media (min-width: 1600px) {
+  :root {
+    --br-zoom: 1.15;
+  }
+}
+@media (min-width: 2000px) {
+  :root {
+    --br-zoom: 1.35;
+  }
+}
+@media (min-width: 2400px) {
+  :root {
+    --br-zoom: 1.6;
+  }
+}
+.br {
+  zoom: var(--br-zoom);
+}
+
 .br {
   position: relative;
   z-index: 1;
@@ -175,7 +200,7 @@
 /* ---------- Inicio: la ventana del hero sin su barra lateral (la del ADE navega) ---------- */
 .br .v2-app {
   box-sizing: border-box;
-  width: min(100%, 1400px);
+  width: 100%;
   height: 100%;
   grid-template-columns: minmax(0, 1fr) var(--app-rail);
   grid-template-rows: minmax(0, 1fr);
@@ -330,7 +355,7 @@
 /* ---------- Ventanas de Memoria y Misión: la de Contexto, sin riel ---------- */
 .br-window {
   box-sizing: border-box;
-  width: min(100%, 1280px);
+  width: 100%;
   height: 100%;
   grid-template-columns: minmax(0, 1fr);
 }
@@ -609,8 +634,6 @@
   top: clamp(12px, 2.2vw, 40px);
   right: 0;
   left: 0;
-  width: min(100%, 1280px);
-  margin-inline: auto;
 }
 .br .v3-status-pill {
   gap: 4px;
@@ -806,5 +829,167 @@
   }
   .br-review-open > small {
     display: none;
+  }
+}
+
+/* ---------- Vuelta 3: la barra lateral de Backroom con las entradas del ADE ---------- */
+.br.br-side {
+  display: block;
+  height: auto;
+  min-height: 100%;
+  padding: 0;
+  overflow: visible;
+  container-type: normal;
+}
+.br.br.br-side > .v2-app {
+  display: flex;
+  flex-direction: column;
+  width: var(--app-side);
+  height: auto;
+  min-height: 100%;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.br-side .v2-app-sidebar {
+  display: flex;
+  flex: 1;
+}
+.br-side-brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 10px 0 20px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+.br-side-brand > svg {
+  width: 21px;
+  height: 21px;
+}
+.br-side-brand > span {
+  margin-right: auto;
+}
+.br-side-brand .ade-icon-button {
+  width: 30px;
+  height: 30px;
+  color: var(--app-faint);
+}
+.br-side :is(.v2-org, .v2-app-nav > button, .v2-sidebar-team > button, .v2-team-label > button) {
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+.br-side :is(.v2-org, .v2-app-nav > button, .v2-sidebar-team > button) {
+  width: 100%;
+}
+.br-side .v2-org {
+  border-radius: 12px;
+}
+.br-side .v2-org:hover {
+  background: var(--app-hover);
+}
+.br-side .v2-org small[data-offline] {
+  color: #ff8a80;
+}
+.br-side .v2-app-nav > button:is([aria-current="page"], [aria-expanded="true"]) {
+  background: var(--app-card);
+  box-shadow: var(--app-float-sm);
+  color: var(--app-text);
+}
+.br-side .v2-app-nav > button:is([aria-current="page"], [aria-expanded="true"]) svg {
+  color: var(--app-text);
+}
+.br-side .v2-app-nav > button:disabled {
+  background: none;
+  opacity: 0.55;
+  cursor: default;
+}
+.br-side .v2-nav-count[data-quiet] {
+  background: none;
+}
+.br-side .v2-team-label > button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -6px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--app-faint);
+}
+.br-side .v2-team-label > button:hover {
+  background: var(--app-hover);
+  color: var(--app-text);
+}
+.br-side .v2-sidebar-team > :is(button, .br-side-empty) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding-inline: 10px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.br-side .v2-sidebar-team > button:hover {
+  background: var(--app-hover);
+}
+.br-side .v2-sidebar-team > button[aria-current="page"] {
+  background: var(--app-card);
+  box-shadow: var(--app-float-sm);
+}
+.br-side .v2-sidebar-team > :is(.br-side-empty, .br-side-more) {
+  color: var(--app-faint);
+  font-size: 12.5px;
+}
+.br.br .v2-sidebar-team i[data-status="needs-you"] {
+  background: #ffa914;
+}
+.br.br .v2-sidebar-team i[data-status="error"] {
+  background: #ff6b5e;
+}
+.br.br .v2-sidebar-team i[data-status="done"] {
+  background: #4a9dff;
+}
+.br.br .v2-sidebar-team i[data-status="asleep"] {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--app-faint);
+}
+.br-side .v2-app-user > button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--app-faint);
+}
+.br-side .v2-app-user > button:hover {
+  background: var(--app-hover);
+  color: var(--app-text);
+}
+/* En el móvil la barra es el cajón: a todo el ancho, con los hilos y las máquinas debajo. */
+@media (max-width: 720px) {
+  .br.br.br-side > .v2-app {
+    width: 100%;
+  }
+  .br-side-brand {
+    padding-left: 12px;
+  }
+  .br-side .v2-app-sidebar {
+    padding-inline: 0;
+  }
+  .br-side .v2-app-sidebar > .ade-tree {
+    margin-top: 18px;
   }
 }
