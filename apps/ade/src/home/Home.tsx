@@ -90,6 +90,7 @@ export function Home() {
             <p data-pending={needsYouCount > 0 || undefined}>{forYouSentence(needsYouCount)}</p>
           </header>
           <FeaturedMission />
+          <ForYou onOpenThread={openThread} />
           <div className="v2-focus-card br-compose">
             <h2 className="v2-h4">¿En qué trabajamos?</h2>
             {selected === null ? (
@@ -148,7 +149,6 @@ export function Home() {
               </>
             )}
           </div>
-          <ForYou onOpenThread={openThread} />
           <HomeActivity multipleMachines={multipleMachines} />
         </div>
         <HomeRail coordinator={coordinator} team={team} needsYouCount={needsYouCount} />

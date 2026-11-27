@@ -360,6 +360,27 @@ function UserMessage(props: RowTarget & { item: Item<"user_message"> }) {
   );
 }
 
+type Row = OrchestrationV2ProjectedTurnItem;
+type WorkFold = { readonly key: string; readonly work: ReadonlyArray<Row> };
+
+const isWork = (row: Row) => {
+  const kind = rowKind(row.item);
+  return (
+    row.item.deferredWork === undefined &&
+    row.item.type !== "subagent" &&
+    (kind === "tool" || kind === "reasoning" || kind === "notice")
+  );
+};
+
+/** When folding, the turn's work rows, in order, take the place of the first of them. */
+function foldWork(rows: ReadonlyArray<Row>, fold: boolean): ReadonlyArray<Row | WorkFold> {
+  if (!fold) return rows;
+  const work = rows.filter(isWork);
+  return rows.flatMap((row): ReadonlyArray<Row | WorkFold> =>
+    !isWork(row) ? [row] : row === work[0] ? [{ key: `work:${row.item.id}`, work }] : [],
+  );
+}
+
 // Rows keep their object while unchanged, so only the row whose item moved renders again.
 const TimelineRow = memo(function TimelineRow(
   props: RowTarget & { row: OrchestrationV2ProjectedTurnItem; onOpenThread: OpenThread },
@@ -501,6 +522,8 @@ export function ThreadTimeline(props: {
   onOpenThread: OpenThread;
   /** What the agent waits on, shown where it stopped: after the last turn. */
   requests: ReactNode;
+  /** Each turn's tool calls, reasoning and notices fold into one line that opens. */
+  foldWork?: boolean;
 }) {
   const { environmentId, threadId } = props.threadRef;
   const rows = useAtomValue(environmentThreadDetails.timelineVisibleTurnItemsAtom(props.threadRef));
@@ -524,6 +547,15 @@ export function ThreadTimeline(props: {
     [environmentId, threadId, workspaceRoot],
   );
   const turns = groupTurns(rows);
+  const renderRow = (row: Row) => (
+    <TimelineRow
+      key={row.item.id}
+      environmentId={environmentId}
+      threadId={threadId}
+      row={row}
+      onOpenThread={props.onOpenThread}
+    />
+  );
   if (turns.length === 0) {
     return (
       <>
@@ -547,15 +579,23 @@ export function ThreadTimeline(props: {
             const checkpoint = turn.runId === null ? undefined : checkpointByRun.get(turn.runId);
             return (
               <li key={turn.key} className="ade-turn">
-                {turn.rows.map((row) => (
-                  <TimelineRow
-                    key={row.item.id}
-                    environmentId={environmentId}
-                    threadId={threadId}
-                    row={row}
-                    onOpenThread={props.onOpenThread}
-                  />
-                ))}
+                {foldWork(turn.rows, props.foldWork === true).map((row) =>
+                  "work" in row ? (
+                    <Fold
+                      key={row.key}
+                      className="ade-reasoning ade-work"
+                      summary={
+                        row.work.length === 1
+                          ? "1 paso de trabajo"
+                          : `${row.work.length} pasos de trabajo`
+                      }
+                    >
+                      {() => row.work.map((work) => renderRow(work))}
+                    </Fold>
+                  ) : (
+                    renderRow(row)
+                  ),
+                )}
                 {checkpoint === undefined ? null : (
                   <TurnChanges checkpoint={checkpoint} onOpen={props.onOpenChanges} />
                 )}

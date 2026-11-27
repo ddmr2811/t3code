@@ -617,6 +617,7 @@ function MissionChat(props: {
             onOpenChanges={() => setSelectedThread(scopedThreadKey(ref))}
             onOpenThread={props.onOpenThread}
             requests={<ThreadRequests threadRef={ref} onOpenThread={props.onOpenThread} />}
+            foldWork
           />
           {thread === null ? null : (
             <Composer key={`composer:${scopedThreadKey(ref)}`} threadRef={ref} thread={thread} />

@@ -4034,6 +4034,11 @@ button.ade-subagent:hover .ade-subagent-open {
   gap: 6px;
 }
 
+/* Tailwind's preflight zeroes every margin, which pins a modal <dialog> to the top-left corner. */
+:where(dialog:modal) {
+  margin: auto;
+}
+
 .ade-bots-editor {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
