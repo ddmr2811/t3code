@@ -265,9 +265,9 @@
 .br-asks {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  align-items: start;
   gap: 12px;
 }
-/* Tarjetas de distinta altura en una fila: el contenido arriba y las acciones al pie. */
 .br-asks > .v4-ask {
   display: flex;
   flex-direction: column;
