@@ -166,3 +166,9 @@ export const allBotsAtom = Atom.make((get) => {
 
   return { byEnv, handoffsByEnv, proposalsByEnv, gapsByEnv, errors, gapErrors };
 }).pipe(Atom.withLabel("ade-all-bots"));
+
+/** The bot whose chat Bots shows; kept while its thread opens in front, so «Volver» lands on it. */
+export const selectedBotKeyAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("ade-selected-bot"),
+);

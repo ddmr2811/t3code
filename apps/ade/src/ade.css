@@ -3751,173 +3751,6 @@ button.ade-subagent:hover .ade-subagent-open {
   font: 13px var(--ade-font-sans);
 }
 
-.ade-bot-quick {
-  display: grid;
-  gap: 10px;
-}
-
-.ade-bot-quick-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 8px;
-}
-
-.ade-bot-quick-row textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 44px;
-  padding: 11px 12px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-md);
-  background: var(--ade-surface);
-  color: var(--ade-text);
-  font: 14px/1.45 var(--ade-font-sans);
-  resize: vertical;
-}
-
-.ade-bot-quick-row textarea:focus-visible {
-  border-color: var(--ade-accent);
-  outline: none;
-}
-
-.ade-bot-quick-row .ade-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-}
-
-.ade-bot-quick-error {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.ade-bot-quick-error .ade-error {
-  margin: 0;
-}
-
-.ade-bot-proposal {
-  border-color: var(--ade-accent);
-}
-
-.ade-bot-quick-where {
-  min-width: min(100%, 280px);
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-sm);
-  background: var(--ade-surface);
-  color: var(--ade-text);
-  font: 13px var(--ade-font-sans);
-}
-
-.ade-bot-quick-where:focus-visible {
-  border-color: var(--ade-accent);
-  outline: none;
-}
-
-/* The quiet buttons sit level with «Crear». */
-.ade-bot-quick .ade-button-quiet {
-  margin-top: 0;
-}
-
-.ade-bot-proposal-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
-.ade-bots-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
-  align-items: start;
-  gap: 16px;
-}
-
-.ade-bots-list {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.ade-bot-card {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-lg);
-  background: var(--ade-surface);
-}
-
-.ade-bot-card[data-selected] {
-  border-color: var(--ade-accent);
-}
-
-/* Dim only the face and the frame: the text keeps its AA tokens. */
-.ade-bot-card[data-archived]:not([data-selected]) {
-  border-color: var(--ade-divider);
-}
-
-.ade-bot-card[data-archived] .ade-bot-avatar {
-  opacity: 0.6;
-}
-
-.ade-bot-card-main {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-/* F6: a fixed dot face per state. Orange is active or waiting, red only errors, the rest grey. */
-.ade-bot-avatar {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--ade-radius-md);
-  background: var(--ade-bg);
-  color: var(--ade-text-tertiary);
-}
-
-.ade-bot-avatar[data-size="sm"] {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--ade-radius-sm);
-}
-
-.ade-bot-avatar circle {
-  fill: currentColor;
-  opacity: 0.12;
-  transition: opacity 150ms ease-out;
-}
-
-.ade-bot-avatar circle[data-on] {
-  opacity: 1;
-}
-
-.ade-bot-avatar:is([data-status="working"], [data-status="needs-you"]) {
-  color: var(--ade-accent);
-}
-
-.ade-bot-avatar[data-status="error"] {
-  color: var(--ade-danger);
-}
-
-.ade-bot-avatar[data-status="done"] {
-  color: var(--ade-text);
-}
-
 .ade-bot-progress {
   height: 2px;
   overflow: hidden;
@@ -3931,107 +3764,10 @@ button.ade-subagent:hover .ade-subagent-open {
   background: var(--ade-accent);
 }
 
-.ade-bot-chat-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.ade-bot-chat-header h2 {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ade-bot-chat-header .ade-bot-status {
-  flex-shrink: 0;
-  margin-left: auto;
-  white-space: nowrap;
-}
-
-.ade-bot-card-text {
-  display: grid;
-  min-width: 0;
-}
-
-.ade-bot-card-text > * {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ade-bot-meta {
   margin: 0;
   color: var(--ade-text-muted);
   font-size: 12px;
-}
-
-.ade-bot-status {
-  color: var(--ade-text-tertiary);
-  font-size: 12px;
-}
-
-.ade-bot-status:is([data-status="working"], [data-status="needs-you"]) {
-  color: var(--ade-accent);
-}
-
-.ade-bot-status[data-status="error"] {
-  color: var(--ade-danger);
-}
-
-.ade-bot-status[data-status="done"] {
-  color: var(--ade-ok);
-}
-
-.ade-bot-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-}
-
-.ade-bot-actions .ade-button-quiet {
-  margin: 0 auto 0 0;
-}
-
-.ade-bots-chat {
-  position: sticky;
-  top: 0;
-  display: grid;
-  gap: 10px;
-  padding: 16px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-lg);
-  background: var(--ade-surface);
-}
-
-.ade-bots-chat h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.ade-bots-chat textarea {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--ade-border);
-  border-radius: var(--ade-radius-sm);
-  background: var(--ade-bg);
-  color: var(--ade-text);
-  font: 13px/1.45 var(--ade-font-sans);
-  resize: vertical;
-}
-
-.ade-bots-chat .ade-button {
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 /* Tailwind's preflight zeroes every margin, which pins a modal <dialog> to the top-left corner. */
@@ -4523,23 +4259,6 @@ button.ade-subagent:hover .ade-subagent-open {
       opacity: 0;
       translate: 0 16px;
     }
-  }
-
-  .ade-bots-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ade-bot-quick-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ade-bot-quick-row .ade-button {
-    justify-self: end;
-  }
-
-  .ade-bots-chat {
-    position: static;
-    order: -1;
   }
 
   .ade-bots-editor {
@@ -5067,7 +4786,6 @@ button.ade-subagent:hover .ade-subagent-open {
   .ade-search,
   .ade-search-backdrop,
   .ade-main > *,
-  .ade-bot-avatar circle,
   .ade-subagent,
   .ade-subagent-open,
   .ade-background-action {

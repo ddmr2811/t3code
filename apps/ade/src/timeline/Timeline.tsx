@@ -524,6 +524,8 @@ export function ThreadTimeline(props: {
   requests: ReactNode;
   /** Each turn's tool calls, reasoning and notices fold into one line that opens. */
   foldWork?: boolean;
+  /** The bots' chat: only what was said, with no tools, reasoning or changed files. */
+  chat?: boolean;
 }) {
   const { environmentId, threadId } = props.threadRef;
   const rows = useAtomValue(environmentThreadDetails.timelineVisibleTurnItemsAtom(props.threadRef));
@@ -546,7 +548,14 @@ export function ThreadTimeline(props: {
     () => ({ environmentId, threadId, workspaceRoot }),
     [environmentId, threadId, workspaceRoot],
   );
-  const turns = groupTurns(rows);
+  const turns = groupTurns(
+    props.chat === true
+      ? rows.filter((row) => {
+          const kind = rowKind(row.item);
+          return kind === "user" || kind === "assistant" || kind === "error";
+        })
+      : rows,
+  );
   const renderRow = (row: Row) => (
     <TimelineRow
       key={row.item.id}
@@ -596,7 +605,7 @@ export function ThreadTimeline(props: {
                     renderRow(row)
                   ),
                 )}
-                {checkpoint === undefined ? null : (
+                {checkpoint === undefined || props.chat === true ? null : (
                   <TurnChanges checkpoint={checkpoint} onOpen={props.onOpenChanges} />
                 )}
               </li>

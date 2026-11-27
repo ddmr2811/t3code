@@ -160,7 +160,7 @@ function useCanAnswer(threadRef: ScopedThreadRef) {
   return useAtomValue(operateAccessAtom(threadRef.environmentId)) === "operate";
 }
 
-function ApprovalCard(props: {
+export function ApprovalCard(props: {
   threadRef: ScopedThreadRef;
   approval: ThreadPendingApproval;
   /** The one-at-a-time tray: «Sí» and «No» with Y and N, no wider grants. */
@@ -514,6 +514,8 @@ export function RequestCards(props: {
   subscribe: boolean;
   whole?: boolean;
   inCard?: boolean;
+  /** The bots' chat asks its approvals in a sheet of their own. */
+  approvals?: boolean;
 }) {
   // Without a pending request there is nothing worth a detail subscription.
   const requests = useAtomValue(
@@ -529,7 +531,7 @@ export function RequestCards(props: {
           Solo lectura: esta sesión no puede contestar en esta máquina.
         </p>
       ) : null}
-      {requests.approvals.map((approval) => (
+      {(props.approvals === false ? [] : requests.approvals).map((approval) => (
         <ApprovalCard key={approval.requestId} threadRef={props.threadRef} approval={approval} />
       ))}
       {requests.userInputs.map((prompt) => (
@@ -567,11 +569,18 @@ export function FirstRequest(props: { threadRef: ScopedThreadRef; subscribe: boo
 export function ThreadRequests(props: {
   threadRef: ScopedThreadRef;
   onOpenThread: (key: string) => void;
+  /** False leaves the thread's own approvals out; its subagents' still show. */
+  ownApprovals?: boolean;
 }) {
   const children = useAtomValue(environmentThreadShells.childThreadInputsAtom(props.threadRef));
   return (
     <section className="ade-requests" aria-label="Peticiones pendientes">
-      <RequestCards threadRef={props.threadRef} subscribe whole />
+      <RequestCards
+        threadRef={props.threadRef}
+        subscribe
+        whole
+        approvals={props.ownApprovals !== false}
+      />
       {children.map((child) => {
         const childRef = { environmentId: child.environmentId, threadId: child.id };
         const key = scopedThreadKey(childRef);

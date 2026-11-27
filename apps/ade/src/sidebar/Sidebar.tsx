@@ -94,6 +94,7 @@ import {
   threadState,
 } from "./sidebar.logic.ts";
 import { useBotNotices } from "../decisions/BotNotices.tsx";
+import { allBotsAtom } from "../bots/bots.state.ts";
 import { snoozeClockAtom, snoozesAtom } from "../decisions/snoozed.ts";
 
 // T3's marks (apps/web/src/fork/status/ThreadStatusGlyph.tsx), with its Spanish words.
@@ -200,6 +201,9 @@ export const narrowViewportAtom = viewportAtom(PHONE_QUERY, "ade-narrow-viewport
 
 /** A desktop window too narrow for the expanded sidebar, the reading column and a panel at once. */
 export const crowdedViewportAtom = viewportAtom("(max-width: 1199px)", "ade-crowded-viewport");
+
+/** Room for the bot's card beside the list and the chat, so it starts open. */
+export const wideViewportAtom = viewportAtom("(min-width: 1440px)", "ade-wide-viewport");
 
 /** The waiting threads this ADE can answer, and whether their panel is open. */
 export function useDecisionsPanel() {
@@ -731,6 +735,14 @@ export function SelectedThread() {
   );
   // On a phone the title needs the width; the mark alone says the state.
   const narrow = useAtomValue(narrowViewportAtom);
+  // Opened from Bots, a bot's thread goes back to its chat, which Bots keeps open behind it.
+  const fromBots = new URLSearchParams(window.location.search).get("vista") === "bots";
+  const botName = useAtomValue(allBotsAtom, ({ byEnv }) =>
+    ref === null || !fromBots
+      ? null
+      : ((byEnv.get(ref.environmentId) ?? []).find((bot) => bot.threadId === ref.threadId)?.name ??
+        null),
+  );
   // Only a live shell's word is final; before it, the thread may simply not have arrived.
   useOpenThreadFamily(ref, shellStatus === "live" && thread === null);
   if (ref === null) return null;
@@ -772,7 +784,7 @@ export function SelectedThread() {
           )}
           {machine === null ? null : <ThreadChangesButton threadRef={ref} onOpen={openDiff} />}
           <button type="button" className="ade-button-quiet" onClick={() => setKey(null)}>
-            Volver
+            {botName === null ? "Volver" : `Volver al chat con ${botName}`}
           </button>
           <SearchButton />
           <NeedsYouButton />

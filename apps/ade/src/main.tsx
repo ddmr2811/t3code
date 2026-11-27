@@ -16,6 +16,7 @@ import { createRoot } from "react-dom/client";
 import "./ade.css";
 import "./backroom/backroom.css";
 import "./backroom/screens.css";
+import "./bots/bots.css";
 import { SideNav } from "./backroom/SideNav.tsx";
 import { BackgroundLayer, BackgroundPicker, useBackground } from "./Background.tsx";
 import { followMachine } from "./connection/pairing.ts";

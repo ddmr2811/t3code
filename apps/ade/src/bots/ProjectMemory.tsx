@@ -281,7 +281,6 @@ export function ProjectMemory(props: { environmentId: EnvironmentId; bot: ForkBo
         </ul>
       )}
 
-      <CoordinatorRoutines environmentId={environmentId} bot={bot} confirm={confirm.ask} />
       {confirm.dialog}
     </div>
   );
@@ -300,7 +299,8 @@ function scheduleLabel(task: ScheduledTask): string {
 
 type RoutineForm = Extract<CoordinatorRoutine, { kind: "daily" | "webhook" }>;
 
-function CoordinatorRoutines(props: {
+/** The bot's routines continue its thread; only a coordinator runs the nightly pass. */
+export function BotRoutines(props: {
   environmentId: EnvironmentId;
   bot: ForkBot;
   confirm: ReturnType<typeof useConfirm>["ask"];
@@ -376,15 +376,13 @@ function CoordinatorRoutines(props: {
   };
 
   return (
-    <section
-      className="grid gap-2 border-t border-border pt-2.5"
-      aria-label="Rutinas del coordinador"
-    >
-      <h3 className="m-0 text-[13px] font-semibold">Rutinas</h3>
+    <section className="grid gap-2" aria-label={`Rutinas de ${bot.name}`}>
       <p className={HINT}>
         {threadId === null
-          ? "Escríbele primero al coordinador: las rutinas continúan su hilo."
-          : "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados, propone qué bajar de esenciales y, si repites un encargo, un bot nuevo."}
+          ? `Escríbele primero a ${bot.name}: las rutinas continúan su hilo.`
+          : bot.coordinator
+            ? "Las rutinas continúan su hilo. La consolidación nocturna, a las 03:00, fusiona duplicados, propone qué bajar de esenciales y, si repites un encargo, un bot nuevo."
+            : "Las rutinas continúan su hilo."}
       </p>
       {tasksResult._tag === "Failure" ? (
         <p className="ade-error" role="alert">
@@ -426,20 +424,22 @@ function CoordinatorRoutines(props: {
           >
             Añadir rutina
           </button>
-          <button
-            type="button"
-            className="ade-button-quiet m-0!"
-            onClick={() => void create({ kind: "nightly" })}
-            disabled={disabled || customNightly || (nightly !== undefined && !nightlyOutdated)}
-          >
-            {customNightly
-              ? "Nocturna personalizada: edítala en Ajustes"
-              : nightly === undefined
-                ? "Consolidación nocturna"
-                : nightlyOutdated
-                  ? "Actualizar consolidación nocturna"
-                  : "Consolidación nocturna activa"}
-          </button>
+          {bot.coordinator ? (
+            <button
+              type="button"
+              className="ade-button-quiet m-0!"
+              onClick={() => void create({ kind: "nightly" })}
+              disabled={disabled || customNightly || (nightly !== undefined && !nightlyOutdated)}
+            >
+              {customNightly
+                ? "Nocturna personalizada: edítala en Ajustes"
+                : nightly === undefined
+                  ? "Consolidación nocturna"
+                  : nightlyOutdated
+                    ? "Actualizar consolidación nocturna"
+                    : "Consolidación nocturna activa"}
+            </button>
+          ) : null}
         </div>
       ) : (
         <form
@@ -460,7 +460,7 @@ function CoordinatorRoutines(props: {
             className={FIELD}
             value={form.prompt}
             onChange={(event) => setForm({ ...form, prompt: event.target.value })}
-            placeholder="Qué tiene que hacer el coordinador"
+            placeholder={`Qué tiene que hacer ${bot.name}`}
             aria-label="Encargo de la rutina"
             rows={3}
           />

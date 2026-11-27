@@ -91,7 +91,7 @@ export function MemoryView() {
   );
 }
 
-function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
+export function ProjectMemoryCard(props: { target: HomeProjectTarget }) {
   const { environmentId, project } = props.target;
   const query = forkMemoryListQuery({
     environmentId,
